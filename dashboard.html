@@ -10,7 +10,9 @@
   <header>
     <div class="title-block"><small>DEVELOPMENT TEAM</small><h1 id="title">Không gian phát triển game</h1><span id="usage-tokens" hidden></span></div>
     <div class="actions">
-      <button id="folders" type="button" title="Thư mục đầu tiên là thư mục chính; các thư mục còn lại được cấp qua --add-dir.">📁 Thư mục</button>
+      <div id="folder-chips" aria-label="Thư mục của session"></div>
+      <button id="folders" type="button" title="Thêm thư mục (thư mục đầu tiên là thư mục chính; các thư mục còn lại được cấp qua --add-dir)" aria-label="Thêm thư mục">＋ 📁</button>
+      <button id="role" type="button">＋ Role</button>
       <button id="panel-toggle" type="button" title="Ẩn/hiện panel khối" aria-controls="panel">▣ Khối</button>
       <div class="menu-wrap">
         <button id="more" type="button" aria-haspopup="menu" aria-expanded="false" title="Thao tác session">⋯</button>
@@ -26,21 +28,20 @@
   </header>
   <div id="archived-banner" hidden>🗄 Session đã lưu trữ: chỉ xem, không chạy được. <button id="restore" type="button">Khôi phục</button></div>
   <div id="decision-banner" role="alert" hidden><p id="decision-text"></p><button type="button" data-choice="continue">Tiếp tục thêm 1 vòng</button><button type="button" data-choice="accept">Chấp nhận với lỗi đã biết</button><button type="button" data-choice="stop">Dừng</button></div>
-  <section id="flow-row"><div id="flow"></div><button id="role" type="button">＋ Role</button></section>
   <p id="dispatch-summary" role="status" hidden></p>
   <div id="view-tabs" role="tablist"><button type="button" id="tab-chat" role="tab" aria-selected="true">💬 Hội thoại</button><button type="button" id="tab-graph" role="tab" aria-selected="false">🗺 Sơ đồ luồng</button></div>
   <section id="graph-view" hidden>
     <div class="graph-toolbar"><button type="button" id="graph-save" class="primary" disabled>Lưu sơ đồ</button><button type="button" id="graph-cancel" disabled>Huỷ thay đổi</button><button type="button" id="graph-reset">Đặt lại mặc định</button><span class="graph-zoom"><button type="button" id="graph-zoom-out" aria-label="Thu nhỏ">−</button><span id="graph-zoom-level">100%</span><button type="button" id="graph-zoom-in" aria-label="Phóng to">+</button><button type="button" id="graph-fit">Vừa khung</button></span><span id="graph-state" role="status"></span></div>
-    <p class="graph-hint">Kéo nút để sắp xếp · kéo từ chấm ● bên phải nút sang nút khác để nối · bấm nhãn trên cạnh để đổi điều kiện hoặc xoá. Một khối chạy khi có cạnh khớp dẫn tới nó và không còn khối nối vào nó đang chờ/chạy; Dev/VFX không được Lead giao task thì bỏ qua. Điều kiện: <b>xong</b> (xong/pass/bỏ qua) · <b>pass</b> · <b>issue</b> · <b>reject</b> · <b>luôn</b>.</p>
+    <p class="graph-hint">Kéo nút để sắp xếp, bấm nút để chọn khối · con lăn chuột để phóng to/thu nhỏ · kéo từ chấm ● bên phải nút sang nút khác để nối · bấm nhãn trên cạnh để đổi điều kiện hoặc xoá. Một khối chạy khi có cạnh khớp dẫn tới nó và không còn khối nối vào nó đang chờ/chạy; Dev/VFX không được Lead giao task thì bỏ qua. Điều kiện: <b>xong</b> (xong/pass/bỏ qua) · <b>pass</b> · <b>issue</b> · <b>reject</b> · <b>luôn</b>.</p>
     <p id="graph-empty" hidden>Thêm role để có sơ đồ luồng.</p>
     <div class="graph-scroll"><div id="graph-sizer"><div id="graph-canvas"><svg id="graph-edges"></svg></div></div></div>
   </section>
   <section id="activity"><div class="welcome"><h2>Từ ý tưởng đến kiểm thử</h2><p>Tạo session để bắt đầu: GD → Lead Dev → Dev → QA → Code Review.</p></div></section>
   <section id="issues"></section>
   <form id="composer">
-    <div id="folder-list"></div><div id="attachments"></div>
+    <div id="attachments"></div>
     <div id="command-suggestions" role="listbox" hidden></div>
-    <textarea id="message" placeholder="Nhập yêu cầu, ghi chú hoặc nội dung bàn giao…" required></textarea>
+    <textarea id="message" rows="1" placeholder="Nhập yêu cầu, ghi chú hoặc nội dung bàn giao…" required></textarea>
     <div class="composer-bar">
       <select id="commands" aria-label="Lệnh Claude Code"></select>
       <div class="menu-wrap">
@@ -60,8 +61,8 @@
   </form>
 </main>
 <aside id="panel" aria-label="Khối đang chọn">
-  <small class="eyebrow">KHỐI ĐANG CHỌN</small>
-  <h2 id="panel-title">Chat thường</h2>
+  <div class="panel-head"><small class="eyebrow">KHỐI ĐANG CHỌN</small><button id="panel-close" type="button" aria-label="Đóng panel khối" title="Đóng panel (mở lại bằng ▣ Khối)">×</button></div>
+  <div class="panel-pick"><select id="panel-block" aria-label="Chọn khối"></select><button id="panel-remove" type="button" aria-label="Xoá khối" title="Xoá khối">🗑</button></div>
   <p id="panel-state"></p>
   <label id="account-field">Tài khoản<select id="worker-account" aria-label="Tài khoản của khối"></select></label>
   <label>Mode<select id="chat-mode" aria-label="Mode"></select></label>

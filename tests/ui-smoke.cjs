@@ -15,7 +15,7 @@ app.whenReady().then(async () => {
   const window = BrowserWindow.getAllWindows()[0];
   try {
     const result = await window.webContents.executeJavaScript(`(async () => {
-      if (!document.querySelector('#flow')) throw Error('Team dashboard not loaded');
+      if (!document.querySelector('#activity')) throw Error('Team dashboard not loaded');
       const usageLines = [...document.querySelectorAll('#activity .run-usage')].map(node => node.textContent);
       if (usageLines.length !== 3 || !/^Token: vào 1[.,]000 \\(cache 3[.,]500\\) · ra 200 · \\$0\\.0100$/.test(usageLines[0])) throw Error('Per-message token line missing: ' + usageLines.join(' / '));
       const header = document.querySelector('#usage-tokens');
@@ -54,15 +54,21 @@ app.whenReady().then(async () => {
       return document.title;
     })()`);
     await delay(300);
-    const blocks = await window.webContents.executeJavaScript("document.querySelectorAll('.block').length");
-    if (blocks < 4) throw Error('Role blocks not rendered');
-    await window.webContents.executeJavaScript(`(() => {
-      const byName = name => [...document.querySelectorAll('.block')].find(block => block.querySelector('b')?.textContent === name);
-      const leadRemove = byName('Lead Dev')?.querySelector('.remove-role');
-      if (!leadRemove || !leadRemove.disabled || !leadRemove.title) throw Error('Lead Dev remove button must be disabled with a reason');
-      if (byName('GD')?.querySelector('.remove-role')?.disabled !== false) throw Error('Passed GD should be removable');
-      if (!/Planning · QA 0\\/3/.test(byName('Lead Dev').querySelector('small').textContent)) throw Error('Lead phase label missing');
+    // Không còn dải khối: chọn/xoá khối ở panel phải; thư mục ở header; ô nhập tự giãn.
+    await window.webContents.executeJavaScript(`(async () => {
+      if (document.querySelector('#flow-row') || document.querySelector('.block')) throw Error('Block strip should be gone');
+      const picker = document.querySelector('#panel-block'), names = [...picker.options].map(option => option.value);
+      if (JSON.stringify(names) !== JSON.stringify(['GD', 'Lead Dev', 'Dev', 'QA'])) throw Error('Block picker: ' + names.join(', '));
+      if (!/Planning · QA 0\\/3/.test([...picker.options].find(option => option.value === 'Lead Dev').textContent)) throw Error('Lead phase label missing');
+      const choose = async role => { picker.value = role; picker.dispatchEvent(new Event('change')); await new Promise(resolve => setTimeout(resolve, 50)); };
+      await choose('Lead Dev'); const remove = document.querySelector('#panel-remove');
+      if (!remove.disabled || !remove.title) throw Error('Lead Dev remove button must be disabled with a reason');
+      await choose('GD'); if (remove.disabled) throw Error('Passed GD should be removable');
       if (!document.querySelector('#decision-banner')?.hidden) throw Error('Decision banner should be hidden');
+      document.querySelector('#panel-close').click(); if (!document.body.classList.contains('panel-hidden')) throw Error('Panel close button failed');
+      document.querySelector('#panel-toggle').click(); if (document.body.classList.contains('panel-hidden')) throw Error('Panel toggle failed');
+      const box = document.querySelector('#message'), small = box.offsetHeight; box.value = 'a\\nb\\nc\\nd\\ne\\nf';
+      if (box.offsetHeight <= small) throw Error('Message box did not grow'); box.value = ''; if (box.offsetHeight !== small) throw Error('Message box did not shrink');
     })()`);
     // Tab Sơ đồ luồng: nút theo khối (Lead 3 pha + Hoàn tất), đổi điều kiện cạnh qua menu rồi lưu.
     await window.webContents.executeJavaScript(`(async () => {
@@ -71,6 +77,11 @@ app.whenReady().then(async () => {
       const names = [...document.querySelectorAll('#graph-canvas .graph-node b')].map(node => node.textContent);
       if (JSON.stringify(names) !== JSON.stringify(['GD', 'Lead Dev · lập kế hoạch', 'Dev', 'QA', 'Lead Dev · triage', 'Lead Dev · review', 'Hoàn tất'])) throw Error('Graph nodes: ' + names.join(', '));
       if (document.querySelectorAll('#graph-edges path.graph-edge').length < 7) throw Error('Graph edges missing');
+      const level = () => parseInt(document.querySelector('#graph-zoom-level').textContent, 10), before = level();
+      document.querySelector('.graph-scroll').dispatchEvent(new WheelEvent('wheel', { deltaY: -100, clientX: 300, clientY: 300, bubbles: true, cancelable: true }));
+      if (!(level() > before)) throw Error('Mouse wheel did not zoom in: ' + before + ' -> ' + level());
+      document.querySelector('.graph-scroll').dispatchEvent(new WheelEvent('wheel', { deltaY: 100, clientX: 300, clientY: 300, bubbles: true, cancelable: true }));
+      if (level() !== before) throw Error('Mouse wheel did not zoom back out');
       document.querySelector('#graph-edges .edge-tag').dispatchEvent(new MouseEvent('click', { bubbles: true }));
       const select = document.querySelector('.graph-edge-menu select'); if (!select) throw Error('Edge menu missing');
       select.value = 'always'; select.dispatchEvent(new Event('change'));
@@ -93,7 +104,6 @@ app.whenReady().then(async () => {
       await new Promise(resolve => setTimeout(resolve, 150));
       const state = await window.office.run('state');
       if (JSON.stringify(state.team.threads.at(-1).flow) !== '["QA"]') throw Error('Role choice was not saved');
-      document.querySelector('.block').click();
       const instruction = document.querySelector('textarea[aria-label="Nhiệm vụ session"]');
       if (!instruction) throw Error('Role instructions editor missing');
       instruction.value = 'Test only this session';
@@ -101,7 +111,7 @@ app.whenReady().then(async () => {
       await new Promise(resolve => setTimeout(resolve, 150));
       const configured = await window.office.run('state');
       if (configured.team.threads.at(-1).roleConfig.QA.instructions !== 'Test only this session') throw Error('Instructions were not persisted');
-      if (document.querySelector('#panel-title').textContent !== 'QA') throw Error('Selected block not shown in the side panel');
+      if (document.querySelector('#panel-block').value !== 'QA') throw Error('Selected block not shown in the side panel');
       const input = document.querySelector('#message'); input.value = '/mo'; input.dispatchEvent(new Event('input'));
       if (document.querySelector('#command-suggestions').hidden) throw Error('Command suggestions missing');
       document.querySelector('#command-suggestions button').click();

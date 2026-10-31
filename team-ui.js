@@ -189,21 +189,39 @@
     if (isLead(thread, role) && qaRoundLimit) text += ` · ${phaseNames[thread.leadPhase] || phaseNames.planning} · QA ${thread.qaFailRounds || 0}/${qaRoundLimit}`;
     return text;
   }
-  function paintFlow(thread) {
-    const flow = get('#flow'); flow.replaceChildren();
-    thread.flow.forEach((role, index) => {
-      const block = make('div', { className: 'block' + (index < thread.stage || thread.status === 'done' ? ' finished' : index === thread.stage ? ' current' : '') + (role === selectedWorker ? ' selected' : ''), tabIndex: 0 });
-      block.setAttribute('role', 'button'); block.setAttribute('aria-pressed', String(role === selectedWorker));
-      const task = thread.dispatch?.find(item => item.worker === role); block.title = task?.error || task?.task || role;
-      block.append(make('b', { textContent: role }), make('small', { textContent: blockLabel(thread, role, index) }));
-      const running = runningOf(thread, role); if (running) block.append(make('em', { className: 'block-progress', textContent: progressText(running) }));
-      block.onclick = () => chooseWorker(role); block.onkeydown = event => { if (event.target === block && ['Enter', ' '].includes(event.key)) { event.preventDefault(); chooseWorker(role); } };
-      const check = removal[thread.id]?.[role], title = check?.ok ? `Xóa ${role} (${check.reason})` : check?.reason || 'Không xóa được';
-      const remove = make('button', { className: 'remove-role', type: 'button', textContent: '×', disabled: !check?.ok || thread.archived, title }); remove.setAttribute('aria-label', title);
-      remove.onclick = async event => { event.stopPropagation(); if (confirm('Xóa ' + role + '? Cấu hình riêng và phiên chat của khối này sẽ bị xóa.')) await act('remove-role', { role }); };
-      block.append(remove); flow.append(block);
-    });
+  // Chọn khối trong panel (thay dải khối phía trên): mỗi lựa chọn kèm trạng thái; xoá khối theo quyền xoá main tính sẵn.
+  function paintBlockPicker(thread) {
+    const picker = get('#panel-block'), remove = get('#panel-remove');
+    const choices = !thread ? [['', 'Chưa có session']] : thread.flow.length ? thread.flow.map((role, index) => [role, `${role} — ${blockLabel(thread, role, index)}`]) : [['', 'Chat thường (không role)']];
+    const key = JSON.stringify(choices);
+    if (picker.dataset.key !== key && document.activeElement !== picker) { picker.dataset.key = key; picker.replaceChildren(...choices.map(([value, text]) => make('option', { value, textContent: text }))); }
+    picker.value = thread?.flow.includes(selectedWorker) ? selectedWorker : '';
+    const role = picker.value, check = role ? removal[thread.id]?.[role] : null;
+    remove.hidden = !role; remove.disabled = !check?.ok || Boolean(thread?.archived); remove.title = check?.ok ? `Xóa ${role} (${check.reason})` : check?.reason || 'Không xóa được';
   }
+  get('#panel-block').onchange = () => chooseWorker(get('#panel-block').value);
+  get('#panel-remove').onclick = async () => { const role = get('#panel-block').value; if (role && confirm('Xóa ' + role + '? Cấu hình riêng và phiên chat của khối này sẽ bị xóa.')) await act('remove-role', { role }); };
+  get('#panel-close').onclick = () => { try { localStorage.setItem('panel', 'closed'); } catch {} applyPanel(false); };
+  window.officeSelectBlock = role => chooseWorker(role); // bấm nút trên tab Sơ đồ để chọn khối
+  // Thư mục của session ở header: nhãn tên thư mục (rê chuột xem đường dẫn) có × để bỏ khỏi session; nút ＋ bên phải để thêm.
+  const folderName = folder => folder.split(/[\\/]/).filter(Boolean).pop() || folder;
+  function paintFolders(thread) {
+    const folders = thread ? [thread.folder, ...(thread.relatedFolders || [])].filter(Boolean) : [];
+    get('#folder-chips').replaceChildren(...folders.map((folder, index) => {
+      const chip = make('span', { className: 'folder-chip' + (index === 0 ? ' main' : ''), title: (index === 0 ? 'Thư mục chính: ' : 'Thư mục liên quan: ') + folder });
+      chip.append(make('span', { textContent: (index === 0 ? '📁 ' : '') + folderName(folder) }));
+      const remove = make('button', { type: 'button', textContent: '×', title: 'Bỏ thư mục khỏi session (không xóa trên đĩa)', disabled: Boolean(thread.archived) }); remove.setAttribute('aria-label', 'Bỏ thư mục ' + folder);
+      remove.onclick = async () => { try { await window.office.run('remove-folder', { id: selected, folder }); } catch (error) { showError(error); } };
+      chip.append(remove); return chip;
+    }));
+    get('#folders').textContent = folders.length ? '＋' : '＋ 📁 Thư mục';
+  }
+  // Ô nhập tự giãn theo nội dung (như Claude Desktop): từ 1 dòng tới 40% chiều cao cửa sổ, quá thì cuộn trong ô.
+  // Gán value bằng code (lệnh, xoá sau khi gửi, bản nháp) cũng co giãn lại nhờ ghi đè setter của ô này.
+  const messageBox = get('#message'), valueProperty = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+  function autosize() { const limit = Math.round(innerHeight * 0.4); messageBox.style.height = 'auto'; messageBox.style.height = Math.min(messageBox.scrollHeight, limit) + 'px'; messageBox.style.overflowY = messageBox.scrollHeight > limit ? 'auto' : 'hidden'; }
+  Object.defineProperty(messageBox, 'value', { configurable: true, get() { return valueProperty.get.call(this); }, set(text) { valueProperty.set.call(this, text); autosize(); } });
+  messageBox.addEventListener('input', autosize); addEventListener('resize', autosize);
   function chooseWorker(role) { selectedWorker = role; panelKey = ''; if (document.body.classList.contains('panel-hidden')) applyPanel(true); paint(); }
   function paintDispatch(thread) {
     const tasks = thread.dispatch || [], count = status => tasks.filter(task => task.status === status).length;
@@ -221,7 +239,7 @@
   function paintPanel(thread) {
     const role = thread?.flow.includes(selectedWorker) ? selectedWorker : '', key = (thread?.id || '') + ':' + role, force = key !== panelKey; panelKey = key;
     const config = role ? thread.workers?.[role] || {} : {};
-    get('#panel-title').textContent = role || 'Chat thường';
+    paintBlockPicker(thread);
     const running = role ? runningOf(thread, role) : thread?.messages.findLast(message => message.role === 'Claude' && message.streaming);
     get('#panel-state').textContent = !thread ? 'Chưa có session' : running ? progressText(running) : role ? blockLabel(thread, role, thread.flow.indexOf(role)) : 'Không role · chạy Claude Code thường';
     for (const id of ['#account-field', '#task-field', '#role-texts']) get(id).hidden = !role;
@@ -297,7 +315,6 @@
   setInterval(() => {
     const thread = current(); if (!thread) return;
     thread.messages.forEach((message, index) => { if (message.streaming) { const hit = cardCache.get(messageKey(message, index)); if (hit) updateProgress(hit.card, message); } });
-    get('#flow').querySelectorAll('.block').forEach((block, index) => { const running = runningOf(thread, thread.flow[index]), node = block.querySelector('.block-progress'); if (node && running) node.textContent = progressText(running); });
     const running = selectedWorker ? runningOf(thread, selectedWorker) : null; if (running) get('#panel-state').textContent = progressText(running);
   }, 1000);
 
@@ -310,18 +327,15 @@
     get('#archived-banner').hidden = !thread?.archived;
     for (const id of ['#pin', '#move', '#edit-request', '#retry-blocked', '#archive', '#role', '#folders']) if (thread?.archived) get(id).disabled = true;
     paintSessionUsage(thread);
-    get('#issues').replaceChildren(); get('#attachments').replaceChildren(); get('#folder-list').replaceChildren();
+    get('#issues').replaceChildren(); get('#attachments').replaceChildren(); paintFolders(thread);
     get('#decision-banner').hidden = thread?.status !== 'awaiting-decision';
     get('#decision-text').textContent = `QA fail ${thread?.qaFailRounds || 0}/${qaRoundLimit} vòng. Chọn cách xử lý:`;
     window.graphView?.paint(thread);
-    if (!thread) { paintPanel(thread); get('#flow').replaceChildren(); get('#dispatch-summary').hidden = true; get('#manual').hidden = true; get('#role').disabled = false; get('#folders').disabled = false; return; }
+    if (!thread) { paintPanel(thread); get('#dispatch-summary').hidden = true; get('#manual').hidden = true; get('#role').disabled = false; get('#folders').disabled = false; return; }
     if (!thread.archived) { get('#role').disabled = false; get('#folders').disabled = false; }
     if (selectedWorker && !thread.flow.includes(selectedWorker)) selectedWorker = undefined;
     if (!selectedWorker) selectedWorker = thread.flow[thread.stage] || thread.flow[0];
-    paintFlow(thread); paintDispatch(thread); paintPanel(thread); renderActivity(thread);
-    const folders = [thread.folder, ...(thread.relatedFolders || [])].filter(Boolean);
-    get('#folders').textContent = `📁 Thư mục${folders.length ? ' (' + folders.length + ')' : ''}`;
-    get('#folder-list').replaceChildren(...folders.map((folder, index) => { const chip = make('span', { className: 'image-chip', textContent: `${index === 0 ? 'Chính' : 'Liên quan'}: ${folder} `, title: folder }); const remove = make('button', { type: 'button', textContent: '×', title: 'Bỏ thư mục khỏi session (không xóa trên đĩa)', disabled: thread.archived }); remove.onclick = async () => { try { await window.office.run('remove-folder', { id: selected, folder }); } catch (error) { showError(error); } }; chip.append(remove); return chip; }));
+    paintDispatch(thread); paintPanel(thread); renderActivity(thread);
     for (const image of thread.attachments || []) get('#attachments').append(thumbnail(image, thread.archived ? null : async () => { try { await window.office.run('remove-attachment', { id: selected, path: image.path }); } catch (error) { showError(error); } }));
     for (const issue of thread.issues) { const row = make('div', { className: 'issue' }); row.append(make('span', { textContent: `${issue.closed ? '✓ Đã retest' : '● Mở'} · ${issue.text}` })); if (!issue.closed) row.append(make('button', { type: 'button', textContent: 'Xác nhận retest', onclick: async () => { if (await act('retest', { issue: issue.id, text: get('#message').value })) get('#message').value = ''; } })); get('#issues').append(row); }
     const roles = thread.flow.length > 0; get('#manual').hidden = !roles || thread.archived;

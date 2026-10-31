@@ -74,6 +74,14 @@
   }
   function zoom(next) { scale = Math.min(1.5, Math.max(0.3, Math.round(next * 100) / 100)); resize(); }
   function fit() { const { width, height } = content(), view = canvas.parentElement.parentElement; zoom(Math.min(1, (view.clientWidth - 20) / width, (view.clientHeight - 20) / height)); }
+  const scroller = canvas.parentElement.parentElement;
+  scroller.addEventListener('wheel', event => {
+    event.preventDefault();
+    const box = scroller.getBoundingClientRect(), pointX = event.clientX - box.left, pointY = event.clientY - box.top;
+    const worldX = (scroller.scrollLeft + pointX) / scale, worldY = (scroller.scrollTop + pointY) / scale;
+    zoom(scale * (event.deltaY < 0 ? 1.1 : 1 / 1.1));
+    scroller.scrollLeft = worldX * scale - pointX; scroller.scrollTop = worldY * scale - pointY;
+  }, { passive: false });
   get('#graph-zoom-in').onclick = () => zoom(scale + 0.1); get('#graph-zoom-out').onclick = () => zoom(scale - 0.1); get('#graph-fit').onclick = fit;
   function render() {
     closeMenu();
@@ -96,11 +104,12 @@
 
   // ---- Kéo nút
   function startDrag(event, node, element) {
-    if (event.button !== 0 || event.target.classList.contains('graph-handle') || thread.archived) return;
+    if (event.button !== 0 || event.target.classList.contains('graph-handle')) return;
+    if (thread.archived) { if (node.id !== END) window.officeSelectBlock?.(node.label); return; }
     event.preventDefault(); closeMenu(); element.setPointerCapture(event.pointerId);
-    const startX = event.clientX / scale - node.x, startY = event.clientY / scale - node.y;
-    element.onpointermove = move => { node.x = Math.max(0, Math.round((move.clientX / scale - startX) / 10) * 10); node.y = Math.max(0, Math.round((move.clientY / scale - startY) / 10) * 10); element.style.left = node.x + 'px'; element.style.top = node.y + 'px'; resize(); renderEdges(); markDirty(); };
-    element.onpointerup = () => { element.onpointermove = element.onpointerup = null; };
+    const startX = event.clientX / scale - node.x, startY = event.clientY / scale - node.y, downX = event.clientX, downY = event.clientY; let moved = false;
+    element.onpointermove = move => { if (!moved && Math.hypot(move.clientX - downX, move.clientY - downY) < 4) return; moved = true; node.x = Math.max(0, Math.round((move.clientX / scale - startX) / 10) * 10); node.y = Math.max(0, Math.round((move.clientY / scale - startY) / 10) * 10); element.style.left = node.x + 'px'; element.style.top = node.y + 'px'; resize(); renderEdges(); markDirty(); };
+    element.onpointerup = () => { element.onpointermove = element.onpointerup = null; if (!moved && node.id !== END) window.officeSelectBlock?.(node.label); };
   }
   // ---- Nối cạnh: kéo từ chấm ● tới nút đích. Mặc định điều kiện "xong"; đổi bằng cách bấm nhãn.
   function startLink(event, from) {
