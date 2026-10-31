@@ -10,7 +10,8 @@ const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Lead Dev', 'Dev', 'VFX', 'QA']);
 const LEAD = 'Lead Dev';
 const QA_ROUND_LIMIT = 3;
 // 'paused': task bị /role <tên> pause; vẫn tính là việc dở (không cho xóa role, không thay phân công mới).
-const ACTIVE_TASK = ['queued', 'starting', 'running', 'paused'];
+// 'pending': Lead đã giao nhưng nút Dev trên sơ đồ chưa tới lượt chạy (bộ chạy chuyển sang 'queued' khi tới lượt).
+const ACTIVE_TASK = ['pending', 'queued', 'starting', 'running', 'paused'];
 const typeOf = label => roleKey(String(label || '').replace(/ #\d+$/, ''));
 const labelType = (thread, label) => thread.workers?.[label]?.type || typeOf(label);
 const orderOf = label => { const index = PIPELINE.indexOf(typeOf(label)); return index < 0 ? PIPELINE.length : index; };

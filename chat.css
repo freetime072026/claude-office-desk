@@ -3,3 +3,4 @@
 .block-progress{display:block;font-style:normal;font-size:11px;color:#4f7a5c;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 #activity article small.run-denied{display:block;color:#a2412b}
 #activity article small.run-warning{display:block;color:#a26a1b}
+#activity article small.run-compact{display:block;color:#4f6d8a}

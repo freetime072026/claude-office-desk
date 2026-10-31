@@ -1,0 +1,21 @@
+#view-tabs{display:flex;gap:4px;padding:8px 28px 0;border-bottom:1px solid #eeece7}#view-tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:6px 12px;color:#6b736c}#view-tabs button[aria-selected=true]{border-bottom-color:#303f37;color:#26322d;font-weight:600}
+#graph-view{flex:1;display:flex;flex-direction:column;min-height:0;padding:10px 28px 18px;gap:8px}
+.graph-toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap}#graph-state{font-size:12px;color:#5d6560}
+.graph-hint{margin:0;font-size:11px;color:#7b826f;line-height:1.5}#graph-empty{color:#7b826f}
+.graph-scroll{flex:1;overflow:auto;border:1px solid #e3e1dc;border-radius:12px;background:#fdfdfb radial-gradient(#e4e3dd 1px,transparent 1px) 0 0/20px 20px}
+#graph-canvas{position:relative;min-height:360px}#graph-edges{position:absolute;left:0;top:0;overflow:visible}
+.graph-node{position:absolute;width:170px;height:56px;box-sizing:border-box;padding:8px 22px 8px 12px;border:1px solid #cfd2ca;border-radius:10px;background:#fff;cursor:grab;user-select:none;touch-action:none;box-shadow:0 1px 3px #26322d14}
+.graph-node b{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.graph-node small{display:block;font-size:10px;color:#7e857f;margin-top:3px}
+.graph-node.end{background:#f0f4f1;border-style:dashed}.graph-node.running{border-color:#4f7a5c;box-shadow:0 0 0 2px #4f7a5c55}.graph-node.queued{border-color:#c49a43;background:#fff8e9}
+.graph-node.done{background:#f0f7f1;border-color:#89aa98}.graph-node.skipped{opacity:.55;border-style:dashed}.graph-node.blocked{border-color:#b86550;background:#fff2ed}
+.graph-node:focus-visible{outline:2px solid #6f8d78;outline-offset:2px}
+.graph-handle{position:absolute;right:-7px;top:50%;width:12px;height:12px;margin-top:-6px;border-radius:50%;background:#303f37;border:2px solid #fff;cursor:crosshair}
+.graph-edge{fill:none;stroke:#9aa39b;stroke-width:1.6}.graph-edge.drafting{stroke-dasharray:5 4;stroke:#303f37}
+.graph-edge.pass{stroke:#4f8a5c}.graph-edge.issue{stroke:#c0614a}.graph-edge.reject{stroke:#c98a2b}.graph-edge.always{stroke:#4f6d8a}
+.edge-head{fill:#9aa39b}.edge-head.pass{fill:#4f8a5c}.edge-head.issue{fill:#c0614a}.edge-head.reject{fill:#c98a2b}.edge-head.always{fill:#4f6d8a}
+.edge-tag{cursor:pointer}.edge-tag rect{fill:#fff;stroke:#9aa39b}.edge-tag text{font:10px Segoe UI,system-ui;fill:#4b544d}
+.edge-tag.pass rect{stroke:#4f8a5c}.edge-tag.issue rect{stroke:#c0614a}.edge-tag.reject rect{stroke:#c98a2b}.edge-tag.always rect{stroke:#4f6d8a}.edge-tag:focus rect{stroke-width:2}
+.graph-edge-menu{position:absolute;z-index:5;transform:translateX(-50%);display:grid;gap:6px;padding:8px;background:#fff;border:1px solid #deded9;border-radius:10px;box-shadow:0 8px 24px #26322d26;min-width:180px}.graph-edge-menu small{font-size:11px;color:#5d6560}.graph-edge-menu button{color:#a2412b}
+.graph-edge-hit{fill:none;stroke:transparent;stroke-width:12;cursor:pointer;pointer-events:stroke}#graph-edges{pointer-events:none}#graph-edges .graph-edge-hit,#graph-edges .edge-tag{pointer-events:auto}
+
+#graph-sizer{position:relative}#graph-canvas{transform-origin:0 0;position:absolute;left:0;top:0}.graph-zoom{display:inline-flex;align-items:center;gap:4px;margin-left:auto}.graph-zoom button{padding:4px 10px}#graph-zoom-level{font-size:12px;min-width:40px;text-align:center;color:#5d6560}

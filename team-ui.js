@@ -4,10 +4,10 @@
   const make = (tag, props = {}) => Object.assign(document.createElement(tag), props);
   const names = { waiting: 'Chờ thực hiện', working: 'Đang làm', done: 'Hoàn tất', 'awaiting-decision': 'Chờ quyết định', cancelled: 'Đã dừng' };
   const phaseNames = { planning: 'Planning', triage: 'Triage', review: 'Review' };
-  const taskNames = { queued: 'Chờ lượt/phụ thuộc', starting: 'Đang chuẩn bị', running: 'Đang thực hiện', finished: 'Đã trả kết quả · chưa QA', failed: 'Lỗi thực thi', blocked: 'Bị chặn', cancelled: 'Đã dừng', paused: 'Tạm dừng' };
+  const taskNames = { pending: 'Chờ tới lượt theo sơ đồ', queued: 'Chờ lượt/phụ thuộc', starting: 'Đang chuẩn bị', running: 'Đang thực hiện', finished: 'Đã trả kết quả · chưa QA', failed: 'Lỗi thực thi', blocked: 'Bị chặn', cancelled: 'Đã dừng', paused: 'Tạm dừng' };
   const MODES = [['read', 'Plan · chỉ đọc'], ['edit', 'Đọc & sửa · duyệt từng thao tác'], ['auto', 'Auto · CLI tự xét quyền'], ['bypass', 'Bypass · bỏ duyệt tệp']];
   const MODELS = [['claude-opus-5-5', 'Opus 5.5'], ['sonnet', 'Sonnet'], ['opus', 'Opus'], ['haiku', 'Haiku']];
-  const COMMANDS = [['/model', 'Chọn model'], ['/status', 'Cấu hình session'], ['/role', 'Chạy/tạm dừng khối: /role <tên> start|pause'], ['/chot', 'Chốt GD, chạy tự động các bước sau'], ['/auto', 'Bật/tắt tự động: /auto on|off'], ['/mcp', 'MCP server (/mcp open để sửa)'], ['/usage', 'Usage nhận từ CLI'], ['/help', 'Trợ giúp']];
+  const COMMANDS = [['/compact', 'Compact ngữ cảnh của khối đang chọn'], ['/model', 'Chọn model'], ['/status', 'Cấu hình session'], ['/role', 'Chạy/tạm dừng khối: /role <tên> start|pause'], ['/chot', 'Chốt GD, chạy tự động các bước sau'], ['/auto', 'Bật/tắt tự động: /auto on|off'], ['/mcp', 'MCP server (/mcp open để sửa)'], ['/usage', 'Usage nhận từ CLI'], ['/help', 'Trợ giúp']];
   const TAKES_ARGS = ['/role', '/auto'];
   // Thứ tự role, giới hạn vòng QA và quyền xóa đều lấy từ backend (snapshot), UI không tự tính.
   let removal = {}, qaRoundLimit, roleTypes = [], knownProfiles = [], defaultRoles = {};
@@ -163,14 +163,18 @@
   }
 
   // ---- Tiến độ lượt chạy.
+  const STALL_MS = 5 * 60 * 1000;
   function elapsed(ms) { const seconds = Math.max(0, Math.floor(ms / 1000)), minutes = Math.floor(seconds / 60); return minutes ? `${minutes}m${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`; }
   function progressText(message) {
     const progress = message.progress; if (!progress?.startedAt) return '';
     const steps = progress.steps ? ` · ${progress.steps} bước` : '';
     if (!message.streaming) return progress.finishedAt ? `✓ Xong sau ${elapsed(Date.parse(progress.finishedAt) - Date.parse(progress.startedAt))}${steps}` : '';
     if (progress.waiting) return `⏸ ${elapsed(Date.now() - Date.parse(progress.startedAt))} · chờ bạn duyệt ${progress.waiting}${steps}`;
+    // Không có bước mới quá STALL_MS (không tính lúc chờ bạn duyệt): có thể đang treo, ví dụ một lệnh chờ mãi.
+    const idle = progress.updatedAt ? Date.now() - Date.parse(progress.updatedAt) : 0;
+    const stalled = idle > STALL_MS ? ` · ⚠ ${elapsed(idle)} không có tiến độ, có thể treo · bấm Dừng nếu cần` : '';
     const doing = progress.lastTool ? progress.lastTool + (progress.target ? ' ' + progress.target : '') : message.text ? 'đang viết trả lời' : 'đang suy nghĩ';
-    return `● ${elapsed(Date.now() - Date.parse(progress.startedAt))} · ${doing}${steps}`;
+    return `● ${elapsed(Date.now() - Date.parse(progress.startedAt))} · ${doing}${steps}${stalled}`;
   }
   const runningOf = (thread, role) => thread.messages.findLast(message => message.role === role && message.streaming);
 
@@ -188,7 +192,6 @@
   function paintFlow(thread) {
     const flow = get('#flow'); flow.replaceChildren();
     thread.flow.forEach((role, index) => {
-      if (index) flow.append(make('span', { className: 'arrow', textContent: '→' }));
       const block = make('div', { className: 'block' + (index < thread.stage || thread.status === 'done' ? ' finished' : index === thread.stage ? ' current' : '') + (role === selectedWorker ? ' selected' : ''), tabIndex: 0 });
       block.setAttribute('role', 'button'); block.setAttribute('aria-pressed', String(role === selectedWorker));
       const task = thread.dispatch?.find(item => item.worker === role); block.title = task?.error || task?.task || role;
@@ -260,7 +263,7 @@
   const cardCache = new Map(); let cachedThread;
   const messageKey = (message, index) => message.id || `${index}:${message.time}:${message.role}`;
   const profileName = id => knownProfiles.find(profile => profile.id === id)?.name || 'Hồ sơ';
-  const signature = message => [message.text, message.streaming, message.error, (message.tools || []).join(','), message.profileId, message.model, message.profileId ? profileName(message.profileId) : '', JSON.stringify(message.usage || null), (message.denied || []).join(','), message.progress?.waiting || ''].join('\u0000');
+  const signature = message => [message.text, message.streaming, message.error, (message.tools || []).join(','), message.profileId, message.model, message.profileId ? profileName(message.profileId) : '', JSON.stringify(message.usage || null), (message.denied || []).join(','), message.progress?.waiting || '', (message.compactions || []).length].join('\u0000');
   function updateProgress(card, message) { const node = card.querySelector('.run-progress'); if (node) node.textContent = progressText(message); }
   function buildCard(message) {
     const card = make('article'), header = make('header');
@@ -270,6 +273,7 @@
     if (message.progress) { const progress = make('small', { className: 'run-progress' }); progress.setAttribute('aria-live', 'polite'); card.append(progress); updateProgress(card, message); }
     if (message.streaming) card.classList.add('streaming'); if (message.error) card.classList.add('chat-error');
     if (message.tools?.length) card.append(make('small', { textContent: 'Công cụ: ' + message.tools.join(', ') }));
+    for (const compact of message.compactions || []) card.append(make('small', { className: 'run-compact', textContent: `Đã compact ngữ cảnh${compact.trigger === 'manual' ? ' (/compact)' : ''}: ${tokens(compact.before)} → ${tokens(compact.after)} token` }));
     if (message.denied?.length) card.append(make('small', { className: 'run-denied', textContent: 'Bạn đã từ chối: ' + message.denied.join(', ') }));
     if (message.usage) { const usage = addUsage({}, message.usage); card.append(make('small', { className: 'run-usage', textContent: 'Token: ' + usageText(usage), title: usageDetail(usage) })); const warning = contextWarning(usage); if (warning) card.append(make('small', { className: 'run-warning', textContent: warning })); }
     return card;
@@ -309,6 +313,7 @@
     get('#issues').replaceChildren(); get('#attachments').replaceChildren(); get('#folder-list').replaceChildren();
     get('#decision-banner').hidden = thread?.status !== 'awaiting-decision';
     get('#decision-text').textContent = `QA fail ${thread?.qaFailRounds || 0}/${qaRoundLimit} vòng. Chọn cách xử lý:`;
+    window.graphView?.paint(thread);
     if (!thread) { paintPanel(thread); get('#flow').replaceChildren(); get('#dispatch-summary').hidden = true; get('#manual').hidden = true; get('#role').disabled = false; get('#folders').disabled = false; return; }
     if (!thread.archived) { get('#role').disabled = false; get('#folders').disabled = false; }
     if (selectedWorker && !thread.flow.includes(selectedWorker)) selectedWorker = undefined;
@@ -339,7 +344,7 @@
   get('#add-role-cancel').onclick = () => get('#add-role-dialog').close();
 
   // ---- Ô soạn: lệnh, gợi ý, thủ công, chạy/dừng/gửi.
-  get('#commands').append(make('option', { value: '', textContent: '/ Lệnh' }), ...['/chot', '/auto on', '/auto off', '/mcp', '/model', '/status', '/usage', '/help'].map(value => make('option', { value, textContent: value })));
+  get('#commands').append(make('option', { value: '', textContent: '/ Lệnh' }), ...['/chot', '/auto on', '/auto off', '/compact', '/mcp', '/model', '/status', '/usage', '/help'].map(value => make('option', { value, textContent: value })));
   get('#commands').onchange = () => { const value = get('#commands').value; if (value) { get('#message').value = value; get('#message').focus(); get('#commands').value = ''; } };
   const suggestions = get('#command-suggestions'); let suggestionIndex = 0;
   function suggest() {

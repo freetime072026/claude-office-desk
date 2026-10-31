@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { defaults, roleKey, LEGACY_LEAD, isDevType } = require('./roles.cjs');
 const { PIPELINE, LEAD, QA_ROUND_LIMIT, ownsSession, typeOf, sortFlow, started, openIssues, worker, forgetWorker, addWorker, removable } = require('./workers.cjs');
+const flowgraph = require('./flowgraph.cjs');
 const HALTED = ['awaiting-decision', 'cancelled'];
 const initial = () => ({ projects: [], roles: [], threads: [] });
 const isHalted = thread => HALTED.includes(thread.status);
@@ -49,6 +50,7 @@ function decide(item, choice, log) {
 function addRole(item, type, log) {
   if (!Object.hasOwn(defaults, type)) throw Error('Loại role không hợp lệ');
   const label = addWorker(item, type);
+  flowgraph.addNode(item, label); // sơ đồ mặc định dựng lại; sơ đồ đã sửa: Dev/VFX mới nối song song như các Dev khác
   log('Hệ thống', 'Đã thêm ' + label + (item.flow.indexOf(label) < item.stage ? '; bỏ qua ở vòng này' : '')); return label;
 }
 // payload.busy: mảng nhãn đang chạy do main.cjs (busyLabels) gán; dữ liệu ngoài app không tin được nên chuẩn hóa.
@@ -61,7 +63,7 @@ function dropRole(item, label, busy) {
   item.stage = Math.min(item.stage, Math.max(0, item.flow.length - 1));
   return check.reason;
 }
-function removeRole(item, payload, log) { const label = payload.role; log('Hệ thống', `Đã xóa ${label} (${dropRole(item, label, busyOf(payload))})`); }
+function removeRole(item, payload, log) { const label = payload.role; log('Hệ thống', `Đã xóa ${label} (${dropRole(item, label, busyOf(payload))})`); flowgraph.syncGraph(item); }
 // R1: role bị bỏ qua select-roles phải qua removable(). Bỏ theo thứ tự ngược pipeline (Lead sau Dev/QA),
 // chạy thử trên bản sao trước để một role bị từ chối thì không role nào bị đổi.
 function dropRoles(item, labels, busy) {
@@ -74,7 +76,7 @@ function selectRoles(team, item, payload, log) {
   if (!Array.isArray(payload.roles) || payload.roles.some(role => !allowed.has(role))) throw Error('Role không hợp lệ');
   const next = sortFlow([...new Set(payload.roles)]);
   dropRoles(item, item.flow.filter(label => !next.includes(label)), busyOf(payload));
-  item.flow = next; restartLoop(item); item.roleConfig ||= {};
+  item.flow = next; restartLoop(item); item.roleConfig ||= {}; item.graph = flowgraph.defaultGraph(item); delete item.graphRun;
   for (const key of new Set(item.flow.map(typeOf))) item.roleConfig[key] ||= { ...(team.roleTemplates?.[key] || defaults[key] || { responsibility: '', output: '' }), instructions: '' };
   if (payload.restart) { for (const issue of item.issues) issue.closed = false; log('Hệ thống', 'Cấu hình role thay đổi; quy trình bắt đầu lại.'); }
 }
@@ -102,6 +104,9 @@ function update(team, action, payload) {
   const item = team.threads.find(thread => thread.id === payload.id); if (!item) throw Error('Session không tồn tại');
   const log = (role, content) => item.messages.push({ role, text: content, time: new Date().toISOString() });
   if (action === 'add-worker') return addRole(item, payload.type, log);
+  // Sơ đồ luồng: lưu bản người dùng sửa (đã kiểm tra) hoặc dựng lại mặc định từ danh sách khối.
+  if (action === 'graph-save') { item.graph = flowgraph.validate(item, payload.graph); return true; }
+  if (action === 'graph-reset') { item.graph = flowgraph.defaultGraph(item); log('Hệ thống', 'Sơ đồ luồng đặt lại theo mặc định.'); return true; }
   // Lưu trữ trước, xoá hẳn sau. `busy` (khối/terminal đang chạy) do main.cjs truyền vào.
   if (action === 'archive' || action === 'delete') { if (payload.busy?.length) throw Error('Session đang chạy (' + payload.busy.join(', ') + '); dừng trước khi ' + (action === 'delete' ? 'xoá' : 'lưu trữ')); }
   if (action === 'archive') { item.archived = payload.archived !== false; if (item.archived) { item.pinned = false; if (item.auto) item.auto.enabled = false; } return true; }
@@ -126,7 +131,7 @@ function update(team, action, payload) {
     log('Hệ thống', 'Yêu cầu đã sửa; cần kiểm tra lại kết quả cũ.'); return true;
   }
   if (action === 'select-roles') selectRoles(team, item, payload, log);
-  else if (action === 'assign-role') { const name = roleKey(text(payload.name, 40)); if (!item.flow.includes(name)) addWorker(item, name); }
+  else if (action === 'assign-role') { const name = roleKey(text(payload.name, 40)); if (!item.flow.includes(name)) flowgraph.addNode(item, addWorker(item, name)); }
   else if (action === 'pin') item.pinned = !item.pinned;
   else if (action === 'move') item.project = payload.project || '';
   else if (action === 'message') { const content = text(payload.text); if (!item.messages.some(message => message.role === 'Bạn')) item.title = content.replace(/\s+/g, ' ').slice(0, 70); log('Bạn', content); }

@@ -17,7 +17,6 @@ const { describeTool, decide, roleScope, scopesOverlap } = require('./permission
 const sessionFiles = require('./session-files.cjs');
 const attachments = require('./attachments.cjs');
 const unity = require('./unity.cjs');
-const { FILE_ROLES } = require('./prompt.cjs');
 const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
@@ -26,15 +25,17 @@ function permissionAsker(label, folders, autoApproved, policy) {
   const always = new Set();
   return async ({ tool, input }) => {
     const verdict = decide({ ...policy, tool, input });
-    if (verdict.action === 'allow') return { allow: true, ...(verdict.updatedInput ? { updatedInput: verdict.updatedInput } : {}) };
+    // updatedInput: lệnh/tham số app đã chỉnh (Agent ép code-reader, curl tới Unity thêm --max-time) áp dụng cho mọi lần cho phép.
+    const allowed = { allow: true, ...(verdict.updatedInput ? { updatedInput: verdict.updatedInput } : {}) };
+    if (verdict.action === 'allow') return allowed;
     if (verdict.action === 'deny') return { allow: false, message: verdict.message };
     const askable = !ALWAYS_ASK.includes(tool);
-    if (askable && (autoApproved || always.has(tool))) return { allow: true };
+    if (askable && (autoApproved || always.has(tool))) return allowed;
     if (!window || window.isDestroyed()) return { allow: false, message: 'Ứng dụng đã đóng.' };
-    const answer = await dialog.showMessageBox(window, { type: 'question', title: 'Duyệt thao tác', message: `${label} muốn dùng ${tool}`, detail: describeTool(tool, input) + '\n\nThư mục session:\n' + folders.join('\n'), buttons: ['Từ chối', 'Cho phép'], defaultId: 0, cancelId: 0, noLink: true, ...(askable ? { checkboxLabel: `Luôn cho phép ${tool} tới hết lượt này` } : {}) });
+    const answer = await dialog.showMessageBox(window, { type: 'question', title: 'Duyệt thao tác', message: `${label} muốn dùng ${tool}`, detail: describeTool(tool, verdict.updatedInput || input) + '\n\nThư mục session:\n' + folders.join('\n'), buttons: ['Từ chối', 'Cho phép'], defaultId: 0, cancelId: 0, noLink: true, ...(askable ? { checkboxLabel: `Luôn cho phép ${tool} tới hết lượt này` } : {}) });
     if (answer.response !== 1) return { allow: false, message: `Người dùng từ chối ${tool}. Không thử lại cùng thao tác; hỏi người dùng hoặc đổi cách làm.` };
     if (askable && answer.checkboxChecked) always.add(tool);
-    return { allow: true };
+    return allowed;
   };
 }
 const pipeline = require('./pipeline.cjs');
@@ -141,7 +142,7 @@ app.whenReady().then(() => {
     catch { dialog.showErrorBox('Không đọc được cấu hình', 'Hãy sao lưu và kiểm tra workspace.json trong ' + root); app.quit(); return; }
   }
   metadata.team ||= teamStore.initial();
-  for (const thread of metadata.team.threads) { teamStore.migrateThread(thread); delete thread.dispatchPumping; delete thread.dispatchAgain; for (const task of thread.dispatch || []) if (['starting', 'running'].includes(task.status)) { task.status = 'blocked'; task.error = 'Ứng dụng đã đóng trong lúc chạy; kiểm tra kết quả trước khi thử lại'; } }
+  for (const thread of metadata.team.threads) { teamStore.migrateThread(thread); if (thread.flow?.length) require('./flowgraph.cjs').ensureGraph(thread); delete thread.dispatchPumping; delete thread.dispatchAgain; for (const task of thread.dispatch || []) if (['starting', 'running'].includes(task.status)) { task.status = 'blocked'; task.error = 'Ứng dụng đã đóng trong lúc chạy; kiểm tra kết quả trước khi thử lại'; } }
   settings = path.join(root, 'restricted-settings.json'); mcp = path.join(root, 'mcp-servers.json');
   // 0.10: bật Shell (Bash) cho mode có sửa tệp. Deny Read(...) chỉ chặn tool Read/Grep/Glob; lệnh shell (vd. type .env) vẫn đọc được,
   // nên chỉ mode Plan thực sự không đọc được các tệp này.
@@ -161,7 +162,7 @@ app.whenReady().then(() => {
   };
   const pumpThread = thread => teamStore.isHalted(thread) ? Promise.resolve() : require('./dispatch.cjs').pump(thread, task => sendTask(thread, task), () => { persist(); publish(); });
   // TASKS.md do app ghi từ khối tasks đã kiểm tra; lỗi ghi tệp chỉ báo, không chặn điều phối.
-  const recordTasks = (thread, tasks, reason) => { try { sessionFiles.writeTasks(thread, tasks, reason); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được TASKS.md: ' + error.message, time: new Date().toISOString() }); } };
+  const recordTasks = (thread, tasks, reason) => { try { sessionFiles.writeTasks(thread, tasks, `Vòng ${thread.round || 1} · ${reason}`); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được TASKS.md: ' + error.message, time: new Date().toISOString() }); } };
   const isRunning = (thread, label) => chats.has(runKey(thread.id, label));
   async function approveAuto(thread) {
     const folders = foldersOf(thread);
@@ -174,6 +175,7 @@ app.whenReady().then(() => {
     update: (thread, action, payload) => teamStore.update(metadata.team, action, { ...payload, id: thread.id }),
     send: (thread, label, text) => handleDesk(null, 'chat-send', { id: thread.id, role: label, text, auto: true }),
     pump: pumpThread, isRunning, approve: approveAuto, recordTasks,
+    newRound: (thread, round, summary) => { try { sessionFiles.appendRound(thread, round, summary); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } },
     log: (thread, role, text) => thread.messages.push({ role, text, time: new Date().toISOString() }),
     changed: () => { persist(); publish(); }
   });
@@ -189,7 +191,8 @@ app.whenReady().then(() => {
     if (isRunning(thread, label)) return { text: label + ' đang chạy.' };
     const resumable = tasks.filter(task => ['paused', 'blocked', 'failed', 'cancelled'].includes(task.status));
     if (resumable.length) { for (const task of resumable) { task.status = 'queued'; delete task.error; } return { text: 'Tiếp tục task của ' + label + '.', run: () => pumpThread(thread) }; }
-    if (thread.auto?.enabled && thread.flow[thread.stage] === label && !teamStore.isHalted(thread)) return { text: 'Tiếp tục bước tự động ' + label + '.', run: () => autoRun.runStage(thread) };
+    // Chạy tự động: đưa nút của khối (đang bị chặn/chưa chạy) vào hàng chờ của sơ đồ rồi chạy tiếp theo sơ đồ.
+    if (thread.auto?.enabled && !teamStore.isHalted(thread)) return { text: 'Tiếp tục bước tự động ' + label + ' theo sơ đồ.', run: () => autoRun.runStage(thread, label) };
     return { text: 'Chạy ' + label + '.', run: () => handleDesk(null, 'chat-send', { id: thread.id, role: label, text: config.task ? 'Thực hiện task:\n' + config.task : 'Thực hiện nhiệm vụ theo yêu cầu session.' }) };
   }
   // Chạy việc nền sau lệnh chat; lỗi hiện trong hội thoại thay vì mất.
@@ -218,7 +221,7 @@ app.whenReady().then(() => {
       // Lệnh slash xử lý cục bộ nên vẫn dùng được khi khối đang trả lời (ví dụ /role Dev pause).
       if (!content.startsWith('/')) { if (chats.has(activeKey)) throw retryable('Khối này đang trả lời. Khối khác vẫn có thể chạy.'); if (chats.size >= 8) throw retryable('Tối đa 8 phiên chat'); }
       const localReply = text => { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); thread.messages.push({ role: 'Hệ thống', text, time: new Date().toISOString() }); persist(); publish(); return true; };
-      if (content === '/help') return localReply('/role <khối> start|pause: chạy/tạm dừng một khối (vd. /role Lead Dev pause). /chot: chốt GD và chạy tự động các bước sau. /auto on|off: bật/tắt chạy tự động. /model: chọn model bên dưới. /status: cấu hình session. /mcp, /mcp open: xem/sửa MCP server. /usage: quota đã nhận từ CLI. Lệnh tương tác khác dùng trong Terminal.');
+      if (content === '/help') return localReply('/role <khối> start|pause: chạy/tạm dừng một khối (vd. /role Lead Dev pause). /chot: chốt GD và chạy tự động các bước sau. /compact [điều cần giữ]: compact phiên của khối đang chọn. /auto on|off: bật/tắt chạy tự động. /model: chọn model bên dưới. /status: cấu hình session. /mcp, /mcp open: xem/sửa MCP server. /usage: quota đã nhận từ CLI. Lệnh tương tác khác dùng trong Terminal.');
       if (content.startsWith('/model')) return localReply('Model của khối hiện tại: ' + (worker.model || 'claude-opus-5-5') + '. Đổi bằng danh sách Model dưới ô chat.');
       if (content === '/mcp') { let names; try { names = mcpServerNames(); } catch (error) { return localReply(error.message); } return localReply((names.length ? 'MCP server được nạp: ' + names.join(', ') : 'Chưa khai báo MCP server.') + '\nCấu hình: ' + mcp + '\nDùng /mcp open để mở và sửa (dạng {"mcpServers":{"ten":{"command":"...","args":[]}}}). Áp dụng từ lượt sau; Plan chỉ đọc không gọi tool MCP.'); }
       if (content === '/mcp open') { const failure = await shell.openPath(mcp); return localReply(failure ? 'Không mở được: ' + failure : 'Đã mở ' + mcp + '. Lưu tệp rồi gửi lượt mới.'); }
@@ -229,7 +232,9 @@ app.whenReady().then(() => {
       if (command?.kind === 'chot') { localReply('Chốt bước hiện tại và chạy tự động các bước sau.'); background(thread, () => autoRun.chot(thread)); return true; }
       if (content === '/status') return localReply(`Hồ sơ: ${profile(metadata.activeProfileId || metadata.profiles[0]?.id).name}\nModel: ${thread.model || 'claude-opus-5-5'}\nMode: ${thread.mode || 'read'}\nTự động: ${thread.auto?.enabled ? 'bật' : 'tắt'}\nThư mục: ${foldersOf(thread).join(', ') || 'chưa chọn'}\nĐây là cấu hình app, không phải xác nhận đăng nhập của CLI.`);
       if (content === '/usage') { const usage = readUsage(metadata.activeProfileId || metadata.profiles[0]?.id); return localReply(usage ? JSON.stringify(usage, null, 2) : 'CLI chưa gửi snapshot quota. Đăng nhập không tạo usage. Dùng Xem usage chính thức trong menu tài khoản để xem trực tiếp tại CLI.'); }
-      if (content.startsWith('/')) return localReply('Lệnh này chưa hỗ trợ trong chat. Dùng terminal Claude Code để chạy lệnh tương tác.');
+      // /compact [ghi chú]: compact phiên CLI của khối đang chọn (như Claude Desktop); gửi nguyên văn, không chạy bộ tự động.
+      const compactOnly = /^\/compact(\s|$)/.test(content);
+      if (content.startsWith('/') && !compactOnly) return localReply('Lệnh này chưa hỗ trợ trong chat. Dùng terminal Claude Code để chạy lệnh tương tác.');
       // Đường dẫn trong tin nhắn đổi phạm vi thư mục: ghi rõ vào hội thoại để không đổi ngầm.
       let folderNote = '';
       if (event) {
@@ -261,14 +266,19 @@ app.whenReady().then(() => {
       // Lead/Dev/QA đọc trạng thái từ tệp nên mở phiên mới mỗi lượt (không resume phiên phình mãi); GD và chat thường vẫn resume.
       // Ngoại lệ: chạy lại đúng task đang dở (sendTask) thì tiếp tục phiên cũ nếu cùng hồ sơ/thư mục, khỏi đọc lại từ đầu.
       const sessionKey = resumeKey(profileId, thread.folder, payload.role), continued = payload.resumeSession?.key === sessionKey ? payload.resumeSession.id : '';
+      // Không mở phiên mới: mọi khối tiếp tục phiên của mình (kể cả sang vòng mới) để giữ các tệp đã đọc; CLI tự compact
+      // khi ngữ cảnh lớn (--autocompact). Chỉ session mới trong app mới có phiên mới.
       if (continued) (thread.cliSessions ||= {})[sessionKey] = continued;
-      const resume = Boolean(continued) || !(files && FILE_ROLES.includes(worker.type));
+      const resume = true;
       const resumed = resume && Boolean(thread.cliSessions?.[sessionKey]);
       // Ảnh đang soạn đi kèm đúng tin này của người dùng (lượt tự động không lấy ảnh đang soạn) rồi gắn vào tin đã gửi.
-      const images = payload.auto ? [] : attachments.take(thread);
+      if (compactOnly && !thread.cliSessions?.[sessionKey]) return localReply((payload.role || 'Chat') + ' chưa có phiên để compact.');
+      const images = payload.auto || compactOnly ? [] : attachments.take(thread);
       // Project Unity: khối chạy lệnh được biết Editor có đang mở project không và cách gọi Unity (unity.cjs; kiểm /health ~0,6 s).
-      const unityGuide = payload.role && SHELL_TYPES.includes(worker.type) ? unity.guide(await unity.context(thread.folder)) : '';
-      const { text: prompt } = rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide });
+      const unityInfo = payload.role && SHELL_TYPES.includes(worker.type) ? await unity.context(thread.folder) : null;
+      unity.writeHelper(unityInfo); // .office-desk/unity.sh: dò cổng theo sổ đăng ký, chờ Unity nạp lại, luôn có timeout
+      const unityGuide = unity.guide(unityInfo);
+      const prompt = compactOnly ? content : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide }).text;
       const mcpServers = mcpServerNames();
       if (payload.auto) thread.messages.push({ role: 'Điều phối', text: content, time: new Date().toISOString() }); else { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); if (images.length) thread.messages.at(-1).attachments = images; }
       if (folderNote) thread.messages.push({ role: 'Hệ thống', text: folderNote, time: new Date().toISOString() });
@@ -277,6 +287,7 @@ app.whenReady().then(() => {
       run.message.profileId = profileId; run.message.model = worker.model;
       run.child.once('close', () => {
         chats.delete(activeKey);
+        if (compactOnly) { persist(); publish(); return; }
         const handoff = pipeline.parseHandoff(run.message.text);
         const assigned = (thread.dispatch || []).find(task => task.worker === payload.role && ['running', 'starting'].includes(task.status));
         // Ghi phiên CLI của task (kể cả khi bị tạm dừng/huỷ giữa chừng) để lần chạy lại tiếp tục phiên này (sendTask).
@@ -288,7 +299,7 @@ app.whenReady().then(() => {
         let proposalApplied = false;
         if (worker.type === LEAD && thread.leadPhase !== 'review' && !run.message.error) {
           const problems = [], proposal = require('./workers.cjs').taskPlan(run.message.text, thread, problems);
-          if (proposal && !(thread.dispatch || []).some(task => ACTIVE_TASK.includes(task.status))) { thread.taskDrafts = proposal; teamStore.update(metadata.team, 'apply-task-plan', { id: thread.id }); thread.dispatch = proposal.map(task => ({ ...task, status: 'queued' })); proposalApplied = true; recordTasks(thread, proposal, 'Lead phân công'); thread.messages.push({ role: 'Điều phối', text: 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.', time: new Date().toISOString() }); }
+          if (proposal && !(thread.dispatch || []).some(task => ACTIVE_TASK.includes(task.status))) { thread.taskDrafts = proposal; teamStore.update(metadata.team, 'apply-task-plan', { id: thread.id }); thread.dispatch = proposal.map(task => ({ ...task, status: 'pending' })); proposalApplied = true; recordTasks(thread, proposal, 'Lead phân công'); thread.messages.push({ role: 'Điều phối', text: 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.', time: new Date().toISOString() }); }
           // Lead không nhận lịch sử chat: lý do được lưu và chèn vào prompt lượt Lead kế tiếp (prompt.cjs), xoá khi kế hoạch hợp lệ.
           else if (!proposal) { thread.planProblems = problems.join('; '); thread.messages.push({ role: 'Điều phối', text: `Lead chưa xuất phân công tasks hợp lệ (${thread.planProblems}); không tự đoán hoặc chạy Dev. Lượt Lead tiếp theo sẽ nhận lý do này.`, time: new Date().toISOString() }); }
           if (proposal) delete thread.planProblems;
@@ -326,7 +337,7 @@ app.whenReady().then(() => {
     if (action === 'navigate') { if (!['index.html', 'dashboard.html'].includes(payload.page)) throw Error('Trang không hợp lệ'); await window.loadFile(path.join(__dirname, payload.page)); return; }
     if (action === 'team') { if (['remove-role', 'select-roles'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? busyLabels(thread) : []; }
       if (['archive', 'delete'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? threadBusy(thread) : []; }
-      if (payload.action === 'delete') { const thread = metadata.team.threads.find(item => item.id === payload.id); const result = teamStore.update(metadata.team, 'delete', payload); if (thread) fs.rmSync(path.join(root, 'attachments', thread.id), { recursive: true, force: true }); persist(); publish(); return result; } if (payload.action === 'worker-config' && payload.profileId) profile(payload.profileId); teamStore.update(structuredClone(metadata.team), payload.action, payload); const previousProfile = payload.action === 'worker-config' ? metadata.team.threads.find(thread => thread.id === payload.id)?.workers?.[payload.role]?.profileId : ''; const result = teamStore.update(metadata.team, payload.action, payload); persist(); publish(); if (payload.action === 'decision') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread?.auto?.enabled) background(thread, () => autoRun.runStage(thread)); } if (payload.action === 'worker-config' && payload.profileId && payload.profileId !== previousProfile) return await ensureAuth(payload.profileId); return result; }
+      if (payload.action === 'delete') { const thread = metadata.team.threads.find(item => item.id === payload.id); const result = teamStore.update(metadata.team, 'delete', payload); if (thread) fs.rmSync(path.join(root, 'attachments', thread.id), { recursive: true, force: true }); persist(); publish(); return result; } if (payload.action === 'worker-config' && payload.profileId) profile(payload.profileId); teamStore.update(structuredClone(metadata.team), payload.action, payload); const previousProfile = payload.action === 'worker-config' ? metadata.team.threads.find(thread => thread.id === payload.id)?.workers?.[payload.role]?.profileId : ''; const result = teamStore.update(metadata.team, payload.action, payload); persist(); publish(); if (payload.action === 'decision') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread?.auto?.enabled) background(thread, () => autoRun.decide(thread, payload.choice)); } if (payload.action === 'worker-config' && payload.profileId && payload.profileId !== previousProfile) return await ensureAuth(payload.profileId); return result; }
     if (action === 'add') {
       if (typeof payload.name !== 'string' || !payload.name.trim() || payload.name.length > 60) throw Error('Tên cần 1–60 ký tự');
       if (metadata.profiles.length >= 20) throw Error('Tối đa 20 hồ sơ');

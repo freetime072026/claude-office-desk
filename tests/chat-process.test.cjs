@@ -53,3 +53,12 @@ test('the "choose another mode" hint appears only for denials the user did not m
   const blocked = { text: 'ok', denied: ['Write'] }; consume(blocked, { type: 'result', permission_denials: [{ tool_name: 'Write' }, { tool_name: 'Bash' }] });
   assert.match(blocked.text, /Chọn mode phù hợp/);
 });
+test('sessions are never dropped: the CLI runs with --autocompact, and compaction is shown on the message', { skip, timeout: 20000 }, async () => {
+  const args = JSON.parse((await run('[args]', undefined, 'edit')).messages[0].text);
+  assert.equal(args[args.indexOf('--autocompact') + 1], '100k');
+  const { consume } = require('../chat.cjs');
+  const message = { text: '' };
+  consume(message, { type: 'system', subtype: 'status', status: 'compacting' }); assert.equal(message.progress.target, 'đang compact ngữ cảnh');
+  consume(message, { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 120000, post_tokens: 18000 } });
+  assert.deepEqual(message.compactions, [{ trigger: 'auto', before: 120000, after: 18000 }]);
+});

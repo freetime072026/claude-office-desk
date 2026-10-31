@@ -24,4 +24,6 @@ const MAX_TURNS = Object.freeze({ GD: 30, 'Lead Dev': 30, Dev: 40, VFX: 40, QA: 
 const DEV_TYPES = Object.freeze(['Dev', 'VFX']);
 const isDevType = type => DEV_TYPES.includes(type);
 const DEFAULT_MAX_TURNS = 30;
-module.exports = { defaults, roleKey, LEGACY_LEAD, DEFAULT_MODELS, FALLBACK_MODEL, DEFAULT_MODES, SHELL_TYPES, MAX_TURNS, DEFAULT_MAX_TURNS, DEV_TYPES, isDevType };
+// Ngưỡng tự compact của CLI (--autocompact, nhỏ nhất 100k): phiên không bao giờ bị bỏ, chỉ được tóm tắt khi chạm ngưỡng.
+const AUTOCOMPACT_WINDOW = '100k';
+module.exports = { defaults, roleKey, LEGACY_LEAD, DEFAULT_MODELS, FALLBACK_MODEL, DEFAULT_MODES, SHELL_TYPES, MAX_TURNS, DEFAULT_MAX_TURNS, AUTOCOMPACT_WINDOW, DEV_TYPES, isDevType };

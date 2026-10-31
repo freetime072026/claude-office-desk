@@ -68,13 +68,10 @@ test('the roster clips other blocks\' tasks; the full task appears once as "Task
   assert.equal(text.split(long).length - 1, 1);
 });
 
-test('rerunning a task continues its CLI session unless that session was already heavy', () => {
-  const { taskSession, continuationOf, RESUME_CONTEXT_LIMIT } = require('../dispatch.cjs');
-  const light = taskSession('s1', 'p:E:\game:Dev', { input: 10, cacheRead: 500000, cacheWrite: 90000, turns: 20 });
-  assert.deepEqual(light, { id: 's1', key: 'p:E:\game:Dev', contextAverage: 29501 });
-  assert.equal(continuationOf({ session: light }), light);
+test('rerunning a task always continues its CLI session, however large (the CLI compacts instead)', () => {
+  const { taskSession, continuationOf } = require('../dispatch.cjs');
   const heavy = taskSession('s2', 'k', { input: 120, cacheRead: 9114876, cacheWrite: 263672, turns: 109 });
-  assert.ok(heavy.contextAverage >= RESUME_CONTEXT_LIMIT); assert.equal(continuationOf({ session: heavy }), null);
+  assert.equal(continuationOf({ session: heavy }), heavy); assert.ok(heavy.contextAverage > 80000);
   assert.equal(continuationOf({}), null); assert.equal(taskSession('s3', 'k', undefined).contextAverage, 0);
 });
 
@@ -90,4 +87,13 @@ test('Agent calls are rewritten to the cheap read-only code-reader, run in the f
   assert.equal(decide({ scope: null, mode: 'edit', tool: 'Agent', input: {} }).action, 'deny');
   assert.match(cliTools('read', dev), /Agent/); assert.doesNotMatch(cliTools('read', roleScope('GD', files)), /Agent/);
   const agent = JSON.parse(agentsArg())[READER]; assert.deepEqual([agent.tools, agent.model], [['Read', 'Grep', 'Glob'], 'haiku']);
+});
+
+test('curl to the Unity-Skills ports without a timeout gets --max-time; other commands are untouched', () => {
+  const { withCurlTimeout, decide } = require('../permissions.cjs');
+  assert.equal(withCurlTimeout('curl -s -X POST "http://127.0.0.1:8090/skill/x" | python -c "x"'), 'curl --max-time 120 -s -X POST "http://127.0.0.1:8090/skill/x" | python -c "x"');
+  assert.equal(withCurlTimeout('curl.exe -s localhost:8091/health && curl -s localhost:8091/x'), 'curl.exe --max-time 120 -s localhost:8091/health && curl --max-time 120 -s localhost:8091/x');
+  for (const command of ['curl -m 5 http://127.0.0.1:8090/health', 'curl --max-time 9 localhost:8092/x', 'curl https://example.com', 'npm test', undefined]) assert.equal(withCurlTimeout(command), command);
+  const verdict = decide({ scope: { paths: [], bash: true, label: 'x' }, mode: 'edit', tool: 'Bash', input: { command: 'curl -s 127.0.0.1:8090/health', description: 'd' } });
+  assert.deepEqual([verdict.action, verdict.updatedInput.command, verdict.updatedInput.description], ['ask', 'curl --max-time 120 -s 127.0.0.1:8090/health', 'd']);
 });

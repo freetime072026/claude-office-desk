@@ -33,6 +33,8 @@ function ensureFiles(thread) {
 const stamp = () => new Date().toISOString();
 const clip = value => { const text = String(value || '').trim(); return text.length > SUMMARY_LIMIT ? text.slice(0, SUMMARY_LIMIT) + '…' : text; };
 function appendChange(thread, role, status, summary) { const files = ensureFiles(thread); if (files) fs.appendFileSync(files.changes, `\n## ${stamp()} · ${role} · ${status}\n${clip(summary) || '(không có tóm tắt)'}\n`); }
+// Ranh giới vòng (GD chốt thay đổi mới): ghi vào CHANGES.md để thay đổi các vòng không lẫn nhau; lịch sử cũ giữ nguyên.
+function appendRound(thread, round, summary) { const files = ensureFiles(thread); if (files) fs.appendFileSync(files.changes, `\n# Vòng ${round} · ${stamp()}\n${clip(summary) || '(GD chốt thay đổi mới)'}\n`); }
 // TASKS.md luôn phản ánh lượt phân công mới nhất; lượt cũ được giữ bên dưới để tra cứu.
 function writeTasks(thread, tasks, reason) {
   const files = ensureFiles(thread); if (!files) return;
@@ -40,4 +42,4 @@ function writeTasks(thread, tasks, reason) {
   const previous = fs.readFileSync(files.tasks, 'utf8').replace(TEMPLATES.tasks, '');
   fs.writeFileSync(files.tasks, TEMPLATES.tasks + block + (previous.trim() ? '\n---\n' + previous : ''));
 }
-module.exports = { DIR, filesOf, ensureFiles, appendChange, writeTasks, TEMPLATES };
+module.exports = { DIR, filesOf, ensureFiles, appendChange, appendRound, writeTasks, TEMPLATES };

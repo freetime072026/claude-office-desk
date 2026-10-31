@@ -25,6 +25,14 @@ const path = require('node:path');
 const { isDevType } = require('./roles.cjs');
 const { readerCall } = require('./subagent.cjs');
 const WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'];
+// Lưới an toàn: curl tới cổng Unity-Skills (8090–8100) mà không có timeout có thể chờ mãi khi Unity nạp lại domain
+// (lượt QA BaseTD treo đúng như vậy). App tự thêm --max-time cho mọi lệnh curl trong câu lệnh đó.
+const UNITY_PORTS = /\b(?:127\.0\.0\.1|localhost):(?:809\d|8100)\b/;
+const CURL_TIMEOUT_SECONDS = 120;
+function withCurlTimeout(command) {
+  if (typeof command !== 'string' || !UNITY_PORTS.test(command) || !/\bcurl\b/.test(command) || /--max-time|--connect-timeout|(^|\s)-m\s*\d/.test(command)) return command;
+  return command.replace(/\bcurl(\.exe)?(?=\s)/g, `curl$1 --max-time ${CURL_TIMEOUT_SECONDS}`);
+}
 const WEB = ['WebFetch', 'WebSearch'];
 function roleScope(type, files, devFiles = [], folder = '') {
   if (!files) return null;
@@ -54,11 +62,15 @@ function decide({ scope, mode, tool, input = {}, cwd = '' }) {
     return { action: 'deny', message: `Ngoài phạm vi ghi (${scope.label}): ${target}. Không ghi tệp khác; nếu cần sửa thêm, ghi rõ trong handoff để Lead giao lại.` };
   }
   if (tool === 'Bash') {
-    if (scope && !scope.bash) return { action: 'deny', message: `${scope.label}; không chạy lệnh shell.` };
-    // Role có quyền shell theo phạm vi (Lead, Dev, VFX, QA) luôn chạy được lệnh: Plan và Đọc & sửa hỏi từng lần, Bypass không hỏi.
-    if (scope?.bash) return { action: mode === 'bypass' ? 'allow' : 'ask' };
-    return { action: mode === 'bypass' ? 'allow' : mode === 'read' ? 'deny' : 'ask', ...(mode === 'read' ? { message: 'Mode Plan không chạy lệnh shell.' } : {}) };
+    const verdict = bashVerdict(scope, mode), command = withCurlTimeout(input.command);
+    return command === input.command || verdict.action === 'deny' ? verdict : { ...verdict, updatedInput: { ...input, command } };
   }
   return { action: 'ask' };
 }
-module.exports = { describeTool, roleScope, decide, inScope, scopesOverlap };
+function bashVerdict(scope, mode) {
+  if (scope && !scope.bash) return { action: 'deny', message: `${scope.label}; không chạy lệnh shell.` };
+  // Role có quyền shell theo phạm vi (Lead, Dev, VFX, QA) luôn chạy được lệnh: Plan và Đọc & sửa hỏi từng lần, Bypass không hỏi.
+  if (scope?.bash) return { action: mode === 'bypass' ? 'allow' : 'ask' };
+  return { action: mode === 'bypass' ? 'allow' : mode === 'read' ? 'deny' : 'ask', ...(mode === 'read' ? { message: 'Mode Plan không chạy lệnh shell.' } : {}) };
+}
+module.exports = { describeTool, roleScope, decide, inScope, scopesOverlap, withCurlTimeout };

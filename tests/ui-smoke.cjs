@@ -64,6 +64,23 @@ app.whenReady().then(async () => {
       if (!/Planning · QA 0\\/3/.test(byName('Lead Dev').querySelector('small').textContent)) throw Error('Lead phase label missing');
       if (!document.querySelector('#decision-banner')?.hidden) throw Error('Decision banner should be hidden');
     })()`);
+    // Tab Sơ đồ luồng: nút theo khối (Lead 3 pha + Hoàn tất), đổi điều kiện cạnh qua menu rồi lưu.
+    await window.webContents.executeJavaScript(`(async () => {
+      document.querySelector('#tab-graph').click();
+      if (document.querySelector('#graph-view').hidden || !document.querySelector('#activity').hidden) throw Error('Graph tab did not open');
+      const names = [...document.querySelectorAll('#graph-canvas .graph-node b')].map(node => node.textContent);
+      if (JSON.stringify(names) !== JSON.stringify(['GD', 'Lead Dev · lập kế hoạch', 'Dev', 'QA', 'Lead Dev · triage', 'Lead Dev · review', 'Hoàn tất'])) throw Error('Graph nodes: ' + names.join(', '));
+      if (document.querySelectorAll('#graph-edges path.graph-edge').length < 7) throw Error('Graph edges missing');
+      document.querySelector('#graph-edges .edge-tag').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const select = document.querySelector('.graph-edge-menu select'); if (!select) throw Error('Edge menu missing');
+      select.value = 'always'; select.dispatchEvent(new Event('change'));
+      if (document.querySelector('#graph-save').disabled) throw Error('Save not enabled after edit');
+      document.querySelector('#graph-save').click(); await new Promise(resolve => setTimeout(resolve, 200));
+      const thread = (await window.office.run('state')).team.threads.find(item => item.title === 'Test request');
+      if (!thread.graph.custom || !thread.graph.edges.some(edge => edge.when === 'always')) throw Error('Graph not saved: ' + JSON.stringify(thread.graph.edges));
+      document.querySelector('#tab-chat').click();
+      if (!document.querySelector('#graph-view').hidden) throw Error('Chat tab did not come back');
+    })()`);
     await window.webContents.executeJavaScript(`(async () => {
       document.querySelector('#new-thread').click();
       await new Promise(resolve => setTimeout(resolve, 150));

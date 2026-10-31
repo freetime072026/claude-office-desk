@@ -7,6 +7,7 @@ const { cleanEnv, sessionArgs, psLiteral } = require('./core.cjs');
 const { foldersOf, extraFolderArgs } = require('./usage.cjs');
 const { cliMode, cliTools, allowedFor } = require('./modes.cjs');
 const { agentsArg } = require('./subagent.cjs');
+const { AUTOCOMPACT_WINDOW } = require('./roles.cjs');
 const { resumeKey } = require('./workers.cjs');
 // Mô tả ngắn mục tiêu của một lượt gọi công cụ để hiển thị tiến độ (không lưu toàn bộ input).
 function targetOf(input = {}) {
@@ -44,6 +45,9 @@ function consume(message, event, seen = new Set()) {
     if (tools.length) message.tools = [...new Set([...(message.tools || []), ...tools])];
     message.deltaSeen = false;
   }
+  // Compact (tự động khi chạm ngưỡng hoặc lệnh /compact): hiện trạng thái và ghi số token trước/sau trên tin.
+  if (event.type === 'system' && event.subtype === 'status' && event.status === 'compacting') { const progress = progressOf(message); progress.lastTool = 'Compact'; progress.target = 'đang compact ngữ cảnh'; progress.updatedAt = new Date().toISOString(); }
+  if (event.type === 'system' && event.subtype === 'compact_boundary') { const meta = event.compact_metadata || {}; message.compactions = [...(message.compactions || []), { trigger: meta.trigger || '', before: count(meta.pre_tokens), after: count(meta.post_tokens) }]; progressOf(message).updatedAt = new Date().toISOString(); }
   if (event.type === 'result') {
     message.usage = usageOf(event);
     if (!message.text && event.result) message.text = event.result;
@@ -71,6 +75,8 @@ function launch({ executable, directory, settings, mcp, mcpServers = [], thread,
   args[args.indexOf('--permission-mode') + 1] = cliMode(thread.mode, scope);
   args[args.indexOf('--tools') + 1] = cliTools(thread.mode, scope);
   if (maxTurns) args.push('--max-turns', String(maxTurns));
+  // Không mở phiên mới: phiên được tiếp tục mãi và CLI tự compact khi ngữ cảnh chạm ngưỡng (như Claude Code trong Claude Desktop).
+  args.push('--autocompact', AUTOCOMPACT_WINDOW);
   // Truyền đường dẫn tệp: PowerShell 5.1 làm hỏng dấu " khi truyền JSON làm tham số cho chương trình ngoài.
   if (scope?.bash) { const agents = path.join(directory, 'agents.json'); fs.writeFileSync(agents, agentsArg()); args.push('--agents', agents); }
   args.push('--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--permission-prompt-tool', 'stdio', '--verbose', '--include-partial-messages', '--model', thread.model || 'claude-opus-5-5', ...extraFolderArgs(foldersOf(thread)), ...extraDirs.flatMap(dir => ['--add-dir', dir]), '--allowedTools', allowedFor(thread.mode, mcpServers));

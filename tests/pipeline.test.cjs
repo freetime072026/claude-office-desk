@@ -140,3 +140,33 @@ test('QA checks performance only after functional pass, and Lead review may send
   assert.equal(sent.length, before, 'second reject does not start another Dev round'); assert.equal(thread.reviewRejects, 1);
   assert.match(thread.messages.at(-1).text, /Review vẫn không đạt sau 1 lần sửa[\s\S]*Duplicate B/);
 });
+
+test('GD confirming a new problem after the flow moved on opens a new round from the step after GD', async () => {
+  const { thread, sent, auto } = harness();
+  await auto.after(thread, 'GD', reply('done'));
+  leadPlans(thread, tasksText(['Dev'])); await auto.after(thread, 'Lead Dev', { text: '' }, { proposalApplied: true });
+  devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  await auto.after(thread, 'QA', reply('pass')); assert.equal(thread.qaPhase, 'performance');
+  const before = sent.length;
+  await auto.after(thread, 'GD', reply('done'));
+  assert.equal(thread.flow[thread.stage], 'Lead Dev'); assert.equal(thread.leadPhase, 'planning'); assert.equal(thread.qaPhase, undefined);
+  assert.deepEqual(thread.dispatch, []); assert.equal(sent.at(-1), 'Lead Dev'); assert.equal(sent.length, before + 1);
+  assert.match(thread.messages.find(message => /mở vòng mới/.test(message.text)).text, /mở vòng mới: Lead Dev · lập kế hoạch/);
+});
+
+test('a new GD round waits while Dev tasks are still running, and a GD question (blocked) never restarts the flow', async () => {
+  const { thread, sent, auto } = harness();
+  await auto.after(thread, 'GD', reply('done'));
+  leadPlans(thread, tasksText(['Dev'])); await auto.after(thread, 'Lead Dev', { text: '' }, { proposalApplied: true });
+  const before = sent.length;
+  await auto.after(thread, 'GD', reply('done'));
+  assert.equal(thread.flow[thread.stage], 'Dev'); assert.equal(sent.length, before); assert.match(thread.messages.at(-1).text, /Dev còn đang làm/);
+  await auto.after(thread, 'GD', reply('blocked')); assert.equal(thread.flow[thread.stage], 'Dev');
+});
+
+test('a session that was done restarts when GD confirms a new change', async () => {
+  const { thread, sent, auto } = harness(['GD', 'Dev', 'QA']);
+  thread.status = 'done'; thread.stage = 2; thread.auto = { enabled: false };
+  await auto.after(thread, 'GD', reply('done'));
+  assert.equal(thread.auto.enabled, true); assert.equal(thread.status, 'working'); assert.equal(thread.flow[thread.stage], 'Dev'); assert.equal(sent.at(-1), 'Dev');
+});

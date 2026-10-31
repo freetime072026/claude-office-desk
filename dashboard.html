@@ -1,4 +1,4 @@
-<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>Office Desk · Team</title><link rel="stylesheet" href="team.css"><link rel="stylesheet" href="accounts.css"><link rel="stylesheet" href="attachments.css"><link rel="stylesheet" href="chat.css"><link rel="stylesheet" href="text.css"><link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css"><link rel="stylesheet" href="file-viewer.css"></head><body>
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>Office Desk · Team</title><link rel="stylesheet" href="team.css"><link rel="stylesheet" href="accounts.css"><link rel="stylesheet" href="attachments.css"><link rel="stylesheet" href="chat.css"><link rel="stylesheet" href="text.css"><link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css"><link rel="stylesheet" href="file-viewer.css"><link rel="stylesheet" href="graph.css"></head><body>
 <nav>
   <div class="brand">◈ Office Desk <small>TEAM WORKSPACE</small></div>
   <button id="new-thread" class="primary">＋ Session mới</button>
@@ -28,6 +28,13 @@
   <div id="decision-banner" role="alert" hidden><p id="decision-text"></p><button type="button" data-choice="continue">Tiếp tục thêm 1 vòng</button><button type="button" data-choice="accept">Chấp nhận với lỗi đã biết</button><button type="button" data-choice="stop">Dừng</button></div>
   <section id="flow-row"><div id="flow"></div><button id="role" type="button">＋ Role</button></section>
   <p id="dispatch-summary" role="status" hidden></p>
+  <div id="view-tabs" role="tablist"><button type="button" id="tab-chat" role="tab" aria-selected="true">💬 Hội thoại</button><button type="button" id="tab-graph" role="tab" aria-selected="false">🗺 Sơ đồ luồng</button></div>
+  <section id="graph-view" hidden>
+    <div class="graph-toolbar"><button type="button" id="graph-save" class="primary" disabled>Lưu sơ đồ</button><button type="button" id="graph-cancel" disabled>Huỷ thay đổi</button><button type="button" id="graph-reset">Đặt lại mặc định</button><span class="graph-zoom"><button type="button" id="graph-zoom-out" aria-label="Thu nhỏ">−</button><span id="graph-zoom-level">100%</span><button type="button" id="graph-zoom-in" aria-label="Phóng to">+</button><button type="button" id="graph-fit">Vừa khung</button></span><span id="graph-state" role="status"></span></div>
+    <p class="graph-hint">Kéo nút để sắp xếp · kéo từ chấm ● bên phải nút sang nút khác để nối · bấm nhãn trên cạnh để đổi điều kiện hoặc xoá. Một khối chạy khi có cạnh khớp dẫn tới nó và không còn khối nối vào nó đang chờ/chạy; Dev/VFX không được Lead giao task thì bỏ qua. Điều kiện: <b>xong</b> (xong/pass/bỏ qua) · <b>pass</b> · <b>issue</b> · <b>reject</b> · <b>luôn</b>.</p>
+    <p id="graph-empty" hidden>Thêm role để có sơ đồ luồng.</p>
+    <div class="graph-scroll"><div id="graph-sizer"><div id="graph-canvas"><svg id="graph-edges"></svg></div></div></div>
+  </section>
   <section id="activity"><div class="welcome"><h2>Từ ý tưởng đến kiểm thử</h2><p>Tạo session để bắt đầu: GD → Lead Dev → Dev → QA → Code Review.</p></div></section>
   <section id="issues"></section>
   <form id="composer">
@@ -78,4 +85,4 @@
 <dialog id="file-viewer"><h3 id="file-title"></h3><button type="button" id="file-copy">Copy nội dung</button><button type="button" id="file-close">Đóng</button><pre id="file-text"></pre></dialog>
 <dialog id="image-viewer"><h3 id="image-title"></h3><button type="button" id="image-close">Đóng</button><img id="image-view" alt=""></dialog>
 <dialog id="usage-viewer"><h3>Usage chính thức của hồ sơ CLI</h3><p>Nếu CLI hiện onboarding, hoàn tất tại đây rồi nhập /usage. Không tự gửi prompt AI.</p><button type="button" id="usage-close">Đóng</button><div id="usage-terminal"></div></dialog>
-<script src="chat-format.js"></script><script src="node_modules/@xterm/xterm/lib/xterm.js"></script><script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script><script src="team-ui.js"></script></body></html>
+<script src="chat-format.js"></script><script src="node_modules/@xterm/xterm/lib/xterm.js"></script><script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script><script src="team-ui.js"></script><script src="graph-ui.js"></script></body></html>
