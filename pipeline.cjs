@@ -3,6 +3,7 @@
 // Mọi thay đổi trạng thái team đi qua team.cjs (update) để giữ gate QA, giới hạn vòng và log.
 const { LEAD, ACTIVE_TASK, labelType, worker, taskPlan, openIssues } = require('./workers.cjs');
 const { isHalted } = require('./team.cjs');
+const { isDevType } = require('./roles.cjs');
 const { foldersOf } = require('./usage.cjs');
 const HANDOFF_STATUSES = Object.freeze(['done', 'blocked', 'issue', 'pass', 'reject']);
 const ROLE_VERBS = Object.freeze(['start', 'pause']);
@@ -39,7 +40,7 @@ function parseCommand(content, flow = []) {
   return { kind: 'role', label, verb: match[2].toLowerCase() };
 }
 
-const devIndexes = thread => thread.flow.flatMap((label, index) => labelType(thread, label) === 'Dev' ? [index] : []);
+const devIndexes = thread => thread.flow.flatMap((label, index) => isDevType(labelType(thread, label)) ? [index] : []);
 const roundDone = thread => Boolean(thread.dispatch?.length) && thread.dispatch.every(task => task.status === 'finished');
 const issueText = thread => openIssues(thread).map(issue => '- ' + issue.text).join('\n');
 // Task sửa khi không có khối tasks hợp lệ: giao lại cho các Dev của lượt trước (hoặc Dev đầu tiên).
@@ -88,7 +89,7 @@ function createAutoRun(deps) {
     if (worker(thread, label).paused) { note(thread, `${label} đang tạm dừng; dùng /role ${label} start để tiếp tục.`); return false; }
     if (isRunning(thread, label)) return false;
     if (thread.status === 'waiting') { thread.status = 'working'; log(thread, 'Tự động', 'Bắt đầu ' + label + (labelType(thread, label) === LEAD ? ' · pha ' + (thread.leadPhase || 'planning') : '')); }
-    if (labelType(thread, label) === 'Dev') return startDevs(thread);
+    if (isDevType(labelType(thread, label))) return startDevs(thread);
     changed();
     try {
       const result = await send(thread, label, stageText(thread, label));
@@ -136,7 +137,7 @@ function createAutoRun(deps) {
     }
     if (!active(thread) || worker(thread, label).paused) return;
     try {
-      if (type === 'Dev') {
+      if (isDevType(type)) {
         const stuck = (thread.dispatch || []).find(task => task.worker === label && ['blocked', 'failed'].includes(task.status));
         if (stuck) return note(thread, `${label} ${stuck.status === 'failed' ? 'lỗi' : 'bị chặn'}${stuck.error ? ': ' + stuck.error : ''}. Xử lý rồi dùng /role ${label} start hoặc Thử lại task bị chặn.`);
         if (devIndexes(thread).includes(thread.stage) && roundDone(thread)) { leaveDevs(thread); await runStage(thread); }

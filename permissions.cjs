@@ -21,6 +21,7 @@ function describeTool(tool, input = {}) {
 // GD chỉ ghi GDD và không chạy shell; Lead chỉ ghi PROJECT.md; QA chỉ ghi ISSUES/PERF; Dev chỉ ghi các tệp Lead giao.
 // null = không giới hạn (role tùy chỉnh, UI/UX, chat thường, Dev chưa có danh sách tệp).
 const path = require('node:path');
+const { isDevType } = require('./roles.cjs');
 const WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'];
 const WEB = ['WebFetch', 'WebSearch'];
 function roleScope(type, files, devFiles = [], folder = '') {
@@ -29,7 +30,7 @@ function roleScope(type, files, devFiles = [], folder = '') {
   if (type === 'Lead Dev') return { paths: [files.project], bash: true, label: 'Lead Dev chỉ ghi PROJECT.md' };
   if (type === 'QA') return { paths: [files.issues, files.perf], bash: true, label: 'QA chỉ ghi ISSUES.md và PERF.md' };
   // Giữ dấu / cuối để mục thư mục vẫn là thư mục sau khi resolve.
-  if (type === 'Dev' && devFiles.length) return { paths: devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), bash: true, label: 'Dev chỉ sửa các tệp Lead giao' };
+  if (isDevType(type) && devFiles.length) return { paths: devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), bash: true, label: type + ' chỉ sửa các tệp Lead giao' };
   return null;
 }
 const norm = value => path.resolve(value).toLowerCase();

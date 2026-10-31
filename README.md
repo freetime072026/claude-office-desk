@@ -1,5 +1,9 @@
 # Office Desk — Windows 11
 
+## Role VFX
+
+Thêm bằng **＋ Role → + VFX** (thêm nhiều lần thành VFX #2…). VFX là Dev chuyên hiệu ứng: đứng sau Dev, trước QA; Lead Dev giao task cho VFX trong cùng khối tasks với `files` riêng (ví dụ `Assets/VFX/`, `Assets/Shaders/`), không chồng tệp với Dev nên chạy song song với Dev; QA chỉ bắt đầu khi cả Dev và VFX của vòng đã xong. VFX chỉ đọc mục **VFX** trong GDD (GD ghi: hiệu ứng nào, cho sự kiện nào, cảm giác mong muốn, ảnh tham chiếu) và chỉ sửa tệp được giao. Prompt yêu cầu ưu tiên shader viết bằng code, tạo/sửa prefab, material, VFX Graph bằng script Editor thay vì sửa YAML/GUID tay. Claude không nhìn thấy hiệu ứng chạy: handoff của VFX ghi cách xem và cần kiểm tra trực quan gì; gửi kèm ảnh chụp (dán/kéo vào chat) để VFX chỉnh tiếp. QA pha performance đo thêm số particle, overdraw, draw call. Model mặc định Sonnet, giới hạn 60 lượt tool mỗi lượt chat.
+
 ## Ảnh tham chiếu trong chat
 
 Dán ảnh (Ctrl+V, ví dụ ảnh chụp màn hình) vào ô chat hoặc kéo thả ảnh vào cửa sổ: ảnh hiện thành thumbnail phía trên ô nhập, bấm × để bỏ, bấm ảnh để xem lớn. Nhận PNG, JPEG, WebP, GIF, tối đa 20 MB mỗi ảnh và 8 ảnh mỗi tin; định dạng kiểm bằng nội dung tệp, không theo đuôi. Clipboard có cả chữ (ví dụ copy từ Word) thì chữ vẫn được dán vào ô nhập.

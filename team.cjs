@@ -1,5 +1,5 @@
 const { randomUUID } = require('node:crypto');
-const { defaults, roleKey, LEGACY_LEAD } = require('./roles.cjs');
+const { defaults, roleKey, LEGACY_LEAD, isDevType } = require('./roles.cjs');
 const { PIPELINE, LEAD, QA_ROUND_LIMIT, ownsSession, typeOf, sortFlow, started, openIssues, worker, forgetWorker, addWorker, removable } = require('./workers.cjs');
 const HALTED = ['awaiting-decision', 'cancelled'];
 const initial = () => ({ projects: [], roles: [], threads: [] });
@@ -9,7 +9,7 @@ function text(value, limit = 12000) { if (typeof value !== 'string' || !value.tr
 function restartLoop(item) { item.stage = 0; item.status = 'waiting'; item.leadPhase = 'planning'; item.qaFailRounds = 0; delete item.qaPassedAt; delete item.qaPhase; delete item.reviewRejects; }
 function advance(item) { if (item.stage >= item.flow.length - 1) item.status = 'done'; else { item.stage++; item.status = 'waiting'; } }
 function toLead(item, phase) { const lead = indexOfType(item, LEAD); if (lead < 0) return false; item.stage = lead; item.leadPhase = phase; item.status = 'waiting'; return true; }
-function toDev(item, log) { const dev = indexOfType(item, 'Dev'); item.status = 'waiting'; if (dev < 0) log('Hệ thống', 'Không có Dev để sửa'); else item.stage = dev; }
+function toDev(item, log) { const dev = item.flow.findIndex(label => isDevType(typeOf(label))); item.status = 'waiting'; if (dev < 0) log('Hệ thống', 'Không có Dev để sửa'); else item.stage = dev; }
 function toTriage(item, log) { if (toLead(item, 'triage')) return; log('Hệ thống', 'Không có Lead Dev'); toDev(item, log); }
 function reviewOrDone(item) { if (!toLead(item, 'review')) item.status = 'done'; }
 function markQaPass(item) { item.qaPassedAt = new Date().toISOString(); item.qaFailRounds = 0; }

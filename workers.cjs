@@ -1,12 +1,12 @@
 const path = require('node:path');
-const { roleKey, DEFAULT_MODELS, FALLBACK_MODEL } = require('./roles.cjs');
+const { roleKey, DEFAULT_MODELS, FALLBACK_MODEL, DEV_TYPES, isDevType } = require('./roles.cjs');
 const { scopesOverlap } = require('./permissions.cjs');
 const FILES_LIMIT = 50;
 // Tệp Lead giao cho Dev: đường dẫn tương đối, không thoát khỏi thư mục chính. Thư mục kết thúc bằng /.
 const validFile = file => typeof file === 'string' && file.trim() && file.length <= 500 && !path.isAbsolute(file) && !file.split(/[\\/]/).includes('..');
 const resolvedFiles = (folder, files) => files.map(file => path.resolve(folder || '.', file) + (/[\\/]$/.test(file) ? path.sep : ''));
 // Thứ tự pipeline chuẩn (PLAN L-4). Role tùy chỉnh luôn đứng sau QA.
-const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Lead Dev', 'Dev', 'QA']);
+const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Lead Dev', 'Dev', 'VFX', 'QA']);
 const LEAD = 'Lead Dev';
 const QA_ROUND_LIMIT = 3;
 // 'paused': task bị /role <tên> pause; vẫn tính là việc dở (không cho xóa role, không thay phân công mới).
@@ -46,7 +46,7 @@ function workingReason(thread, label, busy) {
 }
 function hasRun(thread, label) { return (thread.messages || []).some(message => authoredBy(message, label)) || Object.keys(thread.cliSessions || {}).some(key => ownsSession(key, label)); }
 function idle(thread, label) {
-  if (labelType(thread, label) === LEAD && thread.flow.some(name => ['Dev', 'QA'].includes(typeOf(name)))) return false;
+  if (labelType(thread, label) === LEAD && thread.flow.some(name => [...DEV_TYPES, 'QA'].includes(typeOf(name)))) return false;
   return !thread.workers?.[label]?.task && !tasksOf(thread, label).length && !(thread.taskDrafts || []).some(task => task.worker === label) && !(thread.issues || []).some(issue => issue.owner === label) && !hasRun(thread, label);
 }
 function devPassed(thread, label) {
@@ -57,7 +57,7 @@ function devPassed(thread, label) {
 function passed(thread, label) {
   const type = labelType(thread, label), done = thread.status === 'done';
   if (type === LEAD) return done;
-  if (type === 'Dev') return devPassed(thread, label);
+  if (isDevType(type)) return devPassed(thread, label);
   const inReview = Boolean(thread.qaPassedAt) && thread.leadPhase === 'review';
   if (type === 'QA') return done || inReview;
   return done || thread.flow.indexOf(label) < thread.stage || inReview;
@@ -75,7 +75,7 @@ function taskPlan(text, thread) {
   const match = /```tasks\s*([\s\S]*?)```/.exec(text); if (!match) return null;
   try {
     const plan = JSON.parse(match[1]); if (!Array.isArray(plan.tasks) || !plan.tasks.length || plan.tasks.length > 30) return null;
-    const owners = new Set(); for (const task of plan.tasks) { if (!thread.flow.includes(task.worker) || worker(thread, task.worker).type !== 'Dev' || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return null; owners.add(task.worker); }
+    const owners = new Set(); for (const task of plan.tasks) { if (!thread.flow.includes(task.worker) || !isDevType(worker(thread, task.worker).type) || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return null; owners.add(task.worker); }
     // files bắt buộc và không chồng nhau giữa các Dev: điều kiện để Dev sửa song song không ghi đè nhau.
     if (plan.tasks.some(task => !Array.isArray(task.files) || !task.files.length || task.files.length > FILES_LIMIT || !task.files.every(validFile))) return null;
     const scopes = plan.tasks.map(task => resolvedFiles(thread.folder, task.files));

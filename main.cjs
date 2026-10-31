@@ -17,7 +17,7 @@ const { describeTool, decide, roleScope, scopesOverlap } = require('./permission
 const sessionFiles = require('./session-files.cjs');
 const attachments = require('./attachments.cjs');
 const { FILE_ROLES } = require('./prompt.cjs');
-const { MAX_TURNS, DEFAULT_MAX_TURNS } = require('./roles.cjs');
+const { MAX_TURNS, DEFAULT_MAX_TURNS, isDevType } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
 // policy = { scope, mode, cwd }: phạm vi ghi theo role được quyết định trước (decide), không hỏi người dùng.
@@ -266,7 +266,7 @@ app.whenReady().then(() => {
         const assigned = (thread.dispatch || []).find(task => task.worker === payload.role && ['running', 'starting'].includes(task.status));
         if (assigned) { assigned.status = run.message.error ? 'failed' : 'finished'; if (!run.message.error) assigned.finishedAt = new Date().toISOString(); if (!run.message.error && handoff?.status === 'blocked') { assigned.status = 'blocked'; assigned.error = handoff.summary || payload.role + ' báo bị chặn'; } if (run.message.maxTurns) { assigned.status = 'blocked'; assigned.error = 'Chạm giới hạn số lượt tool; kiểm tra rồi Thử lại task bị chặn'; } }
         // CHANGES.md do app ghi từ handoff của Dev (không tin model tự ghi), để QA và Lead review đọc.
-        if (files && worker.type === 'Dev' && handoff) { try { sessionFiles.appendChange(thread, payload.role, handoff.status, handoff.summary); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } }
+        if (files && isDevType(worker.type) && handoff) { try { sessionFiles.appendChange(thread, payload.role, handoff.status, handoff.summary); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } }
         let proposalApplied = false;
         if (worker.type === LEAD && thread.leadPhase !== 'review' && !run.message.error) {
           const proposal = require('./workers.cjs').taskPlan(run.message.text, thread);
