@@ -22,7 +22,7 @@ function harness(roles = ['GD', 'Lead Dev', 'Dev', 'QA'], { approve = true } = {
 // Mô phỏng phần main.cjs làm khi Lead trả tasks hợp lệ và khi Dev kết thúc lượt.
 function leadPlans(thread, text) { const proposal = taskPlan(text, thread); assert(proposal, 'tasks block must parse'); assert(!thread.dispatch?.some(task => ACTIVE_TASK.includes(task.status))); thread.dispatch = proposal.map(task => ({ ...task, status: 'queued' })); }
 function devFinishes(thread, label) { const task = thread.dispatch.find(item => item.worker === label && item.status === 'running'); task.status = 'finished'; task.finishedAt = new Date().toISOString(); }
-const tasksText = workers => 'Plan\n' + fence('tasks', { tasks: workers.map(worker => ({ worker, task: 'Làm phần của ' + worker })) });
+const tasksText = workers => 'Plan\n' + fence('tasks', { tasks: workers.map(worker => ({ worker, files: ['src/' + worker.replace(/\W/g, '') + '/'], task: 'Làm phần của ' + worker })) });
 
 test('parseHandoff takes the last valid block and rejects unknown statuses or bad JSON', () => {
   assert.equal(parseHandoff('no block'), null);
@@ -67,11 +67,13 @@ test('GD done starts the auto run: Lead → Dev → QA issue → triage → Dev 
 
   const issue = thread.issues[0].id;
   await auto.after(thread, 'QA', reply('pass', { retested: [{ id: issue, evidence: 'retest log' }] }));
-  assert.equal(thread.issues[0].closed, true); assert.equal(thread.flow[thread.stage], 'Lead Dev'); assert.equal(thread.leadPhase, 'review'); assert.equal(sent.at(-1), 'Lead Dev');
+  assert.equal(thread.issues[0].closed, true); assert.equal(thread.flow[thread.stage], 'QA'); assert.equal(thread.qaPhase, 'performance'); assert.equal(sent.at(-1), 'QA');
+  await auto.after(thread, 'QA', reply('pass'));
+  assert.equal(thread.flow[thread.stage], 'Lead Dev'); assert.equal(thread.leadPhase, 'review'); assert.equal(sent.at(-1), 'Lead Dev');
 
   await auto.after(thread, 'Lead Dev', reply('pass'));
   assert.equal(thread.status, 'done');
-  assert.deepEqual(sent, ['Lead Dev', 'Dev', 'QA', 'Lead Dev', 'Dev', 'QA', 'Lead Dev']);
+  assert.deepEqual(sent, ['Lead Dev', 'Dev', 'QA', 'Lead Dev', 'Dev', 'QA', 'QA', 'Lead Dev']);
 });
 
 test('auto run stops visibly on a missing handoff block, a blocked GD, a failed turn or when not approved', async () => {
@@ -111,8 +113,30 @@ test('Lead review reject without tasks reassigns the previous Dev and keeps QA r
   assert.equal(thread.flow[thread.stage], 'Dev', 'waits for every Dev of the round');
   devFinishes(thread, 'Dev #2'); await auto.after(thread, 'Dev #2', reply('done'));
   assert.equal(thread.flow[thread.stage], 'QA');
+  await auto.after(thread, 'QA', reply('pass')); assert.equal(thread.qaPhase, 'performance');
   await auto.after(thread, 'QA', reply('pass'));
   await auto.after(thread, 'Lead Dev', reply('reject', { summary: 'Duplicate: main.cjs:10' }));
+  assert.equal(thread.qaPhase, 'functional', 'code changed by review → QA restarts at functional');
   assert.equal(thread.leadPhase, 'planning'); assert.equal(thread.qaFailRounds, 0);
   assert.deepEqual(thread.dispatch.map(task => task.worker), ['Dev', 'Dev #2']); assert.match(thread.dispatch[0].task, /Duplicate: main.cjs:10/);
+});
+test('QA checks performance only after functional pass, and Lead review may send work back to Dev only once', async () => {
+  const { thread, sent, auto } = harness();
+  await auto.after(thread, 'GD', reply('done'));
+  leadPlans(thread, tasksText(['Dev'])); await auto.after(thread, 'Lead Dev', { text: '' }, { proposalApplied: true });
+  devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  await auto.after(thread, 'QA', reply('pass')); assert.equal(thread.qaPhase, 'performance'); assert.equal(sent.at(-1), 'QA');
+  await auto.after(thread, 'QA', reply('issue', { summary: 'GC Alloc 2 KB/frame' }));
+  assert.equal(thread.leadPhase, 'triage'); assert.equal(thread.qaPhase, 'performance', 'a performance issue is retested in the performance phase');
+  leadPlans(thread, tasksText(['Dev'])); await auto.after(thread, 'Lead Dev', { text: '' }, { proposalApplied: true });
+  devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  await auto.after(thread, 'QA', reply('pass', { retested: [{ id: thread.issues[0].id, evidence: '0 B/frame' }] }));
+  assert.equal(thread.leadPhase, 'review');
+  await auto.after(thread, 'Lead Dev', reply('reject', { summary: 'Duplicate A' })); assert.equal(thread.reviewRejects, 1);
+  devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  await auto.after(thread, 'QA', reply('pass')); await auto.after(thread, 'QA', reply('pass'));
+  const before = sent.length;
+  await auto.after(thread, 'Lead Dev', reply('reject', { summary: 'Duplicate B' }));
+  assert.equal(sent.length, before, 'second reject does not start another Dev round'); assert.equal(thread.reviewRejects, 1);
+  assert.match(thread.messages.at(-1).text, /Review vẫn không đạt sau 1 lần sửa[\s\S]*Duplicate B/);
 });

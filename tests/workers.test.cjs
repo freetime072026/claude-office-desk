@@ -6,7 +6,23 @@ test('R3: authoredBy and ownsSession match exact labels only', () => {
   assert.equal(ownsSession(resumeKey('p', 'C:\\g', 'Dev'), 'Dev'), true); assert.equal(ownsSession(resumeKey('p', 'C:\\g', 'Lead Dev'), 'Dev'), false); assert.equal(ownsSession(resumeKey('p', 'C:\\g', 'Dev #2'), 'Dev'), false);
 });
 test('multiple workers have independent account, model and task; transcript survives switching', () => { const team = initial(); const id = update(team, 'create', { request: 'Game' }); update(team, 'add-worker', { id, type: 'Dev' }); update(team, 'add-worker', { id, type: 'Dev' }); update(team, 'add-worker', { id, type: 'UI/UX' }); const thread = team.threads[0]; assert.deepEqual(thread.flow, ['UI/UX', 'Dev', 'Dev #2']); update(team, 'worker-config', { id, role: 'Dev', profileId: 'account-a', mode: 'edit', model: 'opus', task: 'UI scripts' }); update(team, 'worker-config', { id, role: 'Dev #2', profileId: 'account-b', mode: 'read', model: 'sonnet', task: 'Tests' }); assert.equal(worker(thread, 'Dev').model, 'opus'); assert.equal(worker(thread, 'Dev #2').profileId, 'account-b'); assert.notEqual(runKey(id, 'Dev'), runKey(id, 'Dev #2')); const before = JSON.stringify(thread.messages); update(team, 'worker-config', { id, role: 'Dev', profileId: 'account-b', mode: 'read', model: 'haiku', task: 'UI scripts' }); assert.equal(JSON.stringify(thread.messages), before); });
-test('Lead task drafts reject unknown/duplicate owners and apply only on explicit action', () => { const team = initial(); const id = update(team, 'create', {}); update(team, 'add-worker', { id, type: 'Dev' }); const thread = team.threads[0]; assert.equal(taskPlan('```tasks\n{"tasks":[{"worker":"missing","task":"x"}]}\n```', thread), null); thread.taskDrafts = taskPlan('```tasks\n{"tasks":[{"worker":"Dev","task":"Implement AC1, file UI.cs"}]}\n```', thread); assert.equal(worker(thread, 'Dev').task, ''); update(team, 'apply-task-plan', { id }); assert.match(worker(thread, 'Dev').task, /AC1/); assert.deepEqual(thread.taskDrafts, []); });
+test('Lead task drafts reject unknown/duplicate owners and apply only on explicit action', () => { const team = initial(); const id = update(team, 'create', {}); update(team, 'add-worker', { id, type: 'Dev' }); const thread = team.threads[0]; assert.equal(taskPlan('```tasks\n{"tasks":[{"worker":"missing","task":"x"}]}\n```', thread), null); thread.taskDrafts = taskPlan('```tasks\n{"tasks":[{"worker":"Dev","task":"Implement AC1, file UI.cs","files":["Assets/UI.cs"]}]}\n```', thread); assert.equal(worker(thread, 'Dev').task, ''); update(team, 'apply-task-plan', { id }); assert.match(worker(thread, 'Dev').task, /AC1/); assert.deepEqual(worker(thread, 'Dev').files, ['Assets/UI.cs']); assert.deepEqual(thread.taskDrafts, []); });
+test('Lead tasks need files per Dev, inside the project and not shared between Devs', () => {
+  const team = initial(); const id = update(team, 'create', {}); update(team, 'add-worker', { id, type: 'Dev' }); update(team, 'add-worker', { id, type: 'Dev' }); const thread = team.threads[0];
+  const plan = tasks => taskPlan('```tasks\n' + JSON.stringify({ tasks }) + '\n```', thread);
+  assert.equal(plan([{ worker: 'Dev', task: 'x' }]), null, 'files missing');
+  assert.equal(plan([{ worker: 'Dev', task: 'x', files: ['../outside.cs'] }]), null, 'escapes the project');
+  assert.equal(plan([{ worker: 'Dev', task: 'x', files: ['C:\\abs.cs'] }]), null, 'absolute path');
+  assert.equal(plan([{ worker: 'Dev', task: 'x', files: ['Assets/UI/'] }, { worker: 'Dev #2', task: 'y', files: ['Assets/UI/Menu.cs'] }]), null, 'Dev #2 file inside Dev folder');
+  assert.equal(plan([{ worker: 'Dev', task: 'x', files: ['Assets/A.cs'] }, { worker: 'Dev #2', task: 'y', files: ['assets/a.cs'] }]), null, 'same file, different case');
+  assert.deepEqual(plan([{ worker: 'Dev', task: 'x', files: ['Assets\\UI\\'] }, { worker: 'Dev #2', task: 'y', files: ['Assets/Game/Player.cs'] }]).map(task => task.files), [['Assets/UI/'], ['Assets/Game/Player.cs']]);
+});
+test('new blocks get the model of their role; existing blocks keep theirs', () => {
+  const team = initial(); const id = update(team, 'create', {}); const thread = team.threads[0];
+  for (const type of ['GD', 'Lead Dev', 'Dev', 'QA', 'UI/UX']) update(team, 'add-worker', { id, type });
+  assert.deepEqual(['GD', 'Lead Dev', 'Dev', 'QA', 'UI/UX'].map(label => worker(thread, label).model), ['claude-opus-5-5', 'claude-opus-5-5', 'sonnet', 'sonnet', 'sonnet']);
+  thread.workers.QA.model = 'haiku'; assert.equal(worker(thread, 'QA').model, 'haiku');
+});
 
 const session = (flow, extra = {}) => { const team = initial(); const id = update(team, 'create', { request: 'Game' }); const thread = team.threads[0]; for (const type of flow) update(team, 'add-worker', { id, type }); Object.assign(thread, extra); return { team, id, thread }; };
 

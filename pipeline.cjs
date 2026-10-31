@@ -7,6 +7,8 @@ const { foldersOf } = require('./usage.cjs');
 const HANDOFF_STATUSES = Object.freeze(['done', 'blocked', 'issue', 'pass', 'reject']);
 const ROLE_VERBS = Object.freeze(['start', 'pause']);
 const SUMMARY_LIMIT = 4000;
+// Lead review không đạt thì cho Dev sửa thêm đúng 1 lần; lần sau vẫn không đạt thì dừng chờ người dùng.
+const REVIEW_RETRY_LIMIT = 1;
 const TASK_LIMIT = 11000;
 const clipText = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
 const now = () => new Date().toISOString();
@@ -60,7 +62,7 @@ function stageText(thread, label) {
 // deps: update(thread, action, payload), send(thread, label, text) → kết quả chat-send, pump(thread), log(thread, role, text),
 // changed(), approve(thread) → Promise<boolean>, isRunning(thread, label) → boolean.
 function createAutoRun(deps) {
-  const { update, send, pump, log, changed, approve, isRunning } = deps;
+  const { update, send, pump, log, changed, approve, isRunning, recordTasks = () => {} } = deps;
   const active = thread => Boolean(thread.auto?.enabled) && !isHalted(thread) && thread.status !== 'done';
   const note = (thread, text) => { log(thread, 'Tự động', text); changed(); };
 
@@ -105,17 +107,22 @@ function createAutoRun(deps) {
     if (!handoff) return note(thread, `${label} chưa xuất khối handoff hợp lệ; dừng tự động ở bước review.`);
     if (handoff.status === 'pass' || handoff.status === 'done') { update(thread, 'handoff', { text: handoff.summary || 'Review đạt', auto: true }); return note(thread, 'Lead review đạt · session hoàn tất.'); }
     if (handoff.status === 'reject') {
+      if ((thread.reviewRejects || 0) >= REVIEW_RETRY_LIMIT) return note(thread, `Review vẫn không đạt sau ${REVIEW_RETRY_LIMIT} lần sửa; dừng tự động để bạn quyết định. Mục chưa đạt: ${handoff.summary || '(không ghi)'}`);
+      thread.reviewRejects = (thread.reviewRejects || 0) + 1; thread.qaPhase = 'functional';
       update(thread, 'review-reject', { text: handoff.summary || 'Review không đạt' });
       if (!devIndexes(thread).length) return note(thread, 'Review không đạt nhưng không có Dev để sửa.');
       const tasks = taskPlan(message.text, thread) || fallbackTasks(thread, handoff.summary || 'Review không đạt');
-      thread.dispatch = tasks.map(task => ({ ...task, status: 'queued' })); thread.status = 'working'; changed(); await pump(thread); return;
+      thread.dispatch = tasks.map(task => ({ ...task, status: 'queued' })); recordTasks(thread, tasks, 'Review không đạt · sửa lần ' + thread.reviewRejects); thread.status = 'working'; changed(); await pump(thread); return;
     }
     return note(thread, `Lead Dev cần người dùng: ${handoff.summary || handoff.status}`);
   }
+  // QA hai pha: chức năng (theo GDD/AC) → khi hết Issue và không có Issue mới mới sang performance (GC Alloc, CPU, GPU).
   async function afterQa(thread, handoff) {
     if (handoff.status === 'issue') { update(thread, 'issue', { text: handoff.summary || 'QA báo lỗi' }); return runStage(thread); }
     if (handoff.status !== 'pass') return note(thread, 'QA cần người dùng: ' + (handoff.summary || handoff.status));
     for (const item of handoff.retested) if (openIssues(thread).some(issue => issue.id === item.id)) update(thread, 'retest', { issue: item.id, text: item.evidence || handoff.summary || 'QA retest đạt' });
+    if (openIssues(thread).length) return note(thread, `QA pass nhưng còn ${openIssues(thread).length} Issue chưa ghi retest; dừng tự động.`);
+    if (thread.qaPhase !== 'performance') { thread.qaPhase = 'performance'; thread.status = 'waiting'; note(thread, 'Hết Issue chức năng · QA chuyển sang kiểm performance.'); return runStage(thread); }
     update(thread, 'handoff', { text: handoff.summary || 'QA pass', auto: true }); return runStage(thread);
   }
   // Gọi sau mỗi lượt chat của một khối (main.cjs, sự kiện close).

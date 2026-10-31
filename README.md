@@ -1,5 +1,39 @@
 # Office Desk — Windows 11
 
+## Quy trình theo tệp .md (giảm token)
+
+Trạng thái chung nằm trong tệp, không nằm trong lịch sử chat. App tạo trong thư mục chính của session:
+
+| Tệp | Ai ghi | Ai đọc |
+|---|---|---|
+| `.office-desk/PROJECT.md` (dùng chung mọi session của project) | Lead Dev | Lead Dev, Dev |
+| `.office-desk/<session>/GDD.md` | GD | Lead Dev (phần Dev), QA |
+| `.office-desk/<session>/TASKS.md` | App, từ khối tasks của Lead | Người dùng, Lead |
+| `.office-desk/<session>/ISSUES.md` | QA | Lead Dev |
+| `.office-desk/<session>/PERF.md` | QA (pha performance) | Lead Dev |
+| `.office-desk/<session>/CHANGES.md` | App, từ handoff của Dev | QA, Lead review |
+
+**Quy tắc app thực thi** (không chỉ dặn trong prompt): GD chỉ ghi GDD.md và không chạy shell; Lead Dev chỉ ghi PROJECT.md; QA chỉ ghi ISSUES.md/PERF.md; Dev chỉ sửa các tệp Lead giao trong `files` của khối tasks. Ghi ngoài phạm vi bị app từ chối kèm lý do; ghi trong phạm vi không hỏi. Role có phạm vi luôn chạy CLI ở permission mode `default` để mọi lần ghi đi qua app; mode chọn ở panel quyết định shell (Plan: không shell, Đọc & sửa/Auto: hỏi, Bypass: không hỏi).
+
+**Luồng.** GD làm rõ yêu cầu với bạn và ghi GDD (US/AC, phân việc theo khối, ngân sách performance) → Lead Dev chia task, mỗi task có `files` không chồng nhau → các Dev **sửa song song** khi tệp không trùng (app kiểm theo tệp thay vì theo thư mục) → khi mọi Dev xong, QA kiểm theo GDD/AC, ghi ISSUES.md → Lead lập lại kế hoạch sửa → khi hết Issue và không có Issue mới, QA chuyển sang **pha performance** (GC Alloc, CPU, GPU theo ngân sách trong GDD; GDD ghi "Không áp dụng" thì bỏ qua) → Lead review (clean, gộp code trùng). Review không đạt thì Dev sửa thêm **đúng 1 lần**; lần sau vẫn không đạt thì dừng chờ bạn.
+
+**Token.** Lead/Dev/QA không nhận lịch sử chat và mở phiên CLI mới mỗi lượt (không resume phiên phình mãi); Dev không nhận GDD và danh sách đội. GD vẫn nhận hội thoại vì cần trao đổi với bạn. Lịch sử gửi cho GD bỏ tin hệ thống, tin điều phối và tin lỗi. Khối mới: GD và Lead dùng Opus 5.5, Dev/QA/UI/UX dùng Sonnet (khối cũ giữ model đã lưu). Giới hạn lượt tool mỗi lượt chat: GD 30, Lead 30, Dev 60, QA 40; chạm giới hạn thì task bị chặn để bạn kiểm tra. Panel phải có nút mở từng tệp .md và danh sách tệp Dev được sửa.
+
+Thư mục `.office-desk/` nằm trong project của bạn; tự quyết có thêm vào `.gitignore` của project hay không. Đã thử với Claude Code thật: Dev bị chặn ghi tệp ngoài danh sách, GD ở mode Plan ghi được GDD.md và không có shell. Chưa chạy trọn một vòng GD → Lead → Dev → QA → review bằng tài khoản thật.
+
+## Duyệt từng thao tác, thêm web/notebook/danh sách việc
+
+**Duyệt từng thao tác.** Lượt chat chạy Claude Code ở chế độ stream-json hai chiều (`--input-format stream-json --permission-prompt-tool stdio`): khi Claude muốn ghi/sửa tệp, chạy lệnh shell hoặc đọc web, CLI hỏi app và app hiện hộp **Duyệt thao tác** với nội dung cụ thể: lệnh shell, diff `-`/`+` của Edit, nội dung Write, URL/từ khoá web. Chọn Từ chối thì Claude nhận lý do và đổi hướng; tick **Luôn cho phép <tool> tới hết lượt này** để không bị hỏi lại tool đó trong lượt. Khối đang chờ hiển thị "chờ bạn duyệt …"; thẻ tin ghi các thao tác bạn đã từ chối.
+
+| Mode | Tool có | Hỏi |
+|---|---|---|
+| Plan | Read, Glob, Grep, TodoWrite, WebFetch, WebSearch | Web hỏi từng lần |
+| Đọc & sửa | + Write, Edit, NotebookEdit, Bash | Mọi ghi/sửa/shell/web hỏi từng lần (không còn hỏi trước cả lượt) |
+| Auto | như Đọc & sửa | CLI tự xét trước, chỉ hỏi khi cần; web hỏi từng lần |
+| Bypass | như Đọc & sửa, **không có web** | Không duyệt từng thao tác; chỉ hỏi trước lượt khi thư mục ở ổ được bảo vệ |
+
+Lượt do bộ chạy tự động gửi (đã duyệt một lần khi bật) tự cho phép từng thao tác, **trừ web vẫn hỏi**. Subagent, trình duyệt, hooks và plugin vẫn tắt. Web luôn hỏi nhờ quy tắc `ask` trong settings do app tạo (thiếu quy tắc này, mode plan của CLI tự cho chạy WebSearch). Đã chạy thử với Claude Code 2.1.316 và tài khoản thật (model haiku) qua `chat.cjs`: Write/Bash/WebFetch hỏi và chạy được, từ chối thì không tạo tệp và Claude báo lại, Plan không ghi được, web ở Plan/Auto hỏi, Bypass không có web, resume phiên cũ giữ ngữ cảnh. Hộp thoại Electron (bấm tay) chưa được chạy cùng CLI thật trong kiểm thử tự động.
+
 ## Bố cục mới, lưu trữ/xoá/chuyển session
 
 **Bố cục 3 cột.** Sidebar session · hội thoại · panel khối bên phải. Bấm một khối trên sơ đồ để chọn: panel hiển thị tiến độ, tài khoản, mode, model, task và (mục thu gọn) trách nhiệm/yêu cầu riêng, tự lưu khi rời ô. Không có role thì panel là cấu hình chat thường. Nút **▣ Khối** ẩn/hiện panel (nhớ theo máy). Header chỉ còn tiêu đề, token, **📁 Thư mục** và menu **⋯** (Ghim, Chuyển tới dự án, Sửa yêu cầu, Thử lại task bị chặn, Lưu trữ). **＋ Role** nằm cuối sơ đồ khối. Các nút bàn giao thủ công (Bắt đầu bước, Bàn giao, Issue → Lead, Review không đạt) gom vào menu **Thủ công** dưới ô nhập.
@@ -10,7 +44,7 @@
 
 **Shell và MCP.** Mode Đọc & sửa, Auto và Bypass có thêm Bash (shell). Plan vẫn chỉ đọc. MCP server khai báo trong `%APPDATA%/office-desk/mcp-servers.json` (`/mcp open` để mở, `/mcp` để xem danh sách); chỉ nạp các server trong tệp này (`--strict-mcp-config`). Ở mode Đọc & sửa, tool `mcp__<tên>` được cho phép sẵn; Auto để CLI xét; Bypass bỏ duyệt. Tên server chỉ gồm chữ, số, `_`, `-`; tệp sai cú pháp thì lượt chat báo lỗi, không bỏ qua ngầm. Tool Read/Grep/Glob vẫn bị chặn đọc `.env`, `.pem`, khóa SSH, `.credentials.json`, nhưng **lệnh shell vẫn đọc được các tệp này** (ví dụ `type .env`): chỉ mode Plan thực sự không đọc được. Không đặt thư mục chứa bí mật vào session có Bash. Shell chạy với quyền tài khoản Windows của bạn — không phải sandbox.
 
-**Xác nhận.** Đọc & sửa/Auto hỏi mỗi lượt. **Bypass chỉ hỏi khi có thư mục của session nằm ở ổ C, ổ cài Windows, ổ chứa hồ sơ người dùng hoặc thư mục mạng** (kể cả ổ mạng đã map, ổ `subst` và junction trỏ vào các nơi đó); thư mục ở ổ khác chạy ngay. Duyệt chạy tự động một lần chỉ còn hiệu lực khi mode các khối và danh sách thư mục giữ nguyên; đổi một trong hai thì lượt tự động hỏi lại.
+**Xác nhận.** Đọc & sửa/Auto duyệt từng thao tác (xem mục trên; trước đây hỏi một lần mỗi lượt). **Bypass chỉ hỏi khi có thư mục của session nằm ở ổ C, ổ cài Windows, ổ chứa hồ sơ người dùng hoặc thư mục mạng** (kể cả ổ mạng đã map, ổ `subst` và junction trỏ vào các nơi đó); thư mục ở ổ khác chạy ngay. Duyệt chạy tự động một lần chỉ còn hiệu lực khi mode các khối và danh sách thư mục giữ nguyên; đổi một trong hai thì lượt tự động hỏi lại.
 
 **Đường dẫn trong tin nhắn.** Thư mục được cấp/đổi từ tin nhắn được ghi lại trong hội thoại. Gốc ổ đĩa, thư mục Windows, Program Files và ProgramData không được tự cấp; dùng Thêm thư mục nếu thật sự cần.
 

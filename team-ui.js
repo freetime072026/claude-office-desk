@@ -5,7 +5,7 @@
   const names = { waiting: 'Chờ thực hiện', working: 'Đang làm', done: 'Hoàn tất', 'awaiting-decision': 'Chờ quyết định', cancelled: 'Đã dừng' };
   const phaseNames = { planning: 'Planning', triage: 'Triage', review: 'Review' };
   const taskNames = { queued: 'Chờ lượt/phụ thuộc', starting: 'Đang chuẩn bị', running: 'Đang thực hiện', finished: 'Đã trả kết quả · chưa QA', failed: 'Lỗi thực thi', blocked: 'Bị chặn', cancelled: 'Đã dừng', paused: 'Tạm dừng' };
-  const MODES = [['read', 'Plan · chỉ đọc'], ['edit', 'Đọc & sửa tệp · xác nhận mỗi lượt'], ['auto', 'Auto · CLI tự xét quyền'], ['bypass', 'Bypass · bỏ duyệt tệp']];
+  const MODES = [['read', 'Plan · chỉ đọc'], ['edit', 'Đọc & sửa · duyệt từng thao tác'], ['auto', 'Auto · CLI tự xét quyền'], ['bypass', 'Bypass · bỏ duyệt tệp']];
   const MODELS = [['claude-opus-5-5', 'Opus 5.5'], ['sonnet', 'Sonnet'], ['opus', 'Opus'], ['haiku', 'Haiku']];
   const COMMANDS = [['/model', 'Chọn model'], ['/status', 'Cấu hình session'], ['/role', 'Chạy/tạm dừng khối: /role <tên> start|pause'], ['/chot', 'Chốt GD, chạy tự động các bước sau'], ['/auto', 'Bật/tắt tự động: /auto on|off'], ['/mcp', 'MCP server (/mcp open để sửa)'], ['/usage', 'Usage nhận từ CLI'], ['/help', 'Trợ giúp']];
   const TAKES_ARGS = ['/role', '/auto'];
@@ -158,6 +158,7 @@
     const progress = message.progress; if (!progress?.startedAt) return '';
     const steps = progress.steps ? ` · ${progress.steps} bước` : '';
     if (!message.streaming) return progress.finishedAt ? `✓ Xong sau ${elapsed(Date.parse(progress.finishedAt) - Date.parse(progress.startedAt))}${steps}` : '';
+    if (progress.waiting) return `⏸ ${elapsed(Date.now() - Date.parse(progress.startedAt))} · chờ bạn duyệt ${progress.waiting}${steps}`;
     const doing = progress.lastTool ? progress.lastTool + (progress.target ? ' ' + progress.target : '') : message.text ? 'đang viết trả lời' : 'đang suy nghĩ';
     return `● ${elapsed(Date.now() - Date.parse(progress.startedAt))} · ${doing}${steps}`;
   }
@@ -211,6 +212,7 @@
     const running = role ? runningOf(thread, role) : thread?.messages.findLast(message => message.role === 'Claude' && message.streaming);
     get('#panel-state').textContent = !thread ? 'Chưa có session' : running ? progressText(running) : role ? blockLabel(thread, role, thread.flow.indexOf(role)) : 'Không role · chạy Claude Code thường';
     for (const id of ['#account-field', '#task-field', '#role-texts']) get(id).hidden = !role;
+    paintSessionFiles(thread, role);
     for (const field of document.querySelectorAll('#panel select, #panel textarea')) field.disabled = !thread || thread.archived;
     setField(get('#chat-mode'), config.mode || thread?.mode || 'read', force); setField(get('#chat-model'), config.model || thread?.model || 'claude-opus-5-5', force);
     if (force) get('#panel-saved').textContent = '';
@@ -219,6 +221,17 @@
     setField(get('#worker-task'), config.task || '', force);
     const type = roleType(thread, role), base = team.roleTemplates?.[type] || defaultRoles[type] || {};
     setField(get('#role-responsibility'), base.responsibility || '', force); setField(get('#role-output'), base.output || '', force); setField(get('#role-instructions'), thread.roleConfig?.[type]?.instructions || '', force);
+  }
+  // Tệp .md của session (session-files.cjs) mở bằng trình xem tệp; tệp chỉ có sau lượt chạy role đầu tiên.
+  const SESSION_FILES = [['GDD.md', 'GDD'], ['TASKS.md', 'Tasks'], ['ISSUES.md', 'Issues'], ['PERF.md', 'Perf'], ['CHANGES.md', 'Changes']];
+  function paintSessionFiles(thread, role) {
+    const files = role ? thread.workers?.[role]?.files || [] : [];
+    get('#worker-files').hidden = !files.length; get('#worker-files').textContent = 'Tệp được sửa: ' + files.join(', ');
+    const box = get('#session-files'); box.hidden = !thread?.flow.length || !thread.folder; if (box.hidden) return;
+    const base = thread.folder.replace(/[\\/]+$/, '') + '\\.office-desk\\';
+    const links = [['PROJECT.md', 'Project', base + 'PROJECT.md'], ...SESSION_FILES.map(([name, title]) => [name, title, base + thread.id + '\\' + name])];
+    const key = links.map(link => link[2]).join('|'); if (box.dataset.key === key) return; box.dataset.key = key;
+    box.querySelector('.file-links').replaceChildren(...links.map(([name, title, file]) => make('button', { type: 'button', textContent: title, title: file, onclick: () => window.openChatFile(file) })));
   }
   async function saveWorker() {
     const thread = current(); if (!thread) return; const saved = get('#panel-saved');
@@ -237,7 +250,7 @@
   const cardCache = new Map(); let cachedThread;
   const messageKey = (message, index) => message.id || `${index}:${message.time}:${message.role}`;
   const profileName = id => knownProfiles.find(profile => profile.id === id)?.name || 'Hồ sơ';
-  const signature = message => [message.text, message.streaming, message.error, (message.tools || []).join(','), message.profileId, message.model, message.profileId ? profileName(message.profileId) : '', JSON.stringify(message.usage || null)].join('\u0000');
+  const signature = message => [message.text, message.streaming, message.error, (message.tools || []).join(','), message.profileId, message.model, message.profileId ? profileName(message.profileId) : '', JSON.stringify(message.usage || null), (message.denied || []).join(','), message.progress?.waiting || ''].join('\u0000');
   function updateProgress(card, message) { const node = card.querySelector('.run-progress'); if (node) node.textContent = progressText(message); }
   function buildCard(message) {
     const card = make('article'), header = make('header');
@@ -246,6 +259,7 @@
     if (message.progress) { const progress = make('small', { className: 'run-progress' }); progress.setAttribute('aria-live', 'polite'); card.append(progress); updateProgress(card, message); }
     if (message.streaming) card.classList.add('streaming'); if (message.error) card.classList.add('chat-error');
     if (message.tools?.length) card.append(make('small', { textContent: 'Công cụ: ' + message.tools.join(', ') }));
+    if (message.denied?.length) card.append(make('small', { className: 'run-denied', textContent: 'Bạn đã từ chối: ' + message.denied.join(', ') }));
     if (message.usage) { const usage = addUsage({}, message.usage); card.append(make('small', { className: 'run-usage', textContent: 'Token: ' + usageText(usage), title: usageDetail(usage) })); }
     return card;
   }

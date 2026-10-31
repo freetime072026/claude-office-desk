@@ -1,4 +1,10 @@
-const { roleKey } = require('./roles.cjs');
+const path = require('node:path');
+const { roleKey, DEFAULT_MODELS, FALLBACK_MODEL } = require('./roles.cjs');
+const { scopesOverlap } = require('./permissions.cjs');
+const FILES_LIMIT = 50;
+// Tệp Lead giao cho Dev: đường dẫn tương đối, không thoát khỏi thư mục chính. Thư mục kết thúc bằng /.
+const validFile = file => typeof file === 'string' && file.trim() && file.length <= 500 && !path.isAbsolute(file) && !file.split(/[\\/]/).includes('..');
+const resolvedFiles = (folder, files) => files.map(file => path.resolve(folder || '.', file) + (/[\\/]$/.test(file) ? path.sep : ''));
 // Thứ tự pipeline chuẩn (PLAN L-4). Role tùy chỉnh luôn đứng sau QA.
 const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Lead Dev', 'Dev', 'QA']);
 const LEAD = 'Lead Dev';
@@ -15,7 +21,8 @@ const tasksOf = (thread, label) => (thread.dispatch || []).filter(task => task.w
 // Nguồn duy nhất cho "khóa phiên CLI thuộc nhãn" và "tin nhắn do nhãn viết" (gồm 'X · bàn giao thủ công').
 const ownsSession = (key, label) => key.endsWith(':' + label);
 const authoredBy = (message, label) => message.role === label || String(message.role).startsWith(label + ' · ');
-function worker(thread, label) { thread.workers ||= {}; return thread.workers[label] ||= { type: typeOf(label), mode: thread.mode || 'read', model: thread.model || 'claude-opus-5-5', profileId: '', task: '' }; }
+// US-02: khối mới lấy model theo role (roles.cjs); khối đã có giữ model đã lưu.
+function worker(thread, label) { thread.workers ||= {}; const type = typeOf(label); return thread.workers[label] ||= { type, mode: thread.mode || 'read', model: DEFAULT_MODELS[type] || FALLBACK_MODEL, profileId: '', task: '' }; }
 function forgetWorker(thread, label) {
   if (thread.workers) delete thread.workers[label];
   for (const key of Object.keys(thread.cliSessions || {})) if (ownsSession(key, label)) delete thread.cliSessions[key];
@@ -69,9 +76,13 @@ function taskPlan(text, thread) {
   try {
     const plan = JSON.parse(match[1]); if (!Array.isArray(plan.tasks) || !plan.tasks.length || plan.tasks.length > 30) return null;
     const owners = new Set(); for (const task of plan.tasks) { if (!thread.flow.includes(task.worker) || worker(thread, task.worker).type !== 'Dev' || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return null; owners.add(task.worker); }
+    // files bắt buộc và không chồng nhau giữa các Dev: điều kiện để Dev sửa song song không ghi đè nhau.
+    if (plan.tasks.some(task => !Array.isArray(task.files) || !task.files.length || task.files.length > FILES_LIMIT || !task.files.every(validFile))) return null;
+    const scopes = plan.tasks.map(task => resolvedFiles(thread.folder, task.files));
+    if (scopes.some((scope, index) => scopes.slice(index + 1).some(other => scopesOverlap(scope, other)))) return null;
     for (const task of plan.tasks) if (task.dependsOn !== undefined && (!Array.isArray(task.dependsOn) || task.dependsOn.some(owner => !owners.has(owner) || owner === task.worker))) return null;
     const visited = new Set(); for (let count = 0; count < plan.tasks.length; count++) for (const task of plan.tasks) if ((task.dependsOn || []).every(owner => visited.has(owner))) visited.add(task.worker); if (visited.size !== owners.size) return null;
-    return plan.tasks.map(task => ({ worker: task.worker, task: task.task, ...(task.dependsOn?.length ? { dependsOn: [...new Set(task.dependsOn)] } : {}) }));
+    return plan.tasks.map(task => ({ worker: task.worker, task: task.task, files: [...new Set(task.files.map(file => file.trim().replaceAll('\\', '/')))], ...(task.dependsOn?.length ? { dependsOn: [...new Set(task.dependsOn)] } : {}) }));
   } catch { return null; }
 }
 module.exports = { PIPELINE, LEAD, QA_ROUND_LIMIT, ACTIVE_TASK, ownsSession, authoredBy, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, runKey, resumeKey, removable, taskPlan };

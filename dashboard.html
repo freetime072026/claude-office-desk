@@ -60,6 +60,8 @@
   <label>Mode<select id="chat-mode" aria-label="Mode"></select></label>
   <label>Model<select id="chat-model" aria-label="Model"></select></label>
   <label id="task-field">Task<textarea id="worker-task" aria-label="Task riêng của khối" placeholder="Task được Lead giao: owner, phạm vi file, AC, phụ thuộc…"></textarea></label>
+  <small id="worker-files" hidden></small>
+  <div id="session-files" hidden><small>Tệp session</small><div class="file-links"></div></div>
   <details id="role-texts"><summary>Trách nhiệm & yêu cầu riêng</summary>
     <small>Mặc định của role (dùng cho session sau)</small>
     <textarea id="role-responsibility" aria-label="Trách nhiệm mặc định" maxlength="6000"></textarea>
@@ -68,7 +70,7 @@
     <textarea id="role-instructions" aria-label="Nhiệm vụ session" maxlength="12000"></textarea>
   </details>
   <small id="panel-saved" role="status"></small>
-  <p class="hint">Plan chỉ đọc · Đọc & sửa/Auto: tệp + shell, hỏi mỗi lượt · Bypass: chỉ hỏi khi thư mục ở ổ hệ thống, ổ hồ sơ người dùng hoặc thư mục mạng · Tự lưu khi rời ô.</p>
+  <p class="hint">Plan: chỉ đọc (+ web) · Đọc & sửa: duyệt từng lần ghi/sửa/shell · Auto: CLI tự xét, chỉ hỏi khi cần · Web luôn hỏi từng lần · Bypass: không duyệt, không có web; chỉ hỏi trước lượt khi thư mục ở ổ hệ thống, ổ hồ sơ người dùng hoặc thư mục mạng · Tự lưu khi rời ô.</p>
 </aside>
 <div id="session-menu" class="menu" role="menu" hidden></div>
 <dialog id="naming"><form id="name-form"><h2 id="name-label"></h2><input id="new-name" required><textarea id="request-editor" maxlength="12000" hidden></textarea><div><button type="button" id="cancel-name">Hủy</button><button class="primary">Lưu</button></div></form></dialog>

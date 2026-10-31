@@ -36,7 +36,7 @@ test('AC-PROMPT-01.3 / PLAN L-7: roleContext reads thread.roleConfig → team.ro
 });
 test('TC-PROMPT-03 / AC-PROMPT-02.3/02.4: without resume send original request, latest handoff per role and N recent messages', () => {
   const messages = [message('Bạn', 'Yêu cầu gốc'), message('Dev · bàn giao thủ công', 'H'.repeat(3000))];
-  for (let index = 0; index < 248; index++) messages.push(message('Hệ thống', 'tin ' + index));
+  for (let index = 0; index < 248; index++) messages.push(message('Ghi chú', 'tin ' + index));
   const { text, omitted } = rolePrompt({}, thread({ messages }), 'QA', { content: 'NOW', resumed: false });
   assert.equal(omitted, 228); assert.match(text, /\[Đã lược 228 tin cũ\]/);
   assert.match(text, /Yêu cầu gốc: Yêu cầu gốc/); assert.match(text, new RegExp('Dev · bàn giao thủ công: H{' + (PROMPT_LIMITS.handoff - 'Dev · bàn giao thủ công: '.length) + '}…'));
