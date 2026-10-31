@@ -25,7 +25,7 @@ function permissionAsker(label, folders, autoApproved, policy) {
   const always = new Set();
   return async ({ tool, input }) => {
     const verdict = decide({ ...policy, tool, input });
-    if (verdict.action === 'allow') return { allow: true };
+    if (verdict.action === 'allow') return { allow: true, ...(verdict.updatedInput ? { updatedInput: verdict.updatedInput } : {}) };
     if (verdict.action === 'deny') return { allow: false, message: verdict.message };
     const askable = !ALWAYS_ASK.includes(tool);
     if (askable && (autoApproved || always.has(tool))) return { allow: true };
@@ -37,7 +37,7 @@ function permissionAsker(label, folders, autoApproved, policy) {
   };
 }
 const pipeline = require('./pipeline.cjs');
-const { retryable } = require('./dispatch.cjs');
+const { retryable, taskSession, continuationOf } = require('./dispatch.cjs');
 // Thư mục đã chọn có thể bị xóa/đổi tên; trả false thay vì để ENOENT thô lọt ra giao diện.
 function isFolder(folder) { try { return fs.statSync(folder).isDirectory(); } catch { return false; } }
 const MCP_NAME = /^[A-Za-z0-9_-]{1,64}$/;
@@ -146,10 +146,18 @@ app.whenReady().then(() => {
   // nên chỉ mode Plan thực sự không đọc được các tệp này.
   // WebFetch/WebSearch/NotebookEdit không còn bị chặn ở đây: modes.cjs quyết định tool theo mode. Quy tắc ask buộc web luôn hỏi:
   // thử với CLI thật, mode plan tự cho phép WebSearch nếu thiếu quy tắc này.
-  fs.writeFileSync(settings, JSON.stringify({ disableAllHooks: true, enabledPlugins: {}, permissions: { defaultMode: 'default', deny: ['Agent', 'Task', 'Read(**/.env)', 'Read(**/.env.*)', 'Read(**/.credentials.json)', 'Read(**/*.pem)', 'Read(**/id_rsa)', 'Read(**/id_ed25519)'], ask: [...ALWAYS_ASK] } }));
+  // Agent: không chặn "Task" vì đó là tên cũ của Agent (chặn cả subagent). Quy tắc ask buộc lời gọi Agent đi qua app để
+  // permissions.decide ép đúng subagent code-reader, model Haiku, chạy chờ kết quả (thử với CLI thật: không có ask thì không qua app).
+  fs.writeFileSync(settings, JSON.stringify({ disableAllHooks: true, enabledPlugins: {}, permissions: { defaultMode: 'default', deny: ['Read(**/.env)', 'Read(**/.env.*)', 'Read(**/.credentials.json)', 'Read(**/*.pem)', 'Read(**/id_rsa)', 'Read(**/id_ed25519)'], ask: [...ALWAYS_ASK, 'Agent'] } }));
   if (!fs.existsSync(mcp)) fs.writeFileSync(mcp, JSON.stringify({ mcpServers: {} }, null, 2));
   // Danh sách tệp của task trở thành phạm vi ghi của Dev ngay trước khi chạy (cả task từ review reject).
-  const sendTask = (thread, task) => { const config = getWorker(thread, task.worker); if (task.files?.length) config.files = task.files; return handleDesk(null, 'chat-send', { id: thread.id, role: task.worker, text: config.task === task.task ? 'Thực hiện task Lead giao ở mục "Task của khối".' : 'Thực hiện task Lead giao:\n' + task.task, auto: true }); };
+  // Task chạy lại (bị chặn, lỗi, chạm giới hạn lượt, tạm dừng) tiếp tục phiên cũ thay vì đọc lại từ đầu, trừ khi phiên đã quá nặng.
+  const sendTask = (thread, task) => {
+    const config = getWorker(thread, task.worker); if (task.files?.length) config.files = task.files;
+    const continued = continuationOf(task);
+    const text = continued ? 'Tiếp tục task đang làm dở trong phiên này: làm tiếp phần còn thiếu, không đọc lại tệp đã đọc, rồi xuất handoff.' : config.task === task.task ? 'Thực hiện task Lead giao ở mục "Task của khối".' : 'Thực hiện task Lead giao:\n' + task.task;
+    return handleDesk(null, 'chat-send', { id: thread.id, role: task.worker, text, auto: true, ...(continued ? { resumeSession: { id: continued.id, key: continued.key } } : {}) });
+  };
   const pumpThread = thread => teamStore.isHalted(thread) ? Promise.resolve() : require('./dispatch.cjs').pump(thread, task => sendTask(thread, task), () => { persist(); publish(); });
   // TASKS.md do app ghi từ khối tasks đã kiểm tra; lỗi ghi tệp chỉ báo, không chặn điều phối.
   const recordTasks = (thread, tasks, reason) => { try { sessionFiles.writeTasks(thread, tasks, reason); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được TASKS.md: ' + error.message, time: new Date().toISOString() }); } };
@@ -192,7 +200,7 @@ app.whenReady().then(() => {
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   ipcMain.handle('desk', handleDesk);
   async function handleDesk(event, action, payload = {}) {
-    if (event) { requireTrusted(event); delete payload.auto; }
+    if (event) { requireTrusted(event); delete payload.auto; delete payload.resumeSession; }
     if (action === 'state') return snapshot();
     if (action === 'role-defaults') return roleDefaults;
     if (action === 'copy-text') { if (typeof payload.text !== 'string' || payload.text.length > 2 * 1024 * 1024) throw Error('Nội dung copy quá dài'); clipboard.writeText(payload.text); return true; }
@@ -250,8 +258,11 @@ app.whenReady().then(() => {
       const policy = JSON.parse(fs.readFileSync(settings, 'utf8')); policy.disableAllHooks = true;
       const chatSettings = path.join(directory, 'chat-settings.json'); fs.writeFileSync(chatSettings, JSON.stringify(policy));
       // Lead/Dev/QA đọc trạng thái từ tệp nên mở phiên mới mỗi lượt (không resume phiên phình mãi); GD và chat thường vẫn resume.
-      const resume = !(files && FILE_ROLES.includes(worker.type));
-      const resumed = resume && Boolean(thread.cliSessions?.[resumeKey(profileId, thread.folder, payload.role)]);
+      // Ngoại lệ: chạy lại đúng task đang dở (sendTask) thì tiếp tục phiên cũ nếu cùng hồ sơ/thư mục, khỏi đọc lại từ đầu.
+      const sessionKey = resumeKey(profileId, thread.folder, payload.role), continued = payload.resumeSession?.key === sessionKey ? payload.resumeSession.id : '';
+      if (continued) (thread.cliSessions ||= {})[sessionKey] = continued;
+      const resume = Boolean(continued) || !(files && FILE_ROLES.includes(worker.type));
+      const resumed = resume && Boolean(thread.cliSessions?.[sessionKey]);
       // Ảnh đang soạn đi kèm đúng tin này của người dùng (lượt tự động không lấy ảnh đang soạn) rồi gắn vào tin đã gửi.
       const images = payload.auto ? [] : attachments.take(thread);
       const { text: prompt } = rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images });
@@ -265,6 +276,9 @@ app.whenReady().then(() => {
         chats.delete(activeKey);
         const handoff = pipeline.parseHandoff(run.message.text);
         const assigned = (thread.dispatch || []).find(task => task.worker === payload.role && ['running', 'starting'].includes(task.status));
+        // Ghi phiên CLI của task (kể cả khi bị tạm dừng/huỷ giữa chừng) để lần chạy lại tiếp tục phiên này (sendTask).
+        const ownTask = assigned || (thread.dispatch || []).find(task => task.worker === payload.role && ['paused', 'cancelled'].includes(task.status));
+        if (ownTask && thread.cliSessions?.[sessionKey]) ownTask.session = taskSession(thread.cliSessions[sessionKey], sessionKey, run.message.usage);
         if (assigned) { assigned.status = run.message.error ? 'failed' : 'finished'; if (!run.message.error) assigned.finishedAt = new Date().toISOString(); if (!run.message.error && handoff?.status === 'blocked') { assigned.status = 'blocked'; assigned.error = handoff.summary || payload.role + ' báo bị chặn'; } if (run.message.maxTurns) { assigned.status = 'blocked'; assigned.error = 'Chạm giới hạn số lượt tool; kiểm tra rồi Thử lại task bị chặn'; } }
         // CHANGES.md do app ghi từ handoff của Dev (không tin model tự ghi), để QA và Lead review đọc.
         if (files && isDevType(worker.type) && handoff) { try { sessionFiles.appendChange(thread, payload.role, handoff.status, handoff.summary); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } }

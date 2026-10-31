@@ -23,6 +23,7 @@ function describeTool(tool, input = {}) {
 // null = không giới hạn (role tùy chỉnh, chat thường, Dev chưa có danh sách tệp).
 const path = require('node:path');
 const { isDevType } = require('./roles.cjs');
+const { readerCall } = require('./subagent.cjs');
 const WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'];
 const WEB = ['WebFetch', 'WebSearch'];
 function roleScope(type, files, devFiles = [], folder = '') {
@@ -43,6 +44,9 @@ function scopesOverlap(first, second) { return first.some(entry => inScope(entry
 // Quyết định cho một yêu cầu duyệt: allow (không hỏi), deny (từ chối kèm lý do) hoặc ask (hiện hộp duyệt).
 function decide({ scope, mode, tool, input = {}, cwd = '' }) {
   if (WEB.includes(tool)) return { action: 'ask' };
+  // Subagent chỉ dùng để dò/đọc code bằng model rẻ (subagent.cjs). App ép đúng loại agent, model và chạy chờ kết quả,
+  // vì tham số model của Agent ghi đè được định nghĩa và mặc định Agent chạy nền.
+  if (tool === 'Agent') return scope?.bash ? { action: 'allow', updatedInput: readerCall(input) } : { action: 'deny', message: 'Khối này không dùng subagent.' };
   if (WRITE_TOOLS.includes(tool)) {
     if (!scope) return { action: mode === 'bypass' ? 'allow' : 'ask' };
     const target = path.resolve(cwd, input.file_path || input.notebook_path || '');

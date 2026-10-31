@@ -1,5 +1,11 @@
 # Office Desk — Windows 11
 
+## Subagent đọc code và tiếp tục phiên của task
+
+**Subagent đọc code.** Lead Dev, Dev, VFX và QA có tool `Agent` với một subagent duy nhất `code-reader`: chỉ Read/Grep/Glob, chạy model **Haiku** trong ngữ cảnh riêng và trả bản tóm tắt ngắn (đường dẫn, số dòng, hàm/lớp). Nhờ vậy việc dò code không làm phình ngữ cảnh chính, vốn được gửi lại ở mỗi lần gọi model. Mọi lời gọi Agent đi qua app (quy tắc `ask` trong settings) và bị ép về đúng `code-reader`, model Haiku, chạy chờ kết quả, kể cả khi model xin loại agent hay model khác. GD, UI/UX và chat thường không có subagent. Đã thử với Claude Code thật: model xin `general-purpose` + `opus`, app đổi thành `code-reader` + Haiku, transcript xác nhận subagent chạy `claude-haiku-5-5`. Lưu ý: settings không còn chặn `Task` vì đó là tên cũ của `Agent`.
+
+**Tiếp tục phiên khi chạy lại cùng task.** Task Dev/VFX bị dừng (bị chặn, lỗi, chạm giới hạn lượt, tạm dừng, huỷ) rồi chạy lại bằng Thử lại task bị chặn hoặc `/role <khối> start` sẽ **tiếp tục phiên CLI cũ** với lời nhắc làm tiếp phần còn thiếu, không đọc lại tệp đã đọc. Ngoại lệ: phiên cũ đã nặng (ngữ cảnh trung bình trên 80k token mỗi lần gọi) hoặc đổi hồ sơ/thư mục thì mở phiên mới. Task mới từ Lead luôn mở phiên mới.
+
 ## Giữ chi phí token thấp
 
 Rút ra từ một session BaseTD tốn $8: một task Dev 17 tệp chạy hết 60 lượt gọi, ngữ cảnh ~150k token mỗi lần gọi; chi phí tăng nhanh hơn số lượt vì toàn bộ ngữ cảnh được gửi lại ở mỗi lần gọi.
@@ -53,7 +59,7 @@ Thư mục `.office-desk/` nằm trong project của bạn; tự quyết có th�
 | Auto | như Đọc & sửa | CLI tự xét trước, chỉ hỏi khi cần; web hỏi từng lần |
 | Bypass | như Đọc & sửa, **không có web** | Không duyệt từng thao tác; chỉ hỏi trước lượt khi thư mục ở ổ được bảo vệ |
 
-Lượt do bộ chạy tự động gửi (đã duyệt một lần khi bật) tự cho phép từng thao tác, **trừ web vẫn hỏi**. Subagent, trình duyệt, hooks và plugin vẫn tắt. Web luôn hỏi nhờ quy tắc `ask` trong settings do app tạo (thiếu quy tắc này, mode plan của CLI tự cho chạy WebSearch). Đã chạy thử với Claude Code 2.1.316 và tài khoản thật (model haiku) qua `chat.cjs`: Write/Bash/WebFetch hỏi và chạy được, từ chối thì không tạo tệp và Claude báo lại, Plan không ghi được, web ở Plan/Auto hỏi, Bypass không có web, resume phiên cũ giữ ngữ cảnh. Hộp thoại Electron (bấm tay) chưa được chạy cùng CLI thật trong kiểm thử tự động.
+Lượt do bộ chạy tự động gửi (đã duyệt một lần khi bật) tự cho phép từng thao tác, **trừ web vẫn hỏi**. Trình duyệt, hooks và plugin vẫn tắt; subagent chỉ có loại đọc code (xem mục "Subagent đọc code"). Web luôn hỏi nhờ quy tắc `ask` trong settings do app tạo (thiếu quy tắc này, mode plan của CLI tự cho chạy WebSearch). Đã chạy thử với Claude Code 2.1.316 và tài khoản thật (model haiku) qua `chat.cjs`: Write/Bash/WebFetch hỏi và chạy được, từ chối thì không tạo tệp và Claude báo lại, Plan không ghi được, web ở Plan/Auto hỏi, Bypass không có web, resume phiên cũ giữ ngữ cảnh. Hộp thoại Electron (bấm tay) chưa được chạy cùng CLI thật trong kiểm thử tự động.
 
 ## Bố cục mới, lưu trữ/xoá/chuyển session
 
@@ -198,7 +204,7 @@ Nếu chưa có package-lock.json, dùng npm.cmd install thay npm.cmd ci. Bản 
 - Không hooks cài vào cấu hình hiện tại, startup service, sửa editor, liên kết/chia sẻ lịch sử giữa tài khoản, dọn process hoặc xóa dữ liệu hệ thống.
 - Không tự tải/cài/chạy công cụ từ internet; không telemetry riêng của app.
 
-Từ 0.10, phiên làm việc cung cấp Read, Glob, Grep, Write, Edit và Bash (mode Plan chỉ Read/Glob/Grep); MCP chỉ gồm các server trong mcp-servers.json của app. Vẫn tắt subagent, trình duyệt, WebFetch/WebSearch, hooks và nguồn settings project/local trong lệnh khởi chạy; chỉ nạp nguồn user của hồ sơ riêng kèm cấu hình hạn chế do app tạo. Quyền quản trị tổ chức của CLI vẫn có thể áp dụng. Chỉ chặn đọc một số tên bí mật phổ biến, không thể nhận diện mọi tệp chứa bí mật. Để hỗ trợ tạo DOCX/XLSX bằng thư viện hoặc chạy lệnh sẽ cần thiết kế cơ chế cấp quyền bổ sung; bản này không hứa làm được mọi công việc Cowork.
+Từ 0.10, phiên làm việc cung cấp Read, Glob, Grep, Write, Edit và Bash (mode Plan chỉ Read/Glob/Grep); MCP chỉ gồm các server trong mcp-servers.json của app. Vẫn tắt trình duyệt, hooks và nguồn settings project/local trong lệnh khởi chạy (từ 0.12: web hỏi từng lần, subagent chỉ có loại đọc code); chỉ nạp nguồn user của hồ sơ riêng kèm cấu hình hạn chế do app tạo. Quyền quản trị tổ chức của CLI vẫn có thể áp dụng. Chỉ chặn đọc một số tên bí mật phổ biến, không thể nhận diện mọi tệp chứa bí mật. Để hỗ trợ tạo DOCX/XLSX bằng thư viện hoặc chạy lệnh sẽ cần thiết kế cơ chế cấp quyền bổ sung; bản này không hứa làm được mọi công việc Cowork.
 
 ## Ranh giới bảo mật
 

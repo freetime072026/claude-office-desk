@@ -1,5 +1,6 @@
 // Dựng prompt cho mọi đường chạy (chat-send, run-thread). Thuần: không Electron, không đọc file. DESIGN §8.2.
-const { defaults } = require('./roles.cjs');
+const { defaults, SHELL_TYPES } = require('./roles.cjs');
+const { GUIDE: READER_GUIDE } = require('./subagent.cjs');
 const { LEAD, QA_ROUND_LIMIT, labelType, authoredBy } = require('./workers.cjs');
 const PROMPT_LIMITS = Object.freeze({ recent: 20, total: 20000, handoff: 2000, resumeDelta: 20 });
 const TASK_PHASES = ['planning', 'triage'];
@@ -71,7 +72,7 @@ function roleLines(options) {
   const { label, resumed, context, task, roster } = options; if (!label) return [];
   const intro = resumed ? [field('Task của khối', task)] : [field('Trách nhiệm', context.responsibility), field('Đầu ra', context.output), field('Yêu cầu riêng của session', context.instructions), field('Task của khối', task), roster ? 'Đội hiện có:\n' + roster : ''];
   const rejected = options.lead && options.phase !== 'review' && options.planProblems ? `Kế hoạch tasks trước bị app từ chối: ${options.planProblems}. Sửa đúng lỗi này.` : '';
-  return [header(options), ...intro, phaseGuide(options), fileGuide(options), options.files ? WORK_GUIDE : '', rejected, issueLines(options.type, options.issues || []), handoffGuide(options)];
+  return [header(options), ...intro, phaseGuide(options), fileGuide(options), options.files ? WORK_GUIDE : '', options.files && SHELL_TYPES.includes(options.type) ? READER_GUIDE : '', rejected, issueLines(options.type, options.issues || []), handoffGuide(options)];
 }
 const latestHandoffs = (messages, flow) => flow.map(label => messages.findLast(message => authoredBy(message, label))).filter(Boolean);
 // Không resume: yêu cầu gốc + bàn giao gần nhất của mỗi role + N tin gần nhất, tổng ≤ limits.total.

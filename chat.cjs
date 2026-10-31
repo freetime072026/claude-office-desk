@@ -6,6 +6,7 @@ const { usageEvent } = require('./usage.cjs');
 const { cleanEnv, sessionArgs, psLiteral } = require('./core.cjs');
 const { foldersOf, extraFolderArgs } = require('./usage.cjs');
 const { cliMode, cliTools, allowedFor } = require('./modes.cjs');
+const { agentsArg } = require('./subagent.cjs');
 const { resumeKey } = require('./workers.cjs');
 // Mô tả ngắn mục tiêu của một lượt gọi công cụ để hiển thị tiến độ (không lưu toàn bộ input).
 function targetOf(input = {}) {
@@ -59,7 +60,7 @@ const controlReply = (requestId, response) => JSON.stringify({ type: 'control_re
 const controlError = (requestId, error) => JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error } }) + '\n';
 const userLine = prompt => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: prompt }] }, parent_tool_use_id: null, session_id: '' }) + '\n';
 // Câu trả lời cho can_use_tool: cho phép giữ nguyên input; từ chối kèm lý do để model biết và đổi hướng.
-function permissionResult(decision, input) { return decision?.allow ? { behavior: 'allow', updatedInput: input || {} } : { behavior: 'deny', message: decision?.message || 'Người dùng từ chối thao tác này.' }; }
+function permissionResult(decision, input) { return decision?.allow ? { behavior: 'allow', updatedInput: decision.updatedInput || input || {} } : { behavior: 'deny', message: decision?.message || 'Người dùng từ chối thao tác này.' }; }
 // askPermission({ tool, input, toolUseId }) → Promise<{ allow, message? }>. Không truyền thì mọi yêu cầu bị từ chối (an toàn mặc định).
 function launch({ executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [] }) {
   const message = { id: randomUUID(), role: role || 'Claude', text: '', time: new Date().toISOString(), streaming: true };
@@ -70,6 +71,8 @@ function launch({ executable, directory, settings, mcp, mcpServers = [], thread,
   args[args.indexOf('--permission-mode') + 1] = cliMode(thread.mode, scope);
   args[args.indexOf('--tools') + 1] = cliTools(thread.mode, scope);
   if (maxTurns) args.push('--max-turns', String(maxTurns));
+  // Truyền đường dẫn tệp: PowerShell 5.1 làm hỏng dấu " khi truyền JSON làm tham số cho chương trình ngoài.
+  if (scope?.bash) { const agents = path.join(directory, 'agents.json'); fs.writeFileSync(agents, agentsArg()); args.push('--agents', agents); }
   args.push('--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--permission-prompt-tool', 'stdio', '--verbose', '--include-partial-messages', '--model', thread.model || 'claude-opus-5-5', ...extraFolderArgs(foldersOf(thread)), ...extraDirs.flatMap(dir => ['--add-dir', dir]), '--allowedTools', allowedFor(thread.mode, mcpServers));
   thread.cliSessions ||= {};
   const key = resumeKey(profileId, thread.folder, role);

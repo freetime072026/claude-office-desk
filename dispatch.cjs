@@ -27,4 +27,10 @@ async function pump(thread, send, changed) {
     do { thread.dispatchAgain = false; moved = await sweep(thread, send, changed); } while (thread.dispatchAgain || moved);
   } finally { delete thread.dispatchPumping; delete thread.dispatchAgain; changed(); }
 }
-module.exports = { pump, canStart, retryable, RETRY };
+// Chạy lại một task đang dở: tiếp tục phiên CLI cũ để khỏi đọc lại từ đầu, trừ khi phiên đó đã quá nặng
+// (ngữ cảnh trung bình mỗi lần gọi vượt ngưỡng; tiếp tục sẽ gửi lại ngữ cảnh lớn ở mỗi lần gọi).
+const RESUME_CONTEXT_LIMIT = 80000;
+const contextAverage = usage => usage?.turns ? Math.round((usage.input + usage.cacheRead + usage.cacheWrite) / usage.turns) : 0;
+const taskSession = (id, key, usage) => ({ id, key, contextAverage: contextAverage(usage) });
+const continuationOf = task => task.session && task.session.contextAverage < RESUME_CONTEXT_LIMIT ? task.session : null;
+module.exports = { pump, canStart, retryable, RETRY, RESUME_CONTEXT_LIMIT, taskSession, continuationOf };

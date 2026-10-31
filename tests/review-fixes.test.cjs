@@ -67,3 +67,27 @@ test('the roster clips other blocks\' tasks; the full task appears once as "Task
   const { text } = rolePrompt(team, thread, 'Dev', { content: 'Thực hiện task Lead giao ở mục "Task của khối".', resumed: false });
   assert.equal(text.split(long).length - 1, 1);
 });
+
+test('rerunning a task continues its CLI session unless that session was already heavy', () => {
+  const { taskSession, continuationOf, RESUME_CONTEXT_LIMIT } = require('../dispatch.cjs');
+  const light = taskSession('s1', 'p:E:\game:Dev', { input: 10, cacheRead: 500000, cacheWrite: 90000, turns: 20 });
+  assert.deepEqual(light, { id: 's1', key: 'p:E:\game:Dev', contextAverage: 29501 });
+  assert.equal(continuationOf({ session: light }), light);
+  const heavy = taskSession('s2', 'k', { input: 120, cacheRead: 9114876, cacheWrite: 263672, turns: 109 });
+  assert.ok(heavy.contextAverage >= RESUME_CONTEXT_LIMIT); assert.equal(continuationOf({ session: heavy }), null);
+  assert.equal(continuationOf({}), null); assert.equal(taskSession('s3', 'k', undefined).contextAverage, 0);
+});
+
+test('Agent calls are rewritten to the cheap read-only code-reader, run in the foreground; roles without shell cannot use it', () => {
+  const { decide, roleScope } = require('../permissions.cjs');
+  const { filesOf } = require('../session-files.cjs');
+  const { cliTools } = require('../modes.cjs');
+  const { agentsArg, READER } = require('../subagent.cjs');
+  const files = filesOf({ id: 's', folder: 'E:\game' }), dev = roleScope('Dev', files, ['src/'], 'E:\game');
+  const verdict = decide({ scope: dev, mode: 'edit', tool: 'Agent', input: { description: 'x', prompt: 'find', subagent_type: 'general-purpose', model: 'opus' } });
+  assert.equal(verdict.action, 'allow'); assert.deepEqual([verdict.updatedInput.subagent_type, verdict.updatedInput.model, verdict.updatedInput.run_in_background, verdict.updatedInput.prompt], [READER, 'haiku', false, 'find']);
+  assert.equal(decide({ scope: roleScope('GD', files), mode: 'edit', tool: 'Agent', input: {} }).action, 'deny');
+  assert.equal(decide({ scope: null, mode: 'edit', tool: 'Agent', input: {} }).action, 'deny');
+  assert.match(cliTools('read', dev), /Agent/); assert.doesNotMatch(cliTools('read', roleScope('GD', files)), /Agent/);
+  const agent = JSON.parse(agentsArg())[READER]; assert.deepEqual([agent.tools, agent.model], [['Read', 'Grep', 'Glob'], 'haiku']);
+});
