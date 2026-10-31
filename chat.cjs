@@ -17,18 +17,53 @@ function targetOf(input = {}) {
   return short.length > 80 ? short.slice(0, 80) + '…' : short;
 }
 function progressOf(message) { return message.progress ||= { startedAt: message.time || new Date().toISOString(), steps: 0, lastTool: '', target: '' }; }
-function trackTool(message, block, seen) {
+// Nhật ký bước của lượt (message.steps): mỗi tool một mục, kết quả rút gọn; giữ STEP_LIMIT mục cuối để workspace không phình.
+const STEP_LIMIT = 40, RESULT_CLIP = 200, DETAIL_CLIP = 200;
+const oneLine = (value, limit) => { const text = String(value ?? '').replace(/\s+/g, ' ').trim(); return text.length > limit ? text.slice(0, limit) + '…' : text; };
+function detailOf(name, input = {}) {
+  if (input.command) return oneLine(input.command, DETAIL_CLIP);
+  const file = input.file_path || input.notebook_path;
+  if (file) return oneLine(file + (input.offset || input.limit ? ` (dòng ${input.offset || 1}${input.limit ? '+' + input.limit : ''})` : ''), DETAIL_CLIP);
+  if (input.pattern) return oneLine(input.pattern + (input.path ? ' · ' + input.path : '') + (input.glob ? ' · ' + input.glob : ''), DETAIL_CLIP);
+  return oneLine(input.description || input.url || input.query || input.prompt || (name ? '' : JSON.stringify(input)), DETAIL_CLIP);
+}
+const resultText = content => typeof content === 'string' ? content : Array.isArray(content) ? content.map(part => part.type === 'text' ? part.text : part.type === 'image' ? '[ảnh]' : '').join(' ') : '';
+function addStep(message, block, sub) {
+  const steps = message.steps ||= []; steps.push({ id: block.id || '', tool: block.name, detail: detailOf(block.name, block.input), at: new Date().toISOString(), ...(sub ? { sub: true } : {}) });
+  if (steps.length > STEP_LIMIT) steps.splice(0, steps.length - STEP_LIMIT);
+}
+function finishStep(message, result) {
+  const step = (message.steps || []).findLast(item => item.id && item.id === result.tool_use_id); if (!step || step.end) return;
+  step.end = new Date().toISOString(); step.ok = !result.is_error; step.result = oneLine(resultText(result.content), RESULT_CLIP);
+  progressOf(message).updatedAt = step.end;
+}
+function trackTool(message, block, seen, sub = false) {
   if (block.id && seen.has(block.id)) return; if (block.id) seen.add(block.id);
   const progress = progressOf(message); progress.steps++; progress.lastTool = block.name; progress.target = targetOf(block.input); progress.updatedAt = new Date().toISOString();
+  addStep(message, block, sub); trackFile(message, block);
+}
+// Tệp tạo/sửa qua tool (file-changes.cjs gộp với git status). Event assistant tới trước khi tool chạy nên Write vào
+// tệp chưa có là tạo mới.
+const WRITE_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
+function trackFile(message, block) {
+  const file = block.input?.file_path || block.input?.notebook_path; if (!WRITE_TOOLS.includes(block.name) || typeof file !== 'string' || !file) return;
+  const ops = message.fileOps ||= {}; if (ops[file] === 'created') return;
+  ops[file] = block.name === 'Write' && !fs.existsSync(file) ? 'created' : 'edited';
 }
 // Thông báo lỗi chuẩn khi CLI không để lại stderr/text dùng được (US-07).
 const CLI_FAILED_TEXT = 'CLI dừng hoặc gặp lỗi. Kiểm tra đăng nhập và phiên bản Claude Code.';
 const CLI_EMPTY_TEXT = 'CLI không trả về nội dung text.';
 // Token/chi phí của một lượt từ event result (US-01). Thiếu trường hoặc sai kiểu thì tính 0, không throw.
 const count = value => Number.isFinite(value) ? value : 0;
+// modelUsage tách theo model (gồm subagent Haiku và lần gọi compact): total_cost_usd tính cả các lần gọi này còn usage thì không.
+function modelsOf(modelUsage) {
+  if (!modelUsage || typeof modelUsage !== 'object' || Array.isArray(modelUsage)) return null;
+  const entries = Object.entries(modelUsage).map(([model, usage]) => [model, { input: count(usage?.inputTokens), output: count(usage?.outputTokens), cacheRead: count(usage?.cacheReadInputTokens), cacheWrite: count(usage?.cacheCreationInputTokens), costUsd: count(usage?.costUSD) }]);
+  return entries.length ? Object.fromEntries(entries) : null;
+}
 function usageOf(event) {
-  const usage = event?.usage || {};
-  return { input: count(usage.input_tokens), output: count(usage.output_tokens), cacheRead: count(usage.cache_read_input_tokens), cacheWrite: count(usage.cache_creation_input_tokens), costUsd: count(event?.total_cost_usd), turns: count(event?.num_turns) };
+  const usage = event?.usage || {}, models = modelsOf(event?.modelUsage);
+  return { input: count(usage.input_tokens), output: count(usage.output_tokens), cacheRead: count(usage.cache_read_input_tokens), cacheWrite: count(usage.cache_creation_input_tokens), costUsd: count(event?.total_cost_usd), turns: count(event?.num_turns), ...(models ? { models } : {}) };
 }
 // PowerShell ghi progress/record dạng CLIXML ra stderr: bỏ marker '#< CLIXML' và khối <Objs ...>...</Objs> (kể cả khối bị cắt ở cuối).
 function cleanStderr(text) {
@@ -40,11 +75,12 @@ function consume(message, event, seen = new Set()) {
   if (event.type === 'assistant') {
     const content = event.message?.content || [];
     if (!message.deltaSeen) message.text += content.filter(block => block.type === 'text').map(block => block.text).join('\n');
-    const toolBlocks = content.filter(block => block.type === 'tool_use'); for (const block of toolBlocks) trackTool(message, block, seen);
+    const toolBlocks = content.filter(block => block.type === 'tool_use'); for (const block of toolBlocks) trackTool(message, block, seen, Boolean(event.parent_tool_use_id));
     const tools = toolBlocks.map(block => block.name);
     if (tools.length) message.tools = [...new Set([...(message.tools || []), ...tools])];
     message.deltaSeen = false;
   }
+  if (event.type === 'user' && Array.isArray(event.message?.content)) for (const block of event.message.content) if (block.type === 'tool_result') finishStep(message, block);
   // Compact (tự động khi chạm ngưỡng hoặc lệnh /compact): hiện trạng thái và ghi số token trước/sau trên tin.
   if (event.type === 'system' && event.subtype === 'status' && event.status === 'compacting') { const progress = progressOf(message); progress.lastTool = 'Compact'; progress.target = 'đang compact ngữ cảnh'; progress.updatedAt = new Date().toISOString(); }
   if (event.type === 'system' && event.subtype === 'compact_boundary') { const meta = event.compact_metadata || {}; message.compactions = [...(message.compactions || []), { trigger: meta.trigger || '', before: count(meta.pre_tokens), after: count(meta.post_tokens) }]; progressOf(message).updatedAt = new Date().toISOString(); }
@@ -66,7 +102,9 @@ const userLine = prompt => JSON.stringify({ type: 'user', message: { role: 'user
 // Câu trả lời cho can_use_tool: cho phép giữ nguyên input; từ chối kèm lý do để model biết và đổi hướng.
 function permissionResult(decision, input) { return decision?.allow ? { behavior: 'allow', updatedInput: decision.updatedInput || input || {} } : { behavior: 'deny', message: decision?.message || 'Người dùng từ chối thao tác này.' }; }
 // askPermission({ tool, input, toolUseId }) → Promise<{ allow, message? }>. Không truyền thì mọi yêu cầu bị từ chối (an toàn mặc định).
-function launch({ executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [] }) {
+// brief: hướng dẫn vai trò gửi qua system prompt (prompt.cjs). CLI ghi lại system prompt ở lần gọi đầu của phiên và dùng lại
+// nguyên văn khi resume, nên brief được cache và không cộng dồn vào lịch sử như khi nằm trong tin người dùng.
+function launch({ brief = '', executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [] }) {
   const message = { id: randomUUID(), role: role || 'Claude', text: '', time: new Date().toISOString(), streaming: true };
   message.progress = { startedAt: message.time, steps: 0, lastTool: '', target: '' };
   thread.messages.push(message);
@@ -79,6 +117,8 @@ function launch({ executable, directory, settings, mcp, mcpServers = [], thread,
   args.push('--autocompact', AUTOCOMPACT_WINDOW);
   // Truyền đường dẫn tệp: PowerShell 5.1 làm hỏng dấu " khi truyền JSON làm tham số cho chương trình ngoài.
   if (scope?.bash) { const agents = path.join(directory, 'agents.json'); fs.writeFileSync(agents, agentsArg()); args.push('--agents', agents); }
+  const briefFile = brief ? path.join(directory, 'briefs', message.id + '.md') : '';
+  if (briefFile) { fs.mkdirSync(path.dirname(briefFile), { recursive: true }); fs.writeFileSync(briefFile, brief); args.push('--append-system-prompt-file', briefFile); }
   args.push('--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--permission-prompt-tool', 'stdio', '--verbose', '--include-partial-messages', '--model', thread.model || 'claude-opus-5-5', ...extraFolderArgs(foldersOf(thread)), ...extraDirs.flatMap(dir => ['--add-dir', dir]), '--allowedTools', allowedFor(thread.mode, mcpServers));
   thread.cliSessions ||= {};
   const key = resumeKey(profileId, thread.folder, role);
@@ -104,7 +144,7 @@ function launch({ executable, directory, settings, mcp, mcpServers = [], thread,
   child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-6000); });
   // stdin giữ mở tới khi CLI trả event result (để trả lời yêu cầu duyệt), rồi đóng để CLI thoát.
   child.stdin.on('error', () => {}); send(userLine(prompt));
-  const finish = code => { if (ended) return; ended = true; if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
+  const finish = code => { if (ended) return; ended = true; if (briefFile) fs.rm(briefFile, { force: true }, () => {}); if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
   child.on('error', error => { errors = error.message; finish(1); }); child.on('close', finish);
   return { child, cancel: () => { if (child.pid && !ended) execFile(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); }, message };
 }

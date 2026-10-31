@@ -10,9 +10,14 @@ const defaults = {
 // Nhãn Lead cũ (≤ 0.8) chỉ còn để đọc dữ liệu cũ và migrate; không nơi nào sinh nhãn này nữa.
 const LEGACY_LEAD = Object.freeze(['Lead Planning', 'Lead Review']);
 const roleKey = role => LEGACY_LEAD.includes(role) ? 'Lead Dev' : role;
-// US-02: model mặc định khi tạo khối mới. GD và Lead cần suy luận nhiều; Dev/QA/UI/UX dùng model rẻ hơn.
-const DEFAULT_MODELS = Object.freeze({ GD: 'claude-opus-5-5', 'Lead Dev': 'claude-opus-5-5' });
+// US-02: model mặc định khi tạo khối mới. Chỉ Lead lập kế hoạch cần Opus; GD, Dev, QA, UI/UX dùng Sonnet (GD đổi sang Opus ở UI khi cần).
+// Số đo 8 session: GD + Lead trên Opus chiếm 44% chi phí, phần lớn là output của Opus.
+const DEFAULT_MODELS = Object.freeze({ 'Lead Dev': 'claude-opus-5-5' });
 const FALLBACK_MODEL = 'sonnet';
+// Lead pha triage/review làm việc hẹp hơn lập kế hoạch: khối để model mặc định thì chạy Sonnet ở các pha này.
+// Chọn 'opus' (Opus) ở UI để Lead luôn chạy Opus.
+const PHASE_MODELS = Object.freeze({ triage: 'sonnet', review: 'sonnet' });
+const modelFor = (type, model, phase) => (type === 'Lead Dev' && model === DEFAULT_MODELS['Lead Dev'] && PHASE_MODELS[phase]) || model;
 // Khối làm code/test mặc định Đọc & sửa: sửa tệp được giao và chạy lệnh (hỏi từng lần). Role khác theo mode của session.
 const DEFAULT_MODES = Object.freeze({ Dev: 'edit', VFX: 'edit', QA: 'edit' });
 // Role được chạy shell trong phạm vi của mình ở mọi mode (permissions.roleScope đặt bash: true).
@@ -24,7 +29,7 @@ const MAX_TURNS = Object.freeze({ GD: 30, 'Lead Dev': 30, Dev: 40, VFX: 40, QA: 
 const DEV_TYPES = Object.freeze(['Dev', 'VFX']);
 const isDevType = type => DEV_TYPES.includes(type);
 const DEFAULT_MAX_TURNS = 30;
-// Ngưỡng tự compact của CLI (--autocompact, 100k–1M): người dùng chọn 1M để một pha dài không bị compact giữa chừng.
-// Mỗi lượt gọi vẫn gửi lại toàn bộ ngữ cảnh (đọc từ cache), nên phiên càng dài mỗi lượt càng tốn.
-const AUTOCOMPACT_WINDOW = '1m';
-module.exports = { defaults, roleKey, LEGACY_LEAD, DEFAULT_MODELS, FALLBACK_MODEL, DEFAULT_MODES, SHELL_TYPES, MAX_TURNS, DEFAULT_MAX_TURNS, AUTOCOMPACT_WINDOW, DEV_TYPES, isDevType };
+// Ngưỡng tự compact của CLI (--autocompact, 100k–1M). Mỗi lần gọi model gửi lại toàn bộ ngữ cảnh (đọc từ cache), nên chi phí
+// là kích thước ngữ cảnh × số lần gọi: với 1M, Dev chạy tới ~177k token mỗi lần gọi. 200k giữ ngữ cảnh mỗi lần gọi dưới ~200k.
+const AUTOCOMPACT_WINDOW = '200k';
+module.exports = { defaults, roleKey, LEGACY_LEAD, DEFAULT_MODELS, FALLBACK_MODEL, PHASE_MODELS, modelFor, DEFAULT_MODES, SHELL_TYPES, MAX_TURNS, DEFAULT_MAX_TURNS, AUTOCOMPACT_WINDOW, DEV_TYPES, isDevType };

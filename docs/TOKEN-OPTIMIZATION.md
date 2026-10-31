@@ -101,3 +101,31 @@ Thread mẫu cố định gồm 30 tin, 6 khối (GD, Lead Dev, Dev, Dev #2, Dev
 | **Tổng** | **346570** | **150768** |
 
 Đây là số ký tự prompt app gửi vào, không phải token thực tế. Số token và chi phí thật (AC-01.3) QA đo sau khi restart app, dựa trên dòng Token mà US-01 hiển thị.
+
+## Đợt 3 (2026-11-01): số đo thật và thay đổi
+
+### Số đo trước thay đổi
+Lấy từ `message.usage` trong `workspace.json`: 8 session, 25 lượt có usage, tổng $39,23.
+
+| Role | Model | Chi phí | Tỷ trọng | Ngữ cảnh TB / lần gọi | Đỉnh |
+|---|---|---:|---:|---:|---:|
+| Dev (mọi #) | Sonnet | $18,37 | 47% | 77k | 177k |
+| Lead Dev | Opus | $10,00 | 25% | 38k | 54k |
+| GD | Opus | $7,51 | 19% | 29k | 109k |
+| Dev | Opus | $1,69 | 4% | 57k | 57k |
+| QA | Sonnet | $1,25 | 3% | 52k | 88k |
+| UI/UX | Sonnet | $0,41 | 1% | 18k | 19k |
+
+Khoảng 34,7 triệu trên ~37 triệu token là cache read: chi phí ≈ kích thước ngữ cảnh × số lần gọi. Nguyên nhân chính là mọi khối luôn resume phiên CLI qua nhiều task với `--autocompact 1m`. Có lượt mà `total_cost_usd` lớn hơn hẳn so với `usage` (Dev 4 lượt, $2,85): phần chênh nằm ở các lần gọi không có trong `usage` (subagent, compact), nên app lưu thêm `modelUsage`.
+
+### Thay đổi
+- Phiên CLI mới cho mỗi bước tự động / task mới của UI/UX, Lead, Dev, VFX, QA; chạy lại task dở vẫn tiếp tục phiên của task (`main.cjs`).
+- `AUTOCOMPACT_WINDOW` 1m → 200k (`roles.cjs`).
+- Model: GD mặc định Sonnet; Lead mặc định Opus ở planning, Sonnet ở triage/review (`modelFor`); chọn "opus" để Lead luôn chạy Opus.
+- Brief vai trò (trách nhiệm, task, hướng dẫn pha/tệp/handoff/Unity) gửi qua `--append-system-prompt-file`; tin chỉ còn phần đổi theo lượt (`prompt.cjs` trả `brief`/`body`). `thread.briefSent` nhớ bản brief phiên đã có, để khi resume mà brief đổi thì gửi một lần trong tin.
+- Tool cho role có phạm vi: bỏ TodoWrite, NotebookEdit; role có shell bỏ web (`modes.cjs`).
+- `PROMPT_LIMITS` = `{ recent: 8, total: 8000, handoff: 1500, resumeDelta: 8 }` (AC-04.3).
+- `usage.models` từ `modelUsage` của event `result`, hiện trong tooltip dòng Token.
+
+### Cần đo lại
+Chưa đo trên tài khoản thật sau thay đổi. Chạy lại một vòng GD → Lead → Dev → QA → review trên cùng project rồi so bảng trên.

@@ -20,7 +20,7 @@ test('Lead tasks need files per Dev, inside the project and not shared between D
 test('new blocks get the model of their role; existing blocks keep theirs', () => {
   const team = initial(); const id = update(team, 'create', {}); const thread = team.threads[0];
   for (const type of ['GD', 'Lead Dev', 'Dev', 'QA', 'UI/UX']) update(team, 'add-worker', { id, type });
-  assert.deepEqual(['GD', 'Lead Dev', 'Dev', 'QA', 'UI/UX'].map(label => worker(thread, label).model), ['claude-opus-5-5', 'claude-opus-5-5', 'sonnet', 'sonnet', 'sonnet']);
+  assert.deepEqual(['GD', 'Lead Dev', 'Dev', 'QA', 'UI/UX'].map(label => worker(thread, label).model), ['sonnet', 'claude-opus-5-5', 'sonnet', 'sonnet', 'sonnet']);
   thread.workers.QA.model = 'haiku'; assert.equal(worker(thread, 'QA').model, 'haiku');
 });
 
@@ -85,4 +85,12 @@ test('a task may list at most 8 files, and every rejected plan says why', () => 
   assert.equal(plan([{ worker: 'Dev', task: 'x', files: nine.slice(0, 8) }]).result.length, 1);
   assert.match(plan([{ worker: 'Ghost', task: 'x', files: ['a'] }]).problems[0], /"Ghost" không phải Dev\/VFX/);
   const none = []; assert.equal(taskPlan('no block', thread, none), null); assert.deepEqual(none, ['không có khối tasks']);
+});
+test('Lead on the default model runs Sonnet in triage/review; an explicit Opus choice is kept', () => {
+  const { modelFor } = require('../roles.cjs');
+  assert.equal(modelFor('Lead Dev', 'claude-opus-5-5', 'planning'), 'claude-opus-5-5');
+  assert.equal(modelFor('Lead Dev', 'claude-opus-5-5', 'triage'), 'sonnet');
+  assert.equal(modelFor('Lead Dev', 'claude-opus-5-5', 'review'), 'sonnet');
+  assert.equal(modelFor('Lead Dev', 'opus', 'review'), 'opus');
+  assert.equal(modelFor('GD', 'claude-opus-5-5', 'review'), 'claude-opus-5-5');
 });

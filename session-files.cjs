@@ -16,7 +16,7 @@ const TEMPLATES = {
   tasks: '# TASKS\n<!-- App ghi từ khối tasks của Lead. Không sửa tay khi đang chạy. -->\n',
   issues: '# ISSUES\n<!-- QA ghi. Mẫu:\n## ISS-1 · mở · cao\nAC: AC-1.2\nBước tái hiện: …\nKỳ vọng: …\nThực tế: …\n-->\n',
   perf: '# PERF\n<!-- QA ghi ở pha performance: ngân sách, cách đo, số đo, kết luận. -->\n',
-  changes: '# CHANGES\n<!-- App ghi từ handoff của Dev: tệp đã sửa và lý do. -->\n'
+  changes: '# CHANGES\n<!-- App ghi sau mỗi lượt Dev: tệp tạo mới/sửa (app tự lấy từ tool và git), rồi tóm tắt handoff của Dev. -->\n'
 };
 const NAMES = { gdd: 'GDD.md', uiux: 'UIUX.md', tasks: 'TASKS.md', issues: 'ISSUES.md', perf: 'PERF.md', changes: 'CHANGES.md' };
 function filesOf(thread) {
@@ -32,7 +32,8 @@ function ensureFiles(thread) {
 }
 const stamp = () => new Date().toISOString();
 const clip = value => { const text = String(value || '').trim(); return text.length > SUMMARY_LIMIT ? text.slice(0, SUMMARY_LIMIT) + '…' : text; };
-function appendChange(thread, role, status, summary) { const files = ensureFiles(thread); if (files) fs.appendFileSync(files.changes, `\n## ${stamp()} · ${role} · ${status}\n${clip(summary) || '(không có tóm tắt)'}\n`); }
+// changed: danh sách tệp app tự ghi (file-changes.cjs), đặt trước tóm tắt của Dev để Lead/QA tra nhanh.
+function appendChange(thread, role, status, summary, changed = '') { const files = ensureFiles(thread); if (files) fs.appendFileSync(files.changes, `\n## ${stamp()} · ${role} · ${status}\n${changed ? changed + '\n' : ''}${clip(summary) || '(không có tóm tắt)'}\n`); }
 // Ranh giới vòng (GD chốt thay đổi mới): ghi vào CHANGES.md để thay đổi các vòng không lẫn nhau; lịch sử cũ giữ nguyên.
 function appendRound(thread, round, summary) { const files = ensureFiles(thread); if (files) fs.appendFileSync(files.changes, `\n# Vòng ${round} · ${stamp()}\n${clip(summary) || '(GD chốt thay đổi mới)'}\n`); }
 // TASKS.md luôn phản ánh lượt phân công mới nhất; lượt cũ được giữ bên dưới để tra cứu.

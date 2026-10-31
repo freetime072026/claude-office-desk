@@ -54,7 +54,8 @@ test('role scopes: GD writes only GDD and never runs shell, Dev only its files, 
 test('scoped roles run the CLI in default mode so every write reaches the app', () => {
   const scope = { paths: ['x'], bash: false };
   for (const mode of ['read', 'edit', 'auto', 'bypass']) assert.equal(cliMode(mode, scope), 'default');
-  assert.equal(cliTools('read', scope), 'Read,Glob,Grep,TodoWrite,Write,Edit,NotebookEdit,WebFetch,WebSearch');
+  assert.equal(cliTools('read', scope), 'Read,Glob,Grep,Write,Edit,WebFetch,WebSearch');
+  assert.equal(cliTools('edit', { ...scope, bash: true }), 'Read,Glob,Grep,Write,Edit,Bash,Agent');
   assert.doesNotMatch(cliTools('bypass', scope), /Bash|Web/);
   assert.match(cliTools('edit', { ...scope, bash: true }), /Bash/);
   assert.equal(cliMode('auto', null), 'auto');

@@ -38,14 +38,14 @@ test('TC-PROMPT-03 / AC-PROMPT-02.3/02.4: without resume send original request, 
   const messages = [message('Bạn', 'Yêu cầu gốc'), message('Dev · bàn giao thủ công', 'H'.repeat(3000))];
   for (let index = 0; index < 248; index++) messages.push(message('Ghi chú', 'tin ' + index));
   const { text, omitted } = rolePrompt({}, thread({ messages }), 'QA', { content: 'NOW', resumed: false });
-  assert.equal(omitted, 228); assert.match(text, /\[Đã lược 228 tin cũ\]/);
+  assert.equal(omitted, 240); assert.match(text, /\[Đã lược 240 tin cũ\]/);
   assert.match(text, /Yêu cầu gốc: Yêu cầu gốc/); assert.match(text, new RegExp('Dev · bàn giao thủ công: H{' + (PROMPT_LIMITS.handoff - 'Dev · bàn giao thủ công: '.length) + '}…'));
-  assert.match(text, /tin 247\n/); assert.match(text, /tin 228\n/); assert.doesNotMatch(text, /tin 227\n/);
+  assert.match(text, /tin 247\n/); assert.match(text, /tin 240\n/); assert.doesNotMatch(text, /tin 239\n/);
   assert(text.endsWith('NOW'));
   const limits = { ...PROMPT_LIMITS, total: 500, handoff: 50 };
   const small = rolePrompt({}, thread({ messages }), 'QA', { content: 'NOW', limits });
   const block = small.text.slice(small.text.indexOf('Bối cảnh session'), small.text.lastIndexOf('\nNOW'));
-  assert(block.length <= limits.total, 'context block ' + block.length + ' exceeds ' + limits.total); assert(small.omitted > 228);
+  assert(block.length <= limits.total, 'context block ' + block.length + ' exceeds ' + limits.total); assert(small.omitted >= 240);
 });
 test('TC-PROMPT-04 / AC-PROMPT-02.1/02.2: resumed prompt has no history, only the delta since the role last spoke', () => {
   const messages = [message('Bạn', 'Yêu cầu gốc'), message('Hệ thống', 'cũ'), message('Lead Dev', 'Kế hoạch'), message('QA', 'Báo cáo QA mới'), message('Issue', 'Bug mới')];
@@ -54,6 +54,18 @@ test('TC-PROMPT-04 / AC-PROMPT-02.1/02.2: resumed prompt has no history, only th
   assert.match(text, /^Vai trò Lead Dev — pha triage, vòng 1\/3\./); assert.match(text, /QA: Báo cáo QA mới\nIssue: Bug mới\nTriage tiếp/);
   const off = rolePrompt({}, thread({ messages }), 'Lead Dev', { content: 'x', resumed: true, limits: { ...PROMPT_LIMITS, resumeDelta: 0 } });
   assert.doesNotMatch(off.text, /Báo cáo QA mới/);
+});
+test('US-04 / AC-04.3: prompt limits are 8 recent messages, 8000 chars, 1500 per handoff', () => {
+  assert.deepEqual({ ...PROMPT_LIMITS }, { recent: 8, total: 8000, handoff: 1500, resumeDelta: 8 });
+});
+test('role brief carries the stable instructions; body carries per-turn data only', () => {
+  const issues = [{ id: 'ISS-1', text: 'Nút lỗi' }];
+  const result = rolePrompt({}, thread({ issues, messages: [] }), 'QA', { content: 'Kiểm thử', files: null });
+  assert.match(result.brief, /^Vai trò QA\./); assert.match(result.brief, /Trách nhiệm/); assert.match(result.brief, /nhãn handoff/);
+  assert.doesNotMatch(result.body, /Trách nhiệm|nhãn handoff|Vai trò QA/); assert.match(result.body, /ISS-1: Nút lỗi\nKiểm thử$/);
+  assert.equal(result.text, result.brief + '\n' + result.body);
+  const dev = rolePrompt({}, thread(), 'Dev', { content: 'x', resumed: true });
+  assert.match(dev.brief, /Task của khối: Sửa UI/); assert.doesNotMatch(dev.body, /Task của khối/);
 });
 test('plain chat and terminal runs: no role header; history can be disabled; attachments listed once', () => {
   const attachments = [{ path: 'C:\\img\\a.png', name: 'a.png' }];

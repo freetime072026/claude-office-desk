@@ -143,11 +143,17 @@
 
   // ---- Token theo session/role (US-01). addUsage là chỗ cộng duy nhất.
   const USAGE_FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite', 'costUsd', 'turns'];
-  const addUsage = (total, usage) => { for (const key of USAGE_FIELDS) total[key] = (total[key] || 0) + (Number(usage?.[key]) || 0); return total; };
+  // usage.models (modelUsage của CLI): chi phí tách theo model, gồm subagent Haiku và lần gọi compact.
+  const addUsage = (total, usage) => {
+    for (const key of USAGE_FIELDS) total[key] = (total[key] || 0) + (Number(usage?.[key]) || 0);
+    for (const [model, part] of Object.entries(usage?.models || {})) { total.models ||= {}; total.models[model] = addUsage(total.models[model] || {}, part); }
+    return total;
+  };
   function usageByRole(messages) { const roles = new Map(); for (const message of messages) if (message.usage) { if (!roles.has(message.role)) roles.set(message.role, addUsage({}, null)); addUsage(roles.get(message.role), message.usage); } return roles; }
   const tokens = value => Math.round(value).toLocaleString();
   const usageText = usage => `vào ${tokens(usage.input)} (cache ${tokens(usage.cacheRead + usage.cacheWrite)}) · ra ${tokens(usage.output)} · $${usage.costUsd.toFixed(4)}`;
-  const usageDetail = usage => `input ${tokens(usage.input)} · cache đọc ${tokens(usage.cacheRead)} · cache ghi ${tokens(usage.cacheWrite)} · output ${tokens(usage.output)} · ${usage.turns} turn`;
+  const modelLines = usage => Object.entries(usage.models || {}).map(([model, part]) => `  ${model}: cache đọc ${tokens(part.cacheRead)} · cache ghi ${tokens(part.cacheWrite)} · output ${tokens(part.output)} · $${part.costUsd.toFixed(4)}`);
+  const usageDetail = usage => [`input ${tokens(usage.input)} · cache đọc ${tokens(usage.cacheRead)} · cache ghi ${tokens(usage.cacheWrite)} · output ${tokens(usage.output)} · ${usage.turns} turn`, ...modelLines(usage)].join('\n');
   // Ngữ cảnh được gửi lại ở mỗi lần gọi model: tổng lớn nghĩa là lượt quá dài hoặc đọc tệp lớn → chia task nhỏ hơn.
   const CONTEXT_TOTAL_WARN = 2000000, CONTEXT_AVERAGE_WARN = 80000;
   function contextWarning(usage) {
@@ -299,13 +305,37 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   const messageKey = (message, index) => message.id || `${index}:${message.time}:${message.role}`;
   const profileName = id => knownProfiles.find(profile => profile.id === id)?.name || 'Hồ sơ';
   const signature = message => [message.text, message.streaming, message.error, (message.tools || []).join(','), message.profileId, message.model, message.profileId ? profileName(message.profileId) : '', JSON.stringify(message.usage || null), (message.denied || []).join(','), message.progress?.waiting || '', (message.compactions || []).length].join('\u0000');
-  function updateProgress(card, message) { const node = card.querySelector('.run-progress'); if (node) node.textContent = progressText(message); }
+  function updateProgress(card, message) { const node = card.querySelector('.run-progress'); if (node) node.textContent = progressText(message); updateSteps(card, message); }
+  // Nhật ký bước: mỗi tool một dòng (giờ, tool, mục tiêu, thời gian, kết quả rút gọn). Trạng thái mở/đóng giữ theo id tin
+  // vì thẻ bị dựng lại mỗi khi chữ của tin đổi.
+  const openLogs = new Set();
+  const clock = iso => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  function stepLine(step, live) {
+    const running = !step.end && live, took = step.end ? elapsed(Date.parse(step.end) - Date.parse(step.at)) : running ? elapsed(Date.now() - Date.parse(step.at)) + '…' : '?';
+    const mark = running ? '⏳' : !step.end ? '·' : step.ok ? '✓' : '✗';
+    const item = make('li', { className: running ? 'running' : step.end && !step.ok ? 'failed' : '' });
+    item.append(make('span', { className: 'step-head', textContent: `${mark} ${clock(step.at)} · ${step.sub ? '↳ ' : ''}${step.tool} · ${took}` }));
+    if (step.detail) item.append(make('code', { textContent: step.detail }));
+    if (step.result) item.append(make('span', { className: 'step-result', textContent: step.result }));
+    return item;
+  }
+  function updateSteps(card, message) {
+    const steps = message.steps || []; let log = card.querySelector('.step-log'); if (!steps.length) { log?.remove(); return; }
+    if (!log) {
+      log = make('details', { className: 'step-log' }); log.open = openLogs.has(message.id);
+      log.ontoggle = () => { if (log.open) openLogs.add(message.id); else openLogs.delete(message.id); updateSteps(card, message); };
+      log.append(make('summary'), make('ol')); const anchor = card.querySelector('.run-progress'); if (anchor) anchor.after(log); else card.append(log);
+    }
+    const live = Boolean(message.streaming), failed = steps.filter(step => step.end && !step.ok).length;
+    log.querySelector('summary').textContent = `Nhật ký ${steps.length} bước${failed ? ` · ${failed} lỗi` : ''}`;
+    if (log.open) log.querySelector('ol').replaceChildren(...steps.map(step => stepLine(step, live)));
+  }
   function buildCard(message) {
     const card = make('article'), header = make('header');
     header.append(make('b', { textContent: message.profileId ? `${message.role} · ${profileName(message.profileId)} · ${message.model || ''}` : message.role }), make('time', { textContent: new Date(message.time).toLocaleString() }));
     card.append(header, window.renderChatText ? window.renderChatText(message.text) : make('p', { textContent: message.text }));
     if (message.attachments?.length) { const row = make('div', { className: 'message-images' }); row.append(...message.attachments.map(image => thumbnail(image))); card.append(row); }
-    if (message.progress) { const progress = make('small', { className: 'run-progress' }); progress.setAttribute('aria-live', 'polite'); card.append(progress); updateProgress(card, message); }
+    if (message.progress) { const progress = make('small', { className: 'run-progress' }); progress.setAttribute('aria-live', 'polite'); card.append(progress); updateProgress(card, message); } else updateSteps(card, message);
     if (message.streaming) card.classList.add('streaming'); if (message.error) card.classList.add('chat-error');
     if (message.tools?.length) card.append(make('small', { textContent: 'Công cụ: ' + message.tools.join(', ') }));
     for (const compact of message.compactions || []) card.append(make('small', { className: 'run-compact', textContent: `Đã compact ngữ cảnh${compact.trigger === 'manual' ? ' (/compact)' : ''}: ${tokens(compact.before)} → ${tokens(compact.after)} token` }));
@@ -320,7 +350,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     const used = new Set();
     const cards = thread.messages.map((message, index) => {
       const key = messageKey(message, index), sig = signature(message), hit = cardCache.get(key); used.add(key);
-      if (hit && hit.sig === sig) { updateProgress(hit.card, message); return hit.card; }
+      if (hit && hit.sig === sig) { updateProgress(hit.card, message); if (!message.progress) updateSteps(hit.card, message); return hit.card; }
       const card = buildCard(message); cardCache.set(key, { sig, card }); return card;
     });
     for (const key of [...cardCache.keys()]) if (!used.has(key)) cardCache.delete(key);

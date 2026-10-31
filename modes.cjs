@@ -36,12 +36,15 @@ const needsTurnConfirm = (mode, folders, env = process.env) => mode === 'bypass'
 // app tự cho phép ghi trong phạm vi, từ chối ngoài phạm vi và mô phỏng mode đã chọn cho shell (decide()).
 // Mode plan/auto/bypass của CLI sẽ tự quyết thay app nên không dùng cho role có phạm vi.
 function cliMode(mode, scope) { return scope ? 'default' : permissionMode(mode); }
+// Schema của mỗi tool nằm trong ngữ cảnh của mọi lần gọi model: role có phạm vi chỉ nhận tool cần cho việc của mình
+// (không TodoWrite, NotebookEdit). Role có shell (Lead/Dev/VFX/QA) làm theo tệp và code của project nên không có web.
+const SCOPED_TOOLS = 'Read,Glob,Grep,Write,Edit';
 function cliTools(mode, scope) {
   if (!scope) return toolsFor(mode);
-  const tools = [READ_TOOLS, 'Write,Edit,NotebookEdit'];
-  // Role có shell (Lead/Dev/VFX/QA) có thêm Agent để gọi subagent đọc code (subagent.cjs).
+  const tools = [SCOPED_TOOLS];
+  // Role có shell có thêm Agent để gọi subagent đọc code (subagent.cjs).
   if (scope.bash) tools.push('Bash', 'Agent');
-  if (mode !== 'bypass') tools.push(...WEB_TOOLS);
+  else if (mode !== 'bypass') tools.push(...WEB_TOOLS);
   return tools.join(',');
 }
 module.exports = { permissionMode, validMode, toolsFor, allowedFor, cliMode, cliTools, needsConfirm, needsTurnConfirm, onSystemDrive, READ_TOOLS, WRITE_TOOLS, ALWAYS_ASK };

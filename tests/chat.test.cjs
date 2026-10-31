@@ -10,3 +10,8 @@ test('consume stores usage on the message only at result', () => { const message
 const CLIXML = '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0">\r\n<MS><PR N="Record"><AV>Preparing modules for first use.</AV></PR></MS></Obj></Objs>\r\n';
 test('cleanStderr removes CLIXML marker and multi-line <Objs> blocks', () => { assert.equal(cleanStderr(CLIXML), ''); assert.equal(cleanStderr(CLIXML + 'Login required\n' + CLIXML), 'Login required'); assert.equal(cleanStderr('  plain error \n'), 'plain error'); });
 test('cleanStderr drops a truncated trailing <Objs> block and tolerates empty input', () => { assert.equal(cleanStderr('Error A\n#< CLIXML\n<Objs Version="1.1.0.1"><Obj S="progress">cut'), 'Error A'); assert.equal(cleanStderr(''), ''); assert.equal(cleanStderr(undefined), ''); });
+test('usageOf keeps the per-model breakdown (subagent, compaction) when the CLI sends modelUsage', () => {
+  const usage = usageOf({ usage: { input_tokens: 1 }, total_cost_usd: 0.5, modelUsage: { 'claude-sonnet-5-5': { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 4, costUSD: 0.4 }, 'claude-haiku-5-5': { outputTokens: 'x', costUSD: 0.1 } } });
+  assert.deepEqual(usage.models, { 'claude-sonnet-5-5': { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, costUsd: 0.4 }, 'claude-haiku-5-5': { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0.1 } });
+  assert.equal('models' in usageOf({ modelUsage: {} }), false); assert.equal('models' in usageOf({ modelUsage: [] }), false);
+});

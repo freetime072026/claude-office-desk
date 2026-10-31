@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, clipboard, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const pty = require('node-pty');
 const { profileDir, cleanEnv, sessionArgs, commandFor } = require('./core.cjs');
@@ -11,14 +11,15 @@ const { defaults: roleDefaults } = require('./roles.cjs');
 const chatEngine = require('./chat.cjs');
 const chats = new Map();
 const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK } = require('./workers.cjs');
-const { rolePrompt } = require('./prompt.cjs');
+const { rolePrompt, FILE_ROLES } = require('./prompt.cjs');
 const { needsConfirm, needsTurnConfirm, ALWAYS_ASK } = require('./modes.cjs');
 const { describeTool, decide, roleScope, scopesOverlap } = require('./permissions.cjs');
 const sessionFiles = require('./session-files.cjs');
 const attachments = require('./attachments.cjs');
 const unity = require('./unity.cjs');
 const projectDocs = require('./project-docs.cjs');
-const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType } = require('./roles.cjs');
+const fileChanges = require('./file-changes.cjs');
+const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
 // policy = { scope, mode, cwd }: phạm vi ghi theo role được quyết định trước (decide), không hỏi người dùng.
@@ -264,13 +265,13 @@ app.whenReady().then(() => {
       const directory = profileDir(root, profileId); fs.mkdirSync(directory, { recursive: true });
       const policy = JSON.parse(fs.readFileSync(settings, 'utf8')); policy.disableAllHooks = true;
       const chatSettings = path.join(directory, 'chat-settings.json'); fs.writeFileSync(chatSettings, JSON.stringify(policy));
-      // Lead/Dev/QA đọc trạng thái từ tệp nên mở phiên mới mỗi lượt (không resume phiên phình mãi); GD và chat thường vẫn resume.
-      // Ngoại lệ: chạy lại đúng task đang dở (sendTask) thì tiếp tục phiên cũ nếu cùng hồ sơ/thư mục, khỏi đọc lại từ đầu.
+      // Role làm việc theo tệp .md (UI/UX, Lead, Dev, VFX, QA) mở phiên CLI mới ở mỗi bước tự động/task mới: trạng thái chung nằm
+      // trong tệp, còn phiên kéo qua nhiều task làm ngữ cảnh mỗi lần gọi model phình (Dev tới ~177k token). Ngoại lệ: chạy lại
+      // đúng task đang dở (sendTask) thì tiếp tục phiên cũ nếu cùng hồ sơ/thư mục. Tin người dùng gõ tay, GD, chat thường và
+      // role tùy chỉnh tiếp tục phiên của mình; CLI tự compact khi ngữ cảnh lớn (--autocompact).
       const sessionKey = resumeKey(profileId, thread.folder, payload.role), continued = payload.resumeSession?.key === sessionKey ? payload.resumeSession.id : '';
-      // Không mở phiên mới: mọi khối tiếp tục phiên của mình (kể cả sang vòng mới) để giữ các tệp đã đọc; CLI tự compact
-      // khi ngữ cảnh lớn (--autocompact). Chỉ session mới trong app mới có phiên mới.
       if (continued) (thread.cliSessions ||= {})[sessionKey] = continued;
-      const resume = true;
+      const resume = !(payload.auto && !continued && payload.role && FILE_ROLES.includes(worker.type));
       const resumed = resume && Boolean(thread.cliSessions?.[sessionKey]);
       // Ảnh đang soạn đi kèm đúng tin này của người dùng (lượt tự động không lấy ảnh đang soạn) rồi gắn vào tin đã gửi.
       if (compactOnly && !thread.cliSessions?.[sessionKey]) return localReply((payload.role || 'Chat') + ' chưa có phiên để compact.');
@@ -282,14 +283,22 @@ app.whenReady().then(() => {
       // CLAUDE.md của dự án: cả nội dung ở lượt đầu mỗi phiên CLI, sau đó chỉ dòng tra README (project-docs.cjs).
       const fullDocs = !compactOnly && projectDocs.needsFull(thread, sessionKey, resumed);
       const docsGuide = projectDocs.guide(projectDocs.read(thread.folder), payload.role ? worker.type : '', fullDocs);
-      const prompt = compactOnly ? content : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide }).text;
+      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide });
+      // Brief vai trò đi qua system prompt. CLI giữ system prompt của lần gọi đầu khi resume, nên brief đổi (task/pha mới) trong
+      // phiên đang tiếp tục được gửi một lần trong tin; thread.briefSent nhớ bản phiên đã có.
+      const briefHash = built?.brief ? createHash('sha1').update(built.brief).digest('hex') : '', briefKnown = !resumed || thread.briefSent?.[sessionKey] === briefHash;
+      const prompt = compactOnly ? content : briefKnown ? built.body : [built.brief, built.body].filter(Boolean).join('\n');
+      if (briefHash) (thread.briefSent ||= {})[sessionKey] = briefHash;
       if (fullDocs && docsGuide) projectDocs.markSent(thread, sessionKey, resumed);
       const mcpServers = mcpServerNames();
       if (payload.auto) thread.messages.push({ role: 'Điều phối', text: content, time: new Date().toISOString() }); else { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); if (images.length) thread.messages.at(-1).attachments = images; }
       if (folderNote) thread.messages.push({ role: 'Hệ thống', text: folderNote, time: new Date().toISOString() });
-      const runThread = { ...thread, mode: worker.mode, model: worker.model, cliSessions: thread.cliSessions ||= {} };
-      const run = chatEngine.launch({ executable, directory, settings: chatSettings, mcp, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: images.length ? [attachments.folderOf(root, thread.id)] : [], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
-      run.message.profileId = profileId; run.message.model = worker.model;
+      // Ảnh chụp git trong phạm vi tệp của Dev/VFX trước lượt: sau lượt so lại để biết tệp nào được tạo/sửa (file-changes.cjs).
+      const devRun = Boolean(files && payload.role && isDevType(worker.type) && scope?.paths?.length), gitBefore = devRun ? fileChanges.gitStatus(thread.folder, scope.paths) : null;
+      const model = payload.role ? modelFor(worker.type, worker.model, thread.leadPhase) : worker.model;
+      const runThread = { ...thread, mode: worker.mode, model, cliSessions: thread.cliSessions ||= {} };
+      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: images.length ? [attachments.folderOf(root, thread.id)] : [], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
+      run.message.profileId = profileId; run.message.model = model;
       run.child.once('close', () => {
         chats.delete(activeKey);
         if (compactOnly) { persist(); publish(); return; }
@@ -300,7 +309,9 @@ app.whenReady().then(() => {
         if (ownTask && thread.cliSessions?.[sessionKey]) ownTask.session = taskSession(thread.cliSessions[sessionKey], sessionKey, run.message.usage);
         if (assigned) { assigned.status = run.message.error ? 'failed' : 'finished'; if (!run.message.error) assigned.finishedAt = new Date().toISOString(); if (!run.message.error && handoff?.status === 'blocked') { assigned.status = 'blocked'; assigned.error = handoff.summary || payload.role + ' báo bị chặn'; } if (run.message.maxTurns) { assigned.status = 'blocked'; assigned.error = 'Chạm giới hạn số lượt tool; kiểm tra rồi Thử lại task bị chặn'; } }
         // CHANGES.md do app ghi từ handoff của Dev (không tin model tự ghi), để QA và Lead review đọc.
-        if (files && isDevType(worker.type) && handoff) { try { sessionFiles.appendChange(thread, payload.role, handoff.status, handoff.summary); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } }
+        const changed = devRun ? fileChanges.changesText(fileChanges.changedFiles({ folder: thread.folder, before: gitBefore, after: fileChanges.gitStatus(thread.folder, scope.paths), fileOps: run.message.fileOps })) : '';
+        if (changed) run.message.changedFiles = changed;
+        if (files && isDevType(worker.type) && (handoff || changed)) { try { sessionFiles.appendChange(thread, payload.role, handoff?.status || (run.message.error ? 'lỗi' : 'không có handoff'), handoff?.summary || '', changed); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } }
         let proposalApplied = false;
         if (worker.type === LEAD && thread.leadPhase !== 'review' && !run.message.error) {
           const problems = [], proposal = require('./workers.cjs').taskPlan(run.message.text, thread, problems);

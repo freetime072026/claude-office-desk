@@ -55,10 +55,22 @@ test('the "choose another mode" hint appears only for denials the user did not m
 });
 test('sessions are never dropped: the CLI runs with --autocompact, and compaction is shown on the message', { skip, timeout: 20000 }, async () => {
   const args = JSON.parse((await run('[args]', undefined, 'edit')).messages[0].text);
-  assert.equal(args[args.indexOf('--autocompact') + 1], '1m');
+  assert.equal(args[args.indexOf('--autocompact') + 1], '200k');
   const { consume } = require('../chat.cjs');
   const message = { text: '' };
   consume(message, { type: 'system', subtype: 'status', status: 'compacting' }); assert.equal(message.progress.target, 'đang compact ngữ cảnh');
   consume(message, { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 120000, post_tokens: 18000 } });
   assert.deepEqual(message.compactions, [{ trigger: 'auto', before: 120000, after: 18000 }]);
+});
+test('role brief goes to the CLI as --append-system-prompt-file and the temp file is removed after the run', { skip, timeout: 20000 }, async () => {
+  const fs = require('node:fs');
+  const thread = { folder: __dirname, messages: [], mode: 'read', model: 'sonnet' };
+  const started = launch({ brief: 'Vai trò Dev.\nTask "A" & $x', executable: path.join(__dirname, 'fake-cli.cmd'), directory: __dirname, settings: 'unused.json', mcp: 'unused.json', thread, profileId: 'test-profile', prompt: '[args]', save: () => {}, publish: () => {} });
+  const file = path.join(__dirname, 'briefs', started.message.id + '.md');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'Vai trò Dev.\nTask "A" & $x');
+  await new Promise((resolve, reject) => { started.child.once('error', reject); started.child.once('close', resolve); });
+  const args = JSON.parse(thread.messages[0].text);
+  assert.equal(args[args.indexOf('--append-system-prompt-file') + 1], file);
+  await new Promise(resolve => setTimeout(resolve, 100)); assert.equal(fs.existsSync(file), false);
+  fs.rmSync(path.join(__dirname, 'briefs'), { recursive: true, force: true });
 });

@@ -4,3 +4,4 @@
 #activity article small.run-denied{display:block;color:#a2412b}
 #activity article small.run-warning{display:block;color:#a26a1b}
 #activity article small.run-compact{display:block;color:#4f6d8a}
+.step-log{margin:4px 0 2px;font-size:11px;color:#5d6b60}.step-log summary{cursor:pointer;user-select:none}.step-log ol{list-style:none;margin:4px 0 0;padding:0 0 0 4px;max-height:320px;overflow:auto;border-left:2px solid #e3e6df}.step-log li{padding:3px 0 3px 8px;display:flex;flex-direction:column;gap:1px}.step-log li.running .step-head{color:#3f8f57;font-weight:600}.step-log li.failed .step-head,.step-log li.failed .step-result{color:#b04a3a}.step-log code{font-size:11px;color:#303f37;white-space:pre-wrap;word-break:break-all}.step-log .step-result{color:#7b826f;white-space:pre-wrap;word-break:break-word}
