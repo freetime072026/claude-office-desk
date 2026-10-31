@@ -7,7 +7,7 @@ app.setPath('userData', userData);
 const usage = (input, output, cacheRead, cacheWrite, costUsd) => ({ input, output, cacheRead, cacheWrite, costUsd, turns: 2 });
 const usageMessage = (role, text, value) => ({ id: 'usage-' + text, role, text, time: new Date().toISOString(), tools: ['Read'], progress: { startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), steps: 1 }, usage: value });
 fs.mkdirSync(userData, { recursive: true });
-fs.writeFileSync(path.join(userData, 'workspace.json'), JSON.stringify({ profiles: [], executable: '', team: { projects: [], roles: [], threads: [{ id: 'usage-thread', model: 'claude-opus-5-5', title: 'Usage session', project: '', pinned: false, stage: 0, status: 'waiting', flow: ['GD', 'Dev'], workers: { GD: { type: 'GD' }, Dev: { type: 'Dev' } }, messages: [usageMessage('GD', 'gd-1', usage(1000, 200, 3000, 500, 0.01)), usageMessage('Dev', 'dev-1', usage(2000, 300, 4000, 0, 0.02)), usageMessage('Dev', 'dev-2', usage(500, 100, 1000, 0, 0.005))], issues: [], folder: '', attachments: [] }] } }));
+fs.writeFileSync(path.join(userData, 'workspace.json'), JSON.stringify({ profiles: [], executable: '', team: { projects: [], roles: [], threads: [{ id: 'usage-thread', model: 'claude-opus-5-5', title: 'Usage session', project: '', pinned: false, stage: 0, status: 'waiting', flow: ['GD', 'Dev'], workers: { GD: { type: 'GD' }, Dev: { type: 'Dev' } }, messages: [usageMessage('GD', 'gd-1', usage(1000, 200, 3000, 500, 0.01)), usageMessage('Dev', 'dev-1', usage(2000, 300, 4000, 0, 0.02)), usageMessage('Dev', 'dev-2', usage(500, 100, 1000, 0, 0.005))], issues: [{ id: 'ISS-1', text: 'Mô tả lỗi rất dài '.repeat(40) }, { id: 'ISS-2', text: 'Đã sửa', closed: true }], folder: '', attachments: [] }] } }));
 require('../main.cjs');
 const delay = duration => new Promise(resolve => setTimeout(resolve, duration));
 app.whenReady().then(async () => {
@@ -20,6 +20,11 @@ app.whenReady().then(async () => {
       if (usageLines.length !== 3 || !/^Token: vào 1[.,]000 \\(cache 3[.,]500\\) · ra 200 · \\$0\\.0100$/.test(usageLines[0])) throw Error('Per-message token line missing: ' + usageLines.join(' / '));
       const header = document.querySelector('#usage-tokens');
       if (!header || header.hidden || !/^Token session: vào 3[.,]500 \\(cache 8[.,]500\\) · ra 600 · \\$0\\.0350 \\| /.test(header.textContent) || !/Dev: vào 2[.,]500 \\(cache 5[.,]000\\) · ra 400 · \\$0\\.0250/.test(header.textContent) || !/GD: vào 1[.,]000/.test(header.textContent)) throw Error('Session token totals by role missing: ' + header?.textContent);
+      const issueRows = [...document.querySelectorAll('#issues .issue')];
+      const dismiss = [...document.querySelectorAll('#issues .issue-actions button')].find(button => button.textContent === 'Bỏ qua');
+      if (issueRows.length !== 2 || !dismiss || document.querySelector('#issues .issue-actions button')?.textContent === 'Xác nhận retest') throw Error('Issue list: open issue needs Bỏ qua and no retest outside QA; ' + issueRows.map(row => row.textContent.slice(0, 40)).join(' / '));
+      const box = dismiss.getBoundingClientRect(); if (box.width < 40 || box.height > 40) throw Error('Issue button squeezed: ' + box.width + 'x' + box.height);
+      if (!/1 Issue đã retest hoặc bỏ qua/.test(issueRows[1].textContent)) throw Error('Settled issues not summarised');
       const project = await window.office.run('team', {action:'project', name:'UI test project'});
       const thread = await window.office.run('team', {action:'create', project, title:'UI test session', request:'Test request'});
       for (const name of ['GD', 'Lead Dev', 'Dev', 'QA']) await window.office.run('team', {action:'assign-role', id:thread, name});

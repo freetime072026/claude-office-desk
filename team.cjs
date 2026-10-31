@@ -158,7 +158,9 @@ function update(team, action, payload) {
   else if (action === 'issue') reportIssue(item, text(payload.text), log);
   else if (action === 'review-reject') reviewReject(item, text(payload.text), log);
   else if (action === 'decision') decide(item, payload.choice, log);
-  else if (action === 'retest') { if (typeOf(item.flow[item.stage]) !== 'QA' || item.status !== 'working') throw Error('Chỉ retest khi QA đang kiểm thử'); const issue = item.issues.find(issue => issue.id === payload.issue); if (!issue) throw Error('Không tìm thấy Issue'); const evidence = text(payload.text); issue.closed = true; log('QA · retest thủ công', evidence); }
+  else if (action === 'retest') { if (typeOf(item.flow[item.stage]) !== 'QA' || item.status !== 'working') throw Error('Chỉ retest khi QA đang kiểm thử'); const issue = item.issues.find(issue => issue.id === payload.issue); if (!issue) throw Error('Không tìm thấy Issue'); const evidence = typeof payload.text === 'string' && payload.text.trim() ? text(payload.text) : 'Người dùng xác nhận đã retest'; issue.closed = true; log('QA · retest thủ công', evidence); }
+  // Bỏ qua một Issue (chấp nhận lỗi đã biết): không còn tính là Issue mở cho QA/Lead và gate QA, giữ lại trong lịch sử.
+  else if (action === 'dismiss-issue') { const issue = openIssues(item).find(issue => issue.id === payload.issue); if (!issue) throw Error('Không tìm thấy Issue đang mở'); issue.accepted = true; const reason = typeof payload.text === 'string' && payload.text.trim() ? ': ' + text(payload.text) : ''; log('Hệ thống', `Người dùng bỏ qua Issue ${issue.id}${reason}`); }
   else throw Error('Thao tác không hợp lệ');
   return true;
 }

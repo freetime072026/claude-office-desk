@@ -223,3 +223,10 @@ test('a Lead plan typed by hand after the Lead step is done still starts the Dev
   assert.deepEqual(sent.slice(before), ['Dev']); assert.equal(thread.dispatch[0].status, 'running');
   assert.equal(sent.filter(label => label === 'QA').length, qaRuns);
 });
+test('a valid Lead plan held back by a running Dev stops with that reason, not "no valid tasks"', async () => {
+  const { thread, auto } = harness();
+  await auto.after(thread, 'GD', reply('done'));
+  const reason = 'Lead đã xuất kế hoạch tasks hợp lệ nhưng Dev đang chạy hoặc tạm dừng nên chưa áp dụng.';
+  await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev']) }, { planBlocked: reason });
+  assert.equal(thread.messages.at(-1).text, reason);
+});

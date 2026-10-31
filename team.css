@@ -31,7 +31,7 @@ h1{font-size:19px;margin:4px 0 0;white-space:nowrap;overflow:hidden;text-overflo
 #activity{flex:1;overflow:auto;padding:10px max(28px,calc((100% - 860px)/2))}
 article{padding:16px 0;border-bottom:1px solid #eeeae2}article header{padding:0;display:flex;justify-content:space-between;gap:12px;color:#657264;font-size:12px;border:0}article p{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8;color:#303731}time{color:#959b94;font-size:11px;flex-shrink:0}
 .welcome{padding-top:80px;text-align:center;color:#767f75}
-#issues{max-height:120px;overflow:auto;padding:0 28px}.issue{padding:8px;background:#fff2ed;border-radius:6px;margin:4px 0;font-size:12px;display:flex;justify-content:space-between;gap:12px;overflow-wrap:anywhere}
+#issues{max-height:120px;overflow:auto;padding:0 28px}.issue{padding:8px;background:#fff2ed;border-radius:6px;margin:4px 0;font-size:12px;display:flex;justify-content:space-between;gap:12px;overflow-wrap:anywhere}.issue>span{flex:1;min-width:0}.issue-actions{flex:none;display:flex;flex-direction:column;gap:4px}.issue-actions button{white-space:nowrap}.issue-settled{background:#eef4ee;color:#4f6b53}
 #composer{margin:10px 28px 18px;border:1px solid #d8d9d1;background:white;border-radius:14px;padding:10px 12px}
 #composer textarea{display:block;width:100%;min-height:28px;resize:none;overflow-y:hidden;border:0;outline:none;padding:6px 2px;line-height:1.5}
 #folder-list,#attachments{display:flex;gap:6px;flex-wrap:wrap}#folder-list:not(:empty),#attachments:not(:empty){margin-bottom:6px}#folder-list .image-chip{max-width:340px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#folder-list .image-chip button{padding:0 4px;border:0;background:transparent}

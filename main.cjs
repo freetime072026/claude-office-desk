@@ -10,7 +10,7 @@ const { normalizeUsage, foldersOf, extraFolderArgs } = require('./usage.cjs');
 const { defaults: roleDefaults } = require('./roles.cjs');
 const chatEngine = require('./chat.cjs');
 const chats = new Map();
-const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK } = require('./workers.cjs');
+const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK, busyWorkers } = require('./workers.cjs');
 const { rolePrompt, FILE_ROLES } = require('./prompt.cjs');
 const { needsConfirm, needsTurnConfirm, ALWAYS_ASK } = require('./modes.cjs');
 const { describeTool, decide, roleScope, scopesOverlap } = require('./permissions.cjs');
@@ -312,16 +312,19 @@ app.whenReady().then(() => {
         const changed = devRun ? fileChanges.changesText(fileChanges.changedFiles({ folder: thread.folder, before: gitBefore, after: fileChanges.gitStatus(thread.folder, scope.paths), fileOps: run.message.fileOps })) : '';
         if (changed) run.message.changedFiles = changed;
         if (files && isDevType(worker.type) && (handoff || changed)) { try { sessionFiles.appendChange(thread, payload.role, handoff?.status || (run.message.error ? 'lỗi' : 'không có handoff'), handoff?.summary || '', changed); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } }
-        let proposalApplied = false;
+        let proposalApplied = false, planBlocked = '';
         if (worker.type === LEAD && thread.leadPhase !== 'review' && !run.message.error) {
           const problems = [], proposal = require('./workers.cjs').taskPlan(run.message.text, thread, problems);
-          if (proposal && !(thread.dispatch || []).some(task => ACTIVE_TASK.includes(task.status))) { thread.taskDrafts = proposal; teamStore.update(metadata.team, 'apply-task-plan', { id: thread.id }); thread.dispatch = proposal.map(task => ({ ...task, status: 'pending' })); proposalApplied = true; recordTasks(thread, proposal, 'Lead phân công'); thread.messages.push({ role: 'Điều phối', text: 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.', time: new Date().toISOString() }); }
+          // Kế hoạch mới thay task chưa bắt đầu (pending/queued) của kế hoạch trước; chỉ khối đang chạy hoặc tạm dừng mới giữ kế hoạch lại.
+          const busy = busyWorkers(thread);
+          if (proposal && busy.length) { planBlocked = `Lead đã xuất kế hoạch tasks hợp lệ nhưng ${busy.join(', ')} đang chạy hoặc tạm dừng nên chưa áp dụng. Chờ khối đó xong (hoặc dừng nó) rồi dùng /role Lead Dev start.`; thread.messages.push({ role: 'Điều phối', text: planBlocked, time: new Date().toISOString() }); }
+          if (proposal && !busy.length) { thread.taskDrafts = proposal; teamStore.update(metadata.team, 'apply-task-plan', { id: thread.id }); thread.dispatch = proposal.map(task => ({ ...task, status: 'pending' })); proposalApplied = true; recordTasks(thread, proposal, 'Lead phân công'); thread.messages.push({ role: 'Điều phối', text: 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.', time: new Date().toISOString() }); }
           // Lead không nhận lịch sử chat: lý do được lưu và chèn vào prompt lượt Lead kế tiếp (prompt.cjs), xoá khi kế hoạch hợp lệ.
           else if (!proposal) { thread.planProblems = problems.join('; '); thread.messages.push({ role: 'Điều phối', text: `Lead chưa xuất phân công tasks hợp lệ (${thread.planProblems}); không tự đoán hoặc chạy Dev. Lượt Lead tiếp theo sẽ nhận lý do này.`, time: new Date().toISOString() }); }
-          if (proposal) { delete thread.planProblems; delete thread.reassign; }
+          if (proposalApplied) { delete thread.planProblems; delete thread.reassign; }
         }
         persist(); publish();
-        autoRun.after(thread, payload.role, run.message, { proposalApplied }).catch(error => thread.messages.push({ role: 'Tự động', text: 'Dừng tự động: ' + error.message, time: new Date().toISOString() })).finally(() => { persist(); publish(); pumpThread(thread).catch(() => {}); });
+        autoRun.after(thread, payload.role, run.message, { proposalApplied, planBlocked }).catch(error => thread.messages.push({ role: 'Tự động', text: 'Dừng tự động: ' + error.message, time: new Date().toISOString() })).finally(() => { persist(); publish(); pumpThread(thread).catch(() => {}); });
       }); run.child.once('error', () => chats.delete(activeKey)); persist(); publish(); return true;
     }
     if (action === 'usage-open') { const thread = metadata.team.threads.find(item => item.id === payload.id); const id = thread && payload.role ? getWorker(thread, payload.role).profileId || metadata.activeProfileId || metadata.profiles[0]?.id : metadata.activeProfileId || metadata.profiles[0]?.id; const directory = profileDir(root, id); fs.mkdirSync(directory, { recursive: true }); return start(id, 'work', { folder: directory, prompt: '/usage', runId: randomUUID() }); }

@@ -386,7 +386,19 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     if (!selectedWorker) selectedWorker = thread.flow[thread.stage] || thread.flow[0];
     paintDispatch(thread); paintPanel(thread); renderActivity(thread);
     for (const image of thread.attachments || []) get('#attachments').append(thumbnail(image, thread.archived ? null : async () => { try { await window.office.run('remove-attachment', { id: selected, path: image.path }); } catch (error) { showError(error); } }));
-    for (const issue of thread.issues) { const row = make('div', { className: 'issue' }); row.append(make('span', { textContent: `${issue.closed ? '✓ Đã retest' : '● Mở'} · ${issue.text}` })); if (!issue.closed) row.append(make('button', { type: 'button', textContent: 'Xác nhận retest', onclick: async () => { if (await act('retest', { issue: issue.id, text: get('#message').value })) get('#message').value = ''; } })); get('#issues').append(row); }
+    // Chỉ hiện Issue đang mở; Issue đã retest/bỏ qua gộp một dòng. Retest chỉ khi QA đang kiểm (team.cjs chặn lúc khác);
+    // ô chat trống thì dùng bằng chứng mặc định.
+    const qaWorking = roleType(thread, thread.flow[thread.stage] || '') === 'QA' && thread.status === 'working';
+    const openIssues = thread.issues.filter(issue => !issue.closed && !issue.accepted), settledIssues = thread.issues.length - openIssues.length;
+    const issueAction = async (action, issue) => { if (await act(action, { issue: issue.id, text: get('#message').value })) get('#message').value = ''; };
+    for (const issue of openIssues) {
+      const row = make('div', { className: 'issue' }), actions = make('div', { className: 'issue-actions' });
+      row.append(make('span', { textContent: '● Mở · ' + issue.text }), actions);
+      if (qaWorking) actions.append(make('button', { type: 'button', textContent: 'Xác nhận retest', title: 'Đánh dấu đã retest; nội dung ô chat (nếu có) là bằng chứng', onclick: () => issueAction('retest', issue) }));
+      if (!thread.archived) actions.append(make('button', { type: 'button', textContent: 'Bỏ qua', title: 'Chấp nhận lỗi đã biết: QA/Lead không còn xử lý Issue này; nội dung ô chat (nếu có) là lý do', onclick: () => { if (confirm(`Bỏ qua Issue ${issue.id}? QA và Lead sẽ không xử lý Issue này nữa.`)) issueAction('dismiss-issue', issue); } }));
+      get('#issues').append(row);
+    }
+    if (settledIssues) get('#issues').append(make('div', { className: 'issue issue-settled', textContent: `✓ ${settledIssues} Issue đã retest hoặc bỏ qua` }));
     const roles = thread.flow.length > 0; get('#manual').hidden = !roles || thread.archived;
     get('#begin').disabled = thread.status !== 'waiting'; get('#handoff').disabled = thread.status !== 'working'; get('#issue').disabled = ['done', 'awaiting-decision', 'cancelled'].includes(thread.status);
     get('#review-reject').hidden = !isLead(thread, thread.flow[thread.stage]) || thread.leadPhase !== 'review' || thread.status !== 'working';

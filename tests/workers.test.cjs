@@ -94,3 +94,9 @@ test('Lead on the default model runs Sonnet in triage/review; an explicit Opus c
   assert.equal(modelFor('Lead Dev', 'opus', 'review'), 'opus');
   assert.equal(modelFor('GD', 'claude-opus-5-5', 'review'), 'claude-opus-5-5');
 });
+test('only running or paused Dev tasks hold back a new Lead plan; unstarted tasks of the old plan are replaced', () => {
+  const { busyWorkers } = require('../workers.cjs');
+  assert.deepEqual(busyWorkers({ dispatch: [{ worker: 'Dev #3', status: 'pending' }, { worker: 'Dev #2', status: 'queued' }, { worker: 'Dev', status: 'blocked' }] }), []);
+  assert.deepEqual(busyWorkers({ dispatch: [{ worker: 'Dev', status: 'running' }, { worker: 'Dev #2', status: 'paused' }, { worker: 'Dev #3', status: 'starting' }] }), ['Dev', 'Dev #2', 'Dev #3']);
+  assert.deepEqual(busyWorkers({}), []);
+});

@@ -152,9 +152,10 @@ function createAutoRun(deps) {
     thread.reassignRounds = (thread.reassignRounds || 0) + 1; graph.queue(thread, target.id);
   }
 
-  async function afterLead(thread, node, message, handoff, proposalApplied) {
+  async function afterLead(thread, node, message, handoff, proposalApplied, planBlocked) {
     if (node.phase !== 'review') {
       if (proposalApplied) { graph.finish(thread, node.id, 'done'); return note(thread, 'Lead đã phân công; chạy Dev/VFX theo sơ đồ.'); }
+      if (planBlocked) return block(thread, node, planBlocked);
       if (handoff?.status === 'blocked') return block(thread, node, 'Lead Dev cần người dùng: ' + handoff.summary);
       if (!devLabels(thread).length && handoff?.status === 'done') { handedOff(thread, node.label, handoff.summary); return graph.finish(thread, node.id, 'done'); }
       return block(thread, node, 'Lead Dev chưa xuất khối tasks hợp lệ; dừng tự động ở bước này.');
@@ -197,7 +198,8 @@ function createAutoRun(deps) {
     return advance(thread);
   }
   // Gọi sau mỗi lượt chat của một khối (main.cjs, sự kiện close).
-  async function after(thread, label, message, { proposalApplied = false } = {}) {
+  // planBlocked: kế hoạch Lead hợp lệ nhưng main.cjs chưa áp vì còn Dev đang chạy/tạm dừng (lý do để báo đúng).
+  async function after(thread, label, message, { proposalApplied = false, planBlocked = '' } = {}) {
     if (!label || !thread.flow.includes(label)) return;
     graph.ensureGraph(thread);
     const handoff = parseHandoff(message.text), type = labelType(thread, label); let node = nodeOfRun(thread, label);
@@ -230,7 +232,7 @@ function createAutoRun(deps) {
       }
       if (message.error) return block(thread, node, `${label} lỗi hoặc bị dừng; dùng /role ${label} start để chạy lại.`);
       focus(thread, node);
-      if (type === LEAD) await afterLead(thread, node, message, handoff, proposalApplied);
+      if (type === LEAD) await afterLead(thread, node, message, handoff, proposalApplied, planBlocked);
       else if (!handoff) block(thread, node, `${label} chưa xuất khối handoff hợp lệ; dừng tự động. Trả lời ${label} hoặc dùng /role ${label} start.`);
       else if (handoff.status === 'blocked') block(thread, node, `${label} cần người dùng: ${handoff.summary}`);
       else if (type === 'QA') afterQa(thread, node, handoff);

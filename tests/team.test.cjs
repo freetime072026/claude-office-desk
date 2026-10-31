@@ -127,3 +127,13 @@ test('startup closes runs left from a previous app process', () => {
   assert.equal(thread.messages[0].streaming, false); assert.equal(thread.messages[0].error, true); assert.match(thread.messages[0].text, /Bị ngắt/);
   assert.deepEqual(thread.messages[1], { role: 'Dev', text: 'xong', streaming: false });
 });
+test('an Issue can be dismissed at any stage, and a retest without text uses default evidence', () => {
+  const team = initial(); const id = update(team, 'create', { request: 'Feature' }); update(team, 'select-roles', { id, roles: ['Dev', 'QA'] });
+  const thread = team.threads[0];
+  update(team, 'issue', { id, text: 'Lỗi A' }); update(team, 'issue', { id, text: 'Lỗi B' });
+  const [first, second] = thread.issues;
+  update(team, 'dismiss-issue', { id, issue: first.id, text: '' });
+  assert.equal(first.accepted, true); assert.match(thread.messages.at(-1).text, new RegExp('bỏ qua Issue ' + first.id + '$'));
+  assert.throws(() => update(team, 'dismiss-issue', { id, issue: first.id }), /Không tìm thấy Issue đang mở/);
+  update(team, 'dismiss-issue', { id, issue: second.id, text: 'lỗi đã biết' }); assert.match(thread.messages.at(-1).text, /: lỗi đã biết$/);
+});

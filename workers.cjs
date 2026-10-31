@@ -12,6 +12,9 @@ const QA_ROUND_LIMIT = 3;
 // 'paused': task bị /role <tên> pause; vẫn tính là việc dở (không cho xóa role, không thay phân công mới).
 // 'pending': Lead đã giao nhưng nút Dev trên sơ đồ chưa tới lượt chạy (bộ chạy chuyển sang 'queued' khi tới lượt).
 const ACTIVE_TASK = ['pending', 'queued', 'starting', 'running', 'paused'];
+// Task đang chạy hoặc tạm dừng giữ kế hoạch Lead lại; task chưa bắt đầu (pending/queued) được kế hoạch mới thay thế.
+const BUSY_TASK = Object.freeze(['starting', 'running', 'paused']);
+const busyWorkers = thread => (thread.dispatch || []).filter(task => BUSY_TASK.includes(task.status)).map(task => task.worker);
 const typeOf = label => roleKey(String(label || '').replace(/ #\d+$/, ''));
 const labelType = (thread, label) => thread.workers?.[label]?.type || typeOf(label);
 const orderOf = label => { const index = PIPELINE.indexOf(typeOf(label)); return index < 0 ? PIPELINE.length : index; };
@@ -95,4 +98,4 @@ function taskPlan(text, thread, problems = []) {
     return plan.tasks.map(task => ({ worker: task.worker, task: task.task, files: [...new Set(task.files.map(file => file.trim().replaceAll('\\', '/')))], ...(task.dependsOn?.length ? { dependsOn: [...new Set(task.dependsOn)] } : {}) }));
   } catch { return fail('JSON trong khối tasks không đọc được'); }
 }
-module.exports = { PIPELINE, LEAD, QA_ROUND_LIMIT, ACTIVE_TASK, ownsSession, authoredBy, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, runKey, resumeKey, removable, taskPlan, FILES_PER_TASK };
+module.exports = { PIPELINE, LEAD, QA_ROUND_LIMIT, ACTIVE_TASK, BUSY_TASK, busyWorkers, ownsSession, authoredBy, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, runKey, resumeKey, removable, taskPlan, FILES_PER_TASK };
