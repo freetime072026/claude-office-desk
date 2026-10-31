@@ -76,3 +76,9 @@ test('Lead planning prompt asks for parallel Devs and limits dependsOn to real r
   const text = buildPrompt({ label: 'Lead Dev', type: 'Lead Dev', lead: true, phase: 'planning', content: 'x' }).text;
   assert.match(text, /Ưu tiên cho các Dev chạy song song/); assert.match(text, /Không xếp chuỗi A→B→C/);
 });
+test('performance budgets: GD writes measurable criteria, QA passes with device-only items unmeasured', () => {
+  const files = { gdd: 'GDD.md', perf: 'PERF.md', issues: 'ISSUES.md', uiux: 'UIUX.md', changes: 'CHANGES.md' };
+  assert.match(buildPrompt({ label: 'GD', type: 'GD', files, content: 'x' }).text, /kiểm trên thiết bị — không chặn/);
+  const qa = buildPrompt({ label: 'QA', type: 'QA', files, qaPhase: 'performance', content: 'x' }).text;
+  assert.match(qa, /không tính là lỗi: các mục còn lại đạt thì vẫn pass/); assert.match(qa, /không yêu cầu Dev làm thêm công cụ đo/);
+});
