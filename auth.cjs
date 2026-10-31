@@ -1,0 +1,6 @@
+const { execFile } = require('node:child_process');
+const path = require('node:path');
+const { cleanEnv, commandFor } = require('./core.cjs');
+function parseStatus(output) { const start = output.indexOf('{'), end = output.lastIndexOf('}'); if (start < 0) throw Error('CLI không trả về auth status JSON'); const value = JSON.parse(output.slice(start, end + 1)); if (typeof value.loggedIn !== 'boolean') throw Error('Phiên bản CLI không cung cấp trạng thái đăng nhập hỗ trợ'); return { loggedIn: value.loggedIn, authMethod: typeof value.authMethod === 'string' ? value.authMethod : '', checkedAt: Date.now() }; }
+function checkAuth(executable, directory) { return new Promise((resolve, reject) => { const shell = path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'); const command = commandFor(executable, ['auth', 'status', '--json']); execFile(shell, ['-NoProfile', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], { cwd: directory, env: cleanEnv(process.env, directory), windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 }, (_error, stdout) => { try { resolve(parseStatus(stdout)); } catch (error) { reject(error); } }); }); }
+module.exports = { checkAuth, parseStatus };

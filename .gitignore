@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+
+# Hồ sơ Electron tạm do tests/ui-smoke.cjs tạo mỗi lần chạy
+.smoke-profile/
+# Ảnh ui-smoke ghi đè mỗi lần chạy; ảnh minh họa cố định nằm ở docs/preview.png
+/preview.png
+# Kết quả `npm audit --json`, sinh lại được
+audit.json
+# Ghi chú phiên do app ghi khi dùng repo này làm thư mục làm việc (US-05, AC-05.6)
+.office-desk/
