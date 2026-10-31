@@ -29,6 +29,8 @@ function sameOrNested(first, second) { const a = path.resolve(first).toLowerCase
 function editOverlap(thread) { const folders = foldersOf(thread); return [...chats.values()].some(run => run.mode !== 'read' && run.folders.some(folder => folders.some(other => sameOrNested(folder, other)))); }
 // Nguồn duy nhất cho "khối đang chạy" khi xét xóa role (snapshot và action team dùng chung).
 function busyLabels(thread) { return thread.flow.filter(label => chats.has(runKey(thread.id, label))); }
+// Mọi thứ đang chạy của một session: khối/chat thường và terminal mở từ session đó (dùng khi lưu trữ/xoá).
+function threadBusy(thread) { return [...[...chats.keys()].filter(key => key.startsWith(thread.id + ':')).map(key => key.slice(thread.id.length + 1)), ...[...sessions.values()].some(item => item.threadId === thread.id && item.running) ? ['Terminal'] : []]; }
 function removalOf(thread) { const busy = busyLabels(thread); return Object.fromEntries(thread.flow.map(label => [label, removable(thread, label, { busy: busy.includes(label) })])); }
 const { checkAuth } = require('./auth.cjs');
 async function ensureAuth(id) {
@@ -160,6 +162,7 @@ app.whenReady().then(() => {
     if (action === 'dispatch-retry') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); for (const task of thread.dispatch || []) if (['blocked', 'failed', 'cancelled'].includes(task.status)) { task.status = 'queued'; delete task.error; } await pumpThread(thread); return true; }
     if (action === 'chat-send') {
       const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại');
+      if (thread.archived) throw Error('Session đã lưu trữ; khôi phục để chạy tiếp.');
       if (payload.role && !thread.flow.includes(payload.role)) throw Error('Role không thuộc session (có thể đã bị xóa)');
       const worker = payload.role ? getWorker(thread, payload.role) : { mode: thread.mode || 'read', model: thread.model || 'claude-opus-5-5', profileId: '' };
       const activeKey = runKey(thread.id, payload.role);
@@ -241,6 +244,7 @@ app.whenReady().then(() => {
         const target = path.join(destination, randomUUID() + extension); fs.copyFileSync(source, target); thread.attachments.push({ name: path.basename(source), path: target });
       }
       if (action === 'run-thread') {
+        if (thread.archived) throw Error('Session đã lưu trữ; khôi phục để chạy tiếp.');
         if (!thread.folder) throw Error('Chọn thư mục làm việc trước');
         if (thread.flow.length && !thread.flow.includes(payload.role) && !payload.text?.trim().startsWith('/')) throw Error('Chọn Chạy role để thực thi vai trò hiện tại');
         if ([...sessions.values()].some(item => item.threadId === thread.id && item.running)) throw Error('Phiên này đang chạy trong Terminal; tiếp tục tại Tài khoản & terminal');
@@ -255,7 +259,9 @@ app.whenReady().then(() => {
     }
     if (action === 'select-profile') { profile(payload.id); metadata.activeProfileId = payload.id; persist(); publish(); return await ensureAuth(payload.id); }
     if (action === 'navigate') { if (!['index.html', 'dashboard.html'].includes(payload.page)) throw Error('Trang không hợp lệ'); await window.loadFile(path.join(__dirname, payload.page)); return; }
-if (action === 'team') { if (['remove-role', 'select-roles'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? busyLabels(thread) : []; } if (payload.action === 'worker-config' && payload.profileId) profile(payload.profileId); teamStore.update(structuredClone(metadata.team), payload.action, payload); const previousProfile = payload.action === 'worker-config' ? metadata.team.threads.find(thread => thread.id === payload.id)?.workers?.[payload.role]?.profileId : ''; const result = teamStore.update(metadata.team, payload.action, payload); persist(); publish(); if (payload.action === 'decision') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread?.auto?.enabled) background(thread, () => autoRun.runStage(thread)); } if (payload.action === 'worker-config' && payload.profileId && payload.profileId !== previousProfile) return await ensureAuth(payload.profileId); return result; }
+    if (action === 'team') { if (['remove-role', 'select-roles'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? busyLabels(thread) : []; }
+      if (['archive', 'delete'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? threadBusy(thread) : []; }
+      if (payload.action === 'delete') { const thread = metadata.team.threads.find(item => item.id === payload.id); const result = teamStore.update(metadata.team, 'delete', payload); if (thread) fs.rmSync(path.join(root, 'attachments', thread.id), { recursive: true, force: true }); persist(); publish(); return result; } if (payload.action === 'worker-config' && payload.profileId) profile(payload.profileId); teamStore.update(structuredClone(metadata.team), payload.action, payload); const previousProfile = payload.action === 'worker-config' ? metadata.team.threads.find(thread => thread.id === payload.id)?.workers?.[payload.role]?.profileId : ''; const result = teamStore.update(metadata.team, payload.action, payload); persist(); publish(); if (payload.action === 'decision') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread?.auto?.enabled) background(thread, () => autoRun.runStage(thread)); } if (payload.action === 'worker-config' && payload.profileId && payload.profileId !== previousProfile) return await ensureAuth(payload.profileId); return result; }
     if (action === 'add') {
       if (typeof payload.name !== 'string' || !payload.name.trim() || payload.name.length > 60) throw Error('Tên cần 1–60 ký tự');
       if (metadata.profiles.length >= 20) throw Error('Tối đa 20 hồ sơ');

@@ -1,5 +1,11 @@
 # Office Desk — Windows 11
 
+## Bố cục mới, lưu trữ/xoá/chuyển session
+
+**Bố cục 3 cột.** Sidebar session · hội thoại · panel khối bên phải. Bấm một khối trên sơ đồ để chọn: panel hiển thị tiến độ, tài khoản, mode, model, task và (mục thu gọn) trách nhiệm/yêu cầu riêng, tự lưu khi rời ô. Không có role thì panel là cấu hình chat thường. Nút **▣ Khối** ẩn/hiện panel (nhớ theo máy). Header chỉ còn tiêu đề, token, **📁 Thư mục** và menu **⋯** (Ghim, Chuyển tới dự án, Sửa yêu cầu, Thử lại task bị chặn, Lưu trữ). **＋ Role** nằm cuối sơ đồ khối. Các nút bàn giao thủ công (Bắt đầu bước, Bàn giao, Issue → Lead, Review không đạt) gom vào menu **Thủ công** dưới ô nhập.
+
+**Session.** Rê chuột vào session ở sidebar rồi bấm **⋯** (hoặc chuột phải) để ghim, chuyển tới dự án, lưu trữ; hoặc kéo session thả vào tên nhóm/dự án. Session lưu trữ nằm trong nhóm **🗄 Đã lưu trữ**, chỉ xem, không chạy được; từ đó có thể **Khôi phục** hoặc **Xoá hẳn** (xoá hội thoại và ảnh đính kèm trong app, không khôi phục được; lịch sử CLI của Claude Code không bị đụng tới). Không lưu trữ/xoá được khi khối hoặc terminal của session đang chạy.
+
 ## Bản 0.10.0 — Shell/MCP, chạy tự động, tiến độ và lệnh /role
 
 **Shell và MCP.** Mode Đọc & sửa, Auto và Bypass có thêm Bash (shell). Plan vẫn chỉ đọc. MCP server khai báo trong `%APPDATA%/office-desk/mcp-servers.json` (`/mcp open` để mở, `/mcp` để xem danh sách); chỉ nạp các server trong tệp này (`--strict-mcp-config`). Ở mode Đọc & sửa, tool `mcp__<tên>` được cho phép sẵn; Auto để CLI xét; Bypass bỏ duyệt. Tên server chỉ gồm chữ, số, `_`, `-`; tệp sai cú pháp thì lượt chat báo lỗi, không bỏ qua ngầm. Tool Read/Grep/Glob vẫn bị chặn đọc `.env`, `.pem`, khóa SSH, `.credentials.json`, nhưng **lệnh shell vẫn đọc được các tệp này** (ví dụ `type .env`): chỉ mode Plan thực sự không đọc được. Không đặt thư mục chứa bí mật vào session có Bash. Shell chạy với quyền tài khoản Windows của bạn — không phải sandbox.

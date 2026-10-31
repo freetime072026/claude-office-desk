@@ -1,119 +1,158 @@
 (() => {
-  let team, selected = localStorage.getItem('selected-thread'), naming;
+  let team, selected = localStorage.getItem('selected-thread'), naming, selectedWorker;
   const get = selector => document.querySelector(selector);
+  const make = (tag, props = {}) => Object.assign(document.createElement(tag), props);
   const names = { waiting: 'Chờ thực hiện', working: 'Đang làm', done: 'Hoàn tất', 'awaiting-decision': 'Chờ quyết định', cancelled: 'Đã dừng' };
   const phaseNames = { planning: 'Planning', triage: 'Triage', review: 'Review' };
+  const taskNames = { queued: 'Chờ lượt/phụ thuộc', starting: 'Đang chuẩn bị', running: 'Đang thực hiện', finished: 'Đã trả kết quả · chưa QA', failed: 'Lỗi thực thi', blocked: 'Bị chặn', cancelled: 'Đã dừng', paused: 'Tạm dừng' };
+  const MODES = [['read', 'Plan · chỉ đọc'], ['edit', 'Đọc & sửa tệp · xác nhận mỗi lượt'], ['auto', 'Auto · CLI tự xét quyền'], ['bypass', 'Bypass · bỏ duyệt tệp']];
+  const MODELS = [['claude-opus-5-5', 'Opus 5.5'], ['sonnet', 'Sonnet'], ['opus', 'Opus'], ['haiku', 'Haiku']];
+  const COMMANDS = [['/model', 'Chọn model'], ['/status', 'Cấu hình session'], ['/role', 'Chạy/tạm dừng khối: /role <tên> start|pause'], ['/chot', 'Chốt GD, chạy tự động các bước sau'], ['/auto', 'Bật/tắt tự động: /auto on|off'], ['/mcp', 'MCP server (/mcp open để sửa)'], ['/usage', 'Usage nhận từ CLI'], ['/help', 'Trợ giúp']];
+  const TAKES_ARGS = ['/role', '/auto'];
   // Thứ tự role, giới hạn vòng QA và quyền xóa đều lấy từ backend (snapshot), UI không tự tính.
-  let removal = {}, qaRoundLimit, roleTypes = [];
+  let removal = {}, qaRoundLimit, roleTypes = [], knownProfiles = [], defaultRoles = {};
   const isLead = (thread, role) => (thread.workers?.[role]?.type || role) === 'Lead Dev';
-  const applyState = state => { removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; };
   const current = () => team?.threads.find(thread => thread.id === selected);
-  let defaultRoles = {};
-  let knownProfiles = [], selectedWorker;
+  const showError = error => { get('#status').textContent = error.message; };
+  const select = id => { selected = id; localStorage.setItem('selected-thread', id); closeMenus(); paint(); };
   window.office.run('role-defaults').then(value => { defaultRoles = value; });
-  const editRequest = document.createElement('button'); editRequest.textContent = 'Sửa yêu cầu'; editRequest.onclick = () => { const thread = current(); if (!thread) return; naming = 'edit-request'; get('#new-name').hidden = true; get('#new-name').required = false; roleChoices.hidden = true; requestEditor.hidden = false; requestEditor.value = thread.messages.find(message => message.role === 'Bạn')?.text || ''; get('#name-label').textContent = 'Chỉnh sửa yêu cầu session'; get('#naming').showModal(); }; get('.actions').append(editRequest);
-  const commands = document.createElement('select'); commands.setAttribute('aria-label', 'Lệnh Claude Code');
-  for (const value of ['', '/chot', '/auto on', '/auto off', '/mcp', '/model', '/status', '/usage', '/help']) { const option = document.createElement('option'); option.value = value; option.textContent = value || '/ Lệnh'; commands.append(option); }
-  commands.onchange = () => { if (commands.value) { get('#message').value = commands.value; get('#message').focus(); commands.value = ''; } }; get('#composer > div:last-child').prepend(commands);
-  const runRole = document.createElement('button'); runRole.type = 'button'; runRole.textContent = 'Chạy role trong CLI'; get('#handoff').before(runRole);
-  runRole.onclick = async () => { const thread = current(); if (!thread?.flow.length) return; try { await window.office.run('run-thread', { id: selected, role: thread.flow[thread.stage], text: get('#message').value.trim() || 'Thực hiện vai trò theo yêu cầu session. Báo rõ kết quả và việc chưa kiểm chứng.' }); await window.office.run('navigate', { page: 'index.html' }); } catch (error) { get('#status').textContent = error.message; } };
-  const folderButton = document.createElement('button'); folderButton.textContent = '📁 Thêm thư mục'; folderButton.type = 'button'; get('.actions').prepend(folderButton);
-  const folderList = document.createElement('div'); folderList.id = 'folder-list'; get('#composer').prepend(folderList);
+  async function act(action, payload = {}) { try { return await window.office.run('team', { action, id: selected, ...payload }); } catch (error) { showError(error); } }
+  async function ensureThread() { if (current()) return selected; const id = await act('create', { project: '' }); if (id) selected = id; return id; }
+
+  // ---- Menu dùng chung: ⋯ header, Thủ công, menu session ở sidebar. Escape/nhấp ngoài để đóng.
+  const menus = [['#more', '#more-menu'], ['#manual', '#manual-menu']];
+  function closeMenus() { for (const [button, menu] of menus) { get(menu).hidden = true; get(button).setAttribute('aria-expanded', 'false'); } get('#session-menu').hidden = true; closeAccounts(); }
+  for (const [button, menu] of menus) get(button).onclick = event => { event.stopPropagation(); const open = get(menu).hidden; closeMenus(); get(menu).hidden = !open; get(button).setAttribute('aria-expanded', String(open)); if (open) get(menu).querySelector('button:not([disabled])')?.focus(); };
+  document.addEventListener('click', event => { if (!event.target.closest('.menu, #account-menu')) closeMenus(); });
+  document.addEventListener('keydown', event => {
+    const open = [...document.querySelectorAll('.menu:not([hidden]), #account-menu:not([hidden])')][0]; if (!open) return;
+    if (event.key === 'Escape') { closeMenus(); return; }
+    if (['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); const buttons = [...open.querySelectorAll('button:not([disabled])')]; const index = buttons.indexOf(document.activeElement); buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1) + buttons.length) % buttons.length]?.focus(); }
+  });
+
+  // ---- Panel phải: ẩn/hiện, nhớ lựa chọn theo máy.
+  const panelOpen = () => { try { return (localStorage.getItem('panel') ?? (innerWidth >= 1200 ? 'open' : 'closed')) === 'open'; } catch { return true; } };
+  const applyPanel = open => { document.body.classList.toggle('panel-hidden', !open); get('#panel-toggle').setAttribute('aria-expanded', String(open)); };
+  get('#panel-toggle').onclick = () => { const open = document.body.classList.contains('panel-hidden'); localStorage.setItem('panel', open ? 'open' : 'closed'); applyPanel(open); };
+  applyPanel(panelOpen());
+
+  // ---- Tài khoản ở chân sidebar.
+  const accountMenu = make('div', { id: 'account-menu', hidden: true }); accountMenu.setAttribute('role', 'menu'); get('footer').append(accountMenu);
+  get('#console').setAttribute('aria-haspopup', 'menu'); get('#console').setAttribute('aria-expanded', 'false');
+  function closeAccounts() { accountMenu.hidden = true; get('#console').setAttribute('aria-expanded', 'false'); }
+  get('#console').onclick = event => { event.stopPropagation(); const open = accountMenu.hidden; closeMenus(); accountMenu.hidden = !open; get('#console').setAttribute('aria-expanded', String(open)); if (open) accountMenu.querySelector('button')?.focus(); };
   function usageLabel(usage) {
     if (!usage) return 'Usage: CLI chưa gửi dữ liệu · xem /usage';
     const parts = [['five_hour', '5 giờ'], ['seven_day', '7 ngày']].filter(([key]) => usage[key]).map(([key, label]) => `${label}: ${Number.isFinite(usage[key].used_percentage) ? Math.round(usage[key].used_percentage) + '% đã dùng' : usage[key].status === 'rejected' ? 'đã chạm giới hạn' : usage[key].status === 'allowed_warning' ? 'gần giới hạn' : 'CLI cho phép · chưa có %'} · reset ${new Date(usage[key].resets_at * 1000).toLocaleString()}`);
     return (parts.join(' | ') || 'Usage: chưa có dữ liệu phù hợp') + ` · cập nhật ${new Date(usage.updatedAt).toLocaleTimeString()}${usage.stale ? ' (dữ liệu cũ)' : ''}`;
   }
-  const usageSummary = document.createElement('small'); usageSummary.id = 'usage-summary'; get('#console').after(usageSummary);
-  folderButton.onclick = async () => { try { await window.office.run('thread-folder', { id: selected }); } catch (error) { get('#status').textContent = error.message; } };
-  const attached = document.createElement('div'); attached.id = 'attachments'; get('#composer').prepend(attached);
-  document.addEventListener('dragover', event => event.preventDefault());
-  document.addEventListener('drop', async event => {
-    event.preventDefault();
-    try {
-      if (!current()) selected = await act('create', { project: '' });
-      for (const file of event.dataTransfer.files) await window.office.attach(selected, file);
-    } catch (error) { get('#status').textContent = error.message; }
-  });
-  const accountMenu = document.createElement('div');
-  accountMenu.id = 'account-menu'; accountMenu.hidden = true; accountMenu.setAttribute('role', 'menu');
-  get('#console').parentElement.append(accountMenu);
-  get('#console').setAttribute('aria-haspopup', 'menu'); get('#console').setAttribute('aria-expanded', 'false');
-  function closeAccounts() { accountMenu.hidden = true; get('#console').setAttribute('aria-expanded', 'false'); }
   function paintAccounts(state) {
     knownProfiles = state.profiles;
     const profile = state.profiles.find(item => item.id === state.activeProfileId);
-    get('#console').textContent = profile ? `◉ ${profile.name} ▾` : '◉ Chọn tài khoản ▾';
-    usageSummary.textContent = usageLabel(profile?.usage);
-    get('#console').title = 'Hồ sơ dùng cho phiên mới. Phiên đang chạy giữ tài khoản ban đầu.';
-    accountMenu.replaceChildren();
-    const heading = document.createElement('small'); heading.textContent = 'HỒ SƠ TÀI KHOẢN'; accountMenu.append(heading);
+    get('#console').textContent = profile ? `◉ ${profile.name} ▾` : '◉ Chọn tài khoản ▾'; get('#console').title = 'Hồ sơ dùng cho phiên mới. Phiên đang chạy giữ tài khoản ban đầu.';
+    get('#usage-summary').textContent = usageLabel(profile?.usage);
+    accountMenu.replaceChildren(make('small', { textContent: 'HỒ SƠ TÀI KHOẢN' }));
     for (const item of state.profiles) {
-      const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'menuitemradio'); button.setAttribute('aria-checked', String(item.id === state.activeProfileId));
-      button.textContent = `${item.id === state.activeProfileId ? '✓' : '○'} ${item.name}`;
-      const usage = document.createElement('small'); usage.textContent = usageLabel(item.usage); button.append(usage);
-      button.onclick = async () => { try { const auth = await window.office.run('select-profile', { id: item.id }); closeAccounts(); get('#console').focus(); if (auth?.loginStarted) await window.office.run('navigate', { page: 'index.html' }); } catch (error) { get('#status').textContent = error.message; } };
+      const button = make('button', { type: 'button', textContent: `${item.id === state.activeProfileId ? '✓' : '○'} ${item.name}` }); button.setAttribute('role', 'menuitemradio'); button.setAttribute('aria-checked', String(item.id === state.activeProfileId));
+      button.append(make('small', { textContent: usageLabel(item.usage) }));
+      button.onclick = async () => { try { const auth = await window.office.run('select-profile', { id: item.id }); closeAccounts(); get('#console').focus(); if (auth?.loginStarted) await window.office.run('navigate', { page: 'index.html' }); } catch (error) { showError(error); } };
       accountMenu.append(button);
     }
-    const note = document.createElement('small'); note.textContent = state.profiles.length ? 'Đổi hồ sơ cho phiên mới; không đổi phiên đang chạy.' : 'Chưa có hồ sơ. Thêm tài khoản để bắt đầu.'; accountMenu.append(note);
-    const usageButton = document.createElement('button'); usageButton.textContent = 'Xem usage chính thức (/usage)'; usageButton.disabled = !state.profiles.length;
-    usageButton.onclick = async () => { try { await window.office.run('usage-open'); await window.office.run('navigate', { page: 'index.html' }); } catch (error) { get('#status').textContent = error.message; } }; accountMenu.append(usageButton);
-    const manage = document.createElement('button'); manage.type = 'button'; manage.textContent = '＋ Thêm / quản lý tài khoản & terminal'; manage.onclick = () => window.office.run('navigate', { page: 'index.html' }).catch(error => { get('#status').textContent = error.message; }); accountMenu.append(manage);
+    accountMenu.append(make('small', { textContent: state.profiles.length ? 'Đổi hồ sơ cho phiên mới; không đổi phiên đang chạy.' : 'Chưa có hồ sơ. Thêm tài khoản để bắt đầu.' }));
+    accountMenu.append(make('button', { type: 'button', textContent: 'Xem usage chính thức (/usage)', disabled: !state.profiles.length, onclick: openUsage }));
+    accountMenu.append(make('button', { type: 'button', textContent: '＋ Thêm / quản lý tài khoản & terminal', onclick: () => window.office.run('navigate', { page: 'index.html' }).catch(showError) }));
   }
-  document.addEventListener('click', event => { if (!accountMenu.contains(event.target) && !get('#console').contains(event.target)) closeAccounts(); });
-  document.addEventListener('keydown', event => {
-    if (accountMenu.hidden) return;
-    if (event.key === 'Escape') { closeAccounts(); get('#console').focus(); }
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const buttons = [...accountMenu.querySelectorAll('button')]; const index = buttons.indexOf(document.activeElement); buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1) + buttons.length) % buttons.length]?.focus(); }
-  });
-  async function act(action, payload = {}) { try { return await window.office.run('team', { action, id: selected, ...payload }); } catch (error) { get('#status').textContent = error.message; } }
-  function options(select, value = '') { select.replaceChildren(); for (const project of [{ id: '', name: 'Không thuộc dự án' }, ...team.projects]) { const option = document.createElement('option'); option.value = project.id; option.textContent = project.name; select.append(option); } select.value = value; }
+
+  // ---- Sidebar: nhóm Pinned / dự án / không dự án / Đã lưu trữ; menu ⋯ (hoặc chuột phải) và kéo thả để chuyển dự án.
+  function groupsOf() {
+    const live = team.threads.filter(thread => !thread.archived);
+    return [{ key: 'pinned', name: '★ Pinned', threads: live.filter(thread => thread.pinned) }, ...team.projects.map(project => ({ key: 'project:' + project.id, project: project.id, name: project.name, threads: live.filter(thread => thread.project === project.id) })), { key: 'project:', project: '', name: 'Không thuộc dự án', threads: live.filter(thread => !thread.project) }, { key: 'archived', name: '🗄 Đã lưu trữ', threads: team.threads.filter(thread => thread.archived), closed: true }];
+  }
   function sidebar() {
-    const groups = [{ name: '★ Pinned', threads: team.threads.filter(thread => thread.pinned) }, ...team.projects.map(project => ({ name: project.name, threads: team.threads.filter(thread => thread.project === project.id) })), { name: 'Không thuộc dự án', threads: team.threads.filter(thread => !thread.project) }];
     const query = get('#search').value.toLocaleLowerCase();
-    get('#groups').replaceChildren(...groups.map(group => {
-      const detail = document.createElement('details'); detail.open = localStorage.getItem('group:' + group.name) !== 'closed'; detail.ontoggle = () => localStorage.setItem('group:' + group.name, detail.open ? 'open' : 'closed');
-      const summary = document.createElement('summary'); summary.textContent = group.name; detail.append(summary);
-      for (const thread of [...group.threads].reverse().filter(item => item.title.toLocaleLowerCase().includes(query))) { const button = document.createElement('button'); button.className = 'thread' + (thread.id === selected ? ' selected' : ''); button.textContent = thread.title; const label = document.createElement('small'); label.textContent = thread.flow.length ? `${thread.flow[thread.stage]} · ${names[thread.status]}` : 'Claude Code'; button.append(label); button.onclick = () => { selected = thread.id; localStorage.setItem('selected-thread', selected); paint(); }; detail.append(button); }
+    get('#groups').replaceChildren(...groupsOf().filter(group => group.key !== 'archived' || group.threads.length).map(group => {
+      const detail = make('details'); const stored = localStorage.getItem('group:' + group.name); detail.open = stored ? stored !== 'closed' : !group.closed; detail.ontoggle = () => localStorage.setItem('group:' + group.name, detail.open ? 'open' : 'closed');
+      const summary = make('summary', { textContent: group.name + (group.key === 'archived' ? ` (${group.threads.length})` : '') }); detail.append(summary);
+      if (group.key !== 'archived') {
+        summary.ondragover = event => { if (event.dataTransfer.types.includes('text/x-thread')) { event.preventDefault(); summary.classList.add('drop'); } };
+        summary.ondragleave = () => summary.classList.remove('drop');
+        summary.ondrop = async event => { summary.classList.remove('drop'); const id = event.dataTransfer.getData('text/x-thread'); if (!id) return; event.preventDefault(); event.stopPropagation(); const thread = team.threads.find(item => item.id === id); if (group.key === 'pinned') { if (!thread?.pinned) await act('pin', { id }); } else await act('move', { id, project: group.project }); };
+      }
+      for (const thread of [...group.threads].reverse().filter(item => item.title.toLocaleLowerCase().includes(query))) {
+        const row = make('div', { className: 'thread-row' + (thread.id === selected ? ' selected' : '') });
+        const button = make('button', { className: 'thread', type: 'button', title: thread.title, draggable: true }); button.append(make('span', { className: 'thread-title', textContent: thread.title }), make('small', { textContent: thread.flow.length ? `${thread.flow[thread.stage] || ''} · ${names[thread.status]}` : 'Claude Code' }));
+        button.onclick = () => select(thread.id);
+        button.ondragstart = event => { event.dataTransfer.setData('text/x-thread', thread.id); event.dataTransfer.effectAllowed = 'move'; };
+        const more = make('button', { className: 'thread-more', type: 'button', textContent: '⋯', title: 'Thao tác session' }); more.setAttribute('aria-haspopup', 'menu');
+        more.onclick = event => { event.stopPropagation(); openSessionMenu(thread, more.getBoundingClientRect()); };
+        row.oncontextmenu = event => { event.preventDefault(); openSessionMenu(thread, { left: event.clientX, bottom: event.clientY, right: event.clientX }); };
+        row.append(button, more); detail.append(row);
+      }
       return detail;
     }));
   }
-  function paint() {
-    sidebar(); const thread = current(); get('#title').textContent = thread?.title || 'Không gian phát triển game'; options(get('#move'), thread?.project || ''); get('#pin').textContent = thread?.pinned ? '★ Đã ghim' : '☆ Ghim';
-    for (const selector of ['#pin', '#move', '#begin', '#issue', '#handoff']) get(selector).disabled = !thread;
-    get('#flow').replaceChildren(); get('#issues').replaceChildren(); attached.replaceChildren(); paintSessionUsage(thread); if (!thread) return;
-    const folders = [thread.folder, ...(thread.relatedFolders || [])].filter(Boolean);
-    folderButton.textContent = `📁 Thêm thư mục${folders.length ? ' (' + folders.length + ')' : ''}`; folderButton.title = 'Thư mục đầu tiên là thư mục chính; các thư mục còn lại được cấp qua --add-dir.';
-    folderList.replaceChildren(...folders.map((folder, index) => { const chip = document.createElement('span'); chip.className = 'image-chip'; chip.textContent = `${index === 0 ? 'Chính' : 'Liên quan'}: ${folder} `; const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '×'; remove.title = 'Bỏ thư mục khỏi session (không xóa trên đĩa)'; remove.onclick = async () => { try { await window.office.run('remove-folder', { id: selected, folder }); } catch (error) { get('#status').textContent = error.message; } }; chip.append(remove); return chip; }));
-    for (const image of thread.attachments || []) { const chip = document.createElement('span'); chip.textContent = '▧ ' + image.name; chip.className = 'image-chip'; attached.append(chip); }
-    thread.flow.forEach((role, index) => { if (index) { const arrow = document.createElement('span'); arrow.className = 'arrow'; arrow.textContent = '→'; get('#flow').append(arrow); } const block = document.createElement('div'); block.className = 'block' + (index < thread.stage || thread.status === 'done' ? ' finished' : index === thread.stage ? ' current' : ''); const name = document.createElement('b'); name.textContent = role; const label = document.createElement('small'); label.textContent = index < thread.stage || thread.status === 'done' ? (role === 'Dev' && thread.flow[thread.stage] === 'QA' ? '✓ Đã làm · chờ QA' : '✓ Đã bàn giao') : index === thread.stage ? names[thread.status] : 'Chưa đến bước'; block.append(name, label); get('#flow').append(block); });
-    renderActivity(thread);
-    for (const issue of thread.issues) { const row = document.createElement('div'); row.className = 'issue'; const label = document.createElement('span'); label.textContent = `${issue.closed ? '✓ Đã retest' : '● Mở'} · ${issue.text}`; row.append(label); if (!issue.closed) { const button = document.createElement('button'); button.textContent = 'Xác nhận retest'; button.onclick = async () => { if (await act('retest', { issue: issue.id, text: get('#message').value })) get('#message').value = ''; }; row.append(button); } get('#issues').append(row); }
-    get('#begin').hidden = get('#handoff').hidden = get('#issue').hidden = !thread.flow.length;
-    runRole.hidden = !thread.flow.length;
-    get('#begin').disabled = thread.status !== 'waiting'; get('#handoff').disabled = thread.status !== 'working'; get('#issue').disabled = ['done', 'awaiting-decision', 'cancelled'].includes(thread.status); get('#status').textContent = thread.flow.length ? `${thread.flow[thread.stage]} · ${names[thread.status]}` : 'Claude Code · Gửi để mở yêu cầu trong terminal';
-    get('.notice').textContent = thread.flow.length ? 'Role: bàn giao thủ công · Chưa tự điều phối AI hoặc chạy Unity/Profiler.' : 'Claude Code thường · Phản hồi và xác nhận quyền hiển thị trong terminal. Có thể kéo thả ảnh vào đây.';
+  function openSessionMenu(thread, anchor) {
+    closeMenus(); const menu = get('#session-menu'); menu.replaceChildren();
+    const item = (text, onclick, options = {}) => { const button = make('button', { type: 'button', textContent: text, ...options }); button.setAttribute('role', 'menuitem'); button.onclick = async () => { closeMenus(); await onclick(); }; menu.append(button); return button; };
+    item('Mở session', () => select(thread.id));
+    if (thread.archived) {
+      item('↩ Khôi phục', () => act('archive', { id: thread.id, archived: false }));
+      item('🗑 Xoá hẳn…', () => deleteThread(thread), { className: 'danger' });
+    } else {
+      item(thread.pinned ? '★ Bỏ ghim' : '☆ Ghim', () => act('pin', { id: thread.id }));
+      menu.append(make('small', { textContent: 'Chuyển tới dự án' }));
+      for (const project of [{ id: '', name: 'Không thuộc dự án' }, ...team.projects]) item((thread.project === project.id ? '✓ ' : '　') + project.name, () => act('move', { id: thread.id, project: project.id }), { disabled: thread.project === project.id });
+      item('🗄 Lưu trữ', () => act('archive', { id: thread.id }));
+    }
+    menu.hidden = false;
+    const width = menu.offsetWidth, height = menu.offsetHeight;
+    menu.style.left = Math.max(8, Math.min(anchor.left, innerWidth - width - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(anchor.bottom + 4, innerHeight - height - 8)) + 'px';
+    menu.querySelector('button')?.focus();
   }
-  // Hội thoại render theo khóa tin nhắn: chỉ dựng lại thẻ có nội dung đổi, giữ nguyên vị trí cuộn (sửa lỗi bị cuộn lên đầu
-  // mỗi lần publish/stream) và giữ vùng chữ đang bôi đen.
-  const cardCache = new Map(); let cachedThread;
-  const messageKey = (message, index) => message.id || `${index}:${message.time}:${message.role}`;
-  const profileName = id => knownProfiles.find(profile => profile.id === id)?.name || 'Hồ sơ';
-  const signature = message => [message.text, message.streaming, message.error, (message.tools || []).join(','), message.profileId, message.model, message.profileId ? profileName(message.profileId) : '', JSON.stringify(message.usage || null)].join('\u0000');
-  // US-01: token/chi phí. addUsage là chỗ cộng duy nhất, dùng cho cả dòng từng tin, tổng theo role và tổng session.
+  async function deleteThread(thread) {
+    if (!confirm(`Xoá hẳn session "${thread.title}"?\nLịch sử hội thoại và ảnh đính kèm trong app sẽ bị xoá, không khôi phục được. Lịch sử CLI của Claude Code không bị đụng tới.`)) return;
+    if (await act('delete', { id: thread.id }) && selected === thread.id) { selected = undefined; localStorage.removeItem('selected-thread'); }
+  }
+
+  // ---- Header và menu ⋯.
+  function options(target, value = '') { target.replaceChildren(...[{ id: '', name: 'Không thuộc dự án' }, ...team.projects].map(project => make('option', { value: project.id, textContent: project.name }))); target.value = value; }
+  get('#pin').onclick = () => { closeMenus(); act('pin'); };
+  get('#move').onchange = () => act('move', { project: get('#move').value });
+  get('#archive').onclick = () => { closeMenus(); act('archive'); };
+  get('#restore').onclick = () => act('archive', { archived: false });
+  get('#retry-blocked').onclick = async () => { closeMenus(); try { await window.office.run('dispatch-retry', { id: selected }); } catch (error) { showError(error); } };
+  get('#folders').onclick = async () => { try { await ensureThread(); await window.office.run('thread-folder', { id: selected }); } catch (error) { showError(error); } };
+  get('#edit-request').onclick = () => { closeMenus(); const thread = current(); if (!thread) return; openNaming('edit-request', 'Chỉnh sửa yêu cầu session', thread.messages.find(message => message.role === 'Bạn')?.text || ''); };
+  get('#project').onclick = () => openNaming('project', 'Tên dự án mới');
+  function openNaming(kind, label, request) {
+    naming = kind; get('#name-label').textContent = label;
+    const editing = kind === 'edit-request'; get('#new-name').hidden = editing; get('#new-name').required = !editing; get('#new-name').maxLength = 80; get('#request-editor').hidden = !editing; if (editing) get('#request-editor').value = request;
+    get('#naming').showModal();
+  }
+  get('#cancel-name').onclick = () => get('#naming').close();
+  get('#name-form').onsubmit = async event => {
+    event.preventDefault(); const payload = naming === 'edit-request' ? { text: get('#request-editor').value } : { name: get('#new-name').value };
+    if (naming === 'edit-request' && (current().stage > 0 || current().status !== 'waiting')) { if (!confirm('Thay đổi này bắt đầu lại quy trình và yêu cầu kiểm tra lại kết quả. Tiếp tục?')) return; payload.restart = true; }
+    if (await act(naming, payload)) { get('#naming').close(); get('#name-form').reset(); }
+  };
+  for (const button of get('#decision-banner').querySelectorAll('button')) button.onclick = () => act('decision', { choice: button.dataset.choice });
+
+  // ---- Token theo session/role (US-01). addUsage là chỗ cộng duy nhất.
   const USAGE_FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite', 'costUsd', 'turns'];
   const addUsage = (total, usage) => { for (const key of USAGE_FIELDS) total[key] = (total[key] || 0) + (Number(usage?.[key]) || 0); return total; };
   function usageByRole(messages) { const roles = new Map(); for (const message of messages) if (message.usage) { if (!roles.has(message.role)) roles.set(message.role, addUsage({}, null)); addUsage(roles.get(message.role), message.usage); } return roles; }
   const tokens = value => Math.round(value).toLocaleString();
   const usageText = usage => `vào ${tokens(usage.input)} (cache ${tokens(usage.cacheRead + usage.cacheWrite)}) · ra ${tokens(usage.output)} · $${usage.costUsd.toFixed(4)}`;
   const usageDetail = usage => `input ${tokens(usage.input)} · cache đọc ${tokens(usage.cacheRead)} · cache ghi ${tokens(usage.cacheWrite)} · output ${tokens(usage.output)} · ${usage.turns} turn`;
-  const sessionUsage = document.createElement('span'); sessionUsage.id = 'usage-tokens'; get('#title').after(sessionUsage);
   function paintSessionUsage(thread) {
-    const roles = usageByRole(thread?.messages || []); sessionUsage.hidden = !roles.size; if (!roles.size) { sessionUsage.textContent = ''; return; }
+    const node = get('#usage-tokens'), roles = usageByRole(thread?.messages || []); node.hidden = !roles.size; if (!roles.size) { node.textContent = ''; return; }
     const total = [...roles.values()].reduce(addUsage, addUsage({}, null));
-    sessionUsage.textContent = 'Token session: ' + usageText(total) + ' | ' + [...roles].map(([role, usage]) => role + ': ' + usageText(usage)).join(' | ');
-    sessionUsage.title = [...roles].map(([role, usage]) => role + ': ' + usageDetail(usage)).join('\n');
+    node.textContent = 'Token session: ' + usageText(total) + ' | ' + [...roles].map(([role, usage]) => role + ': ' + usageText(usage)).join(' | ');
+    node.title = [...roles].map(([role, usage]) => role + ': ' + usageDetail(usage)).join('\n');
   }
+
+  // ---- Tiến độ lượt chạy.
   function elapsed(ms) { const seconds = Math.max(0, Math.floor(ms / 1000)), minutes = Math.floor(seconds / 60); return minutes ? `${minutes}m${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`; }
   function progressText(message) {
     const progress = message.progress; if (!progress?.startedAt) return '';
@@ -122,17 +161,92 @@
     const doing = progress.lastTool ? progress.lastTool + (progress.target ? ' ' + progress.target : '') : message.text ? 'đang viết trả lời' : 'đang suy nghĩ';
     return `● ${elapsed(Date.now() - Date.parse(progress.startedAt))} · ${doing}${steps}`;
   }
+  const runningOf = (thread, role) => thread.messages.findLast(message => message.role === role && message.streaming);
+
+  // ---- Sơ đồ khối. Bấm khối để chọn và xem/cấu hình ở panel phải.
+  function blockLabel(thread, role, index) {
+    const task = thread.dispatch?.find(item => item.worker === role); let text;
+    if (runningOf(thread, role)) text = '● Đang thực hiện';
+    else if (thread.workers?.[role]?.paused) text = '⏸ Tạm dừng';
+    else if (task) text = taskNames[task.status] || task.status;
+    else if (index < thread.stage || thread.status === 'done') text = role === 'Dev' && thread.flow[thread.stage] === 'QA' ? '✓ Đã làm · chờ QA' : '✓ Đã bàn giao';
+    else text = index === thread.stage ? names[thread.status] : 'Chưa đến bước';
+    if (isLead(thread, role) && qaRoundLimit) text += ` · ${phaseNames[thread.leadPhase] || phaseNames.planning} · QA ${thread.qaFailRounds || 0}/${qaRoundLimit}`;
+    return text;
+  }
+  function paintFlow(thread) {
+    const flow = get('#flow'); flow.replaceChildren();
+    thread.flow.forEach((role, index) => {
+      if (index) flow.append(make('span', { className: 'arrow', textContent: '→' }));
+      const block = make('div', { className: 'block' + (index < thread.stage || thread.status === 'done' ? ' finished' : index === thread.stage ? ' current' : '') + (role === selectedWorker ? ' selected' : ''), tabIndex: 0 });
+      block.setAttribute('role', 'button'); block.setAttribute('aria-pressed', String(role === selectedWorker));
+      const task = thread.dispatch?.find(item => item.worker === role); block.title = task?.error || task?.task || role;
+      block.append(make('b', { textContent: role }), make('small', { textContent: blockLabel(thread, role, index) }));
+      const running = runningOf(thread, role); if (running) block.append(make('em', { className: 'block-progress', textContent: progressText(running) }));
+      block.onclick = () => chooseWorker(role); block.onkeydown = event => { if (event.target === block && ['Enter', ' '].includes(event.key)) { event.preventDefault(); chooseWorker(role); } };
+      const check = removal[thread.id]?.[role], title = check?.ok ? `Xóa ${role} (${check.reason})` : check?.reason || 'Không xóa được';
+      const remove = make('button', { className: 'remove-role', type: 'button', textContent: '×', disabled: !check?.ok || thread.archived, title }); remove.setAttribute('aria-label', title);
+      remove.onclick = async event => { event.stopPropagation(); if (confirm('Xóa ' + role + '? Cấu hình riêng và phiên chat của khối này sẽ bị xóa.')) await act('remove-role', { role }); };
+      block.append(remove); flow.append(block);
+    });
+  }
+  function chooseWorker(role) { selectedWorker = role; panelKey = ''; if (document.body.classList.contains('panel-hidden')) applyPanel(true); paint(); }
+  function paintDispatch(thread) {
+    const tasks = thread.dispatch || [], count = status => tasks.filter(task => task.status === status).length;
+    const parts = [thread.auto?.enabled ? '⚙ Tự động: bật' : 'Tự động: tắt (/chot hoặc /auto on)'];
+    if (tasks.length) { parts.push(`Dev ${count('finished')}/${tasks.length} đã xong`); for (const [status, title] of [['running', 'đang chạy'], ['queued', 'chờ'], ['paused', 'tạm dừng'], ['blocked', 'bị chặn'], ['failed', 'lỗi']]) if (count(status)) parts.push(`${count(status)} ${title}`); }
+    get('#dispatch-summary').hidden = !thread.flow.length; get('#dispatch-summary').textContent = parts.join(' · ');
+  }
+
+  // ---- Panel khối đang chọn. Chỉ ghi đè ô không đang được sửa để publish (stream) không xoá chữ đang gõ.
+  for (const [value, title] of MODES) get('#chat-mode').append(make('option', { value, textContent: title }));
+  for (const [value, title] of MODELS) get('#chat-model').append(make('option', { value, textContent: title }));
+  let panelKey = '';
+  const setField = (field, value, force) => { if (force || document.activeElement !== field) field.value = value; };
+  const roleType = (thread, role) => thread.workers?.[role]?.type || role.replace(/ #\d+$/, '');
+  function paintPanel(thread) {
+    const role = thread?.flow.includes(selectedWorker) ? selectedWorker : '', key = (thread?.id || '') + ':' + role, force = key !== panelKey; panelKey = key;
+    const config = role ? thread.workers?.[role] || {} : {};
+    get('#panel-title').textContent = role || 'Chat thường';
+    const running = role ? runningOf(thread, role) : thread?.messages.findLast(message => message.role === 'Claude' && message.streaming);
+    get('#panel-state').textContent = !thread ? 'Chưa có session' : running ? progressText(running) : role ? blockLabel(thread, role, thread.flow.indexOf(role)) : 'Không role · chạy Claude Code thường';
+    for (const id of ['#account-field', '#task-field', '#role-texts']) get(id).hidden = !role;
+    for (const field of document.querySelectorAll('#panel select, #panel textarea')) field.disabled = !thread || thread.archived;
+    setField(get('#chat-mode'), config.mode || thread?.mode || 'read', force); setField(get('#chat-model'), config.model || thread?.model || 'claude-opus-5-5', force);
+    if (force) get('#panel-saved').textContent = '';
+    if (!role) return;
+    const account = get('#worker-account'); if (force || document.activeElement !== account) { account.replaceChildren(...[{ id: '', name: 'Theo tài khoản đang chọn' }, ...knownProfiles].map(profile => make('option', { value: profile.id, textContent: profile.name }))); account.value = config.profileId || ''; }
+    setField(get('#worker-task'), config.task || '', force);
+    const type = roleType(thread, role), base = team.roleTemplates?.[type] || defaultRoles[type] || {};
+    setField(get('#role-responsibility'), base.responsibility || '', force); setField(get('#role-output'), base.output || '', force); setField(get('#role-instructions'), thread.roleConfig?.[type]?.instructions || '', force);
+  }
+  async function saveWorker() {
+    const thread = current(); if (!thread) return; const saved = get('#panel-saved');
+    if (!thread.flow.includes(selectedWorker)) { if (await act('chat-options', { mode: get('#chat-mode').value, model: get('#chat-model').value })) saved.textContent = '✓ Đã lưu'; return; }
+    const result = await act('worker-config', { role: selectedWorker, mode: get('#chat-mode').value, model: get('#chat-model').value, profileId: get('#worker-account').value, task: get('#worker-task').value });
+    if (result?.loginStarted) { await window.office.run('navigate', { page: 'index.html' }); return; } if (result) saved.textContent = '✓ Đã lưu cấu hình riêng của khối';
+  }
+  for (const id of ['#chat-mode', '#chat-model', '#worker-account', '#worker-task']) get(id).onchange = saveWorker;
+  async function saveRoleTexts() {
+    const thread = current(); if (!thread?.flow.includes(selectedWorker)) return;
+    try { await window.office.run('team', { action: 'role-config', id: selected, role: roleType(thread, selectedWorker), responsibility: get('#role-responsibility').value, output: get('#role-output').value, instructions: get('#role-instructions').value, saveDefault: true }); get('#panel-saved').textContent = '✓ Đã lưu'; } catch (error) { get('#panel-saved').textContent = error.message; }
+  }
+  for (const id of ['#role-responsibility', '#role-output', '#role-instructions']) get(id).onchange = saveRoleTexts;
+
+  // ---- Hội thoại render theo khóa tin nhắn: chỉ dựng lại thẻ có nội dung đổi, giữ vị trí cuộn và vùng chữ đang bôi đen.
+  const cardCache = new Map(); let cachedThread;
+  const messageKey = (message, index) => message.id || `${index}:${message.time}:${message.role}`;
+  const profileName = id => knownProfiles.find(profile => profile.id === id)?.name || 'Hồ sơ';
+  const signature = message => [message.text, message.streaming, message.error, (message.tools || []).join(','), message.profileId, message.model, message.profileId ? profileName(message.profileId) : '', JSON.stringify(message.usage || null)].join('\u0000');
   function updateProgress(card, message) { const node = card.querySelector('.run-progress'); if (node) node.textContent = progressText(message); }
   function buildCard(message) {
-    const card = document.createElement('article'); const header = document.createElement('header'); const name = document.createElement('b');
-    name.textContent = message.profileId ? `${message.role} · ${profileName(message.profileId)} · ${message.model || ''}` : message.role;
-    const time = document.createElement('time'); time.textContent = new Date(message.time).toLocaleString(); header.append(name, time);
-    let content; if (window.renderChatText) content = window.renderChatText(message.text); else { content = document.createElement('p'); content.textContent = message.text; }
-    card.append(header, content);
-    if (message.progress) { const progress = document.createElement('small'); progress.className = 'run-progress'; progress.setAttribute('aria-live', 'polite'); card.append(progress); updateProgress(card, message); }
+    const card = make('article'), header = make('header');
+    header.append(make('b', { textContent: message.profileId ? `${message.role} · ${profileName(message.profileId)} · ${message.model || ''}` : message.role }), make('time', { textContent: new Date(message.time).toLocaleString() }));
+    card.append(header, window.renderChatText ? window.renderChatText(message.text) : make('p', { textContent: message.text }));
+    if (message.progress) { const progress = make('small', { className: 'run-progress' }); progress.setAttribute('aria-live', 'polite'); card.append(progress); updateProgress(card, message); }
     if (message.streaming) card.classList.add('streaming'); if (message.error) card.classList.add('chat-error');
-    if (message.tools?.length) { const tools = document.createElement('small'); tools.textContent = 'Công cụ: ' + message.tools.join(', '); card.append(tools); }
-    if (message.usage) { const usage = addUsage({}, message.usage), line = document.createElement('small'); line.className = 'run-usage'; line.textContent = 'Token: ' + usageText(usage); line.title = usageDetail(usage); card.append(line); }
+    if (message.tools?.length) card.append(make('small', { textContent: 'Công cụ: ' + message.tools.join(', ') }));
+    if (message.usage) { const usage = addUsage({}, message.usage); card.append(make('small', { className: 'run-usage', textContent: 'Token: ' + usageText(usage), title: usageDetail(usage) })); }
     return card;
   }
   function renderActivity(thread) {
@@ -151,155 +265,119 @@
     for (const child of children.slice(same)) child.remove(); activity.append(...cards.slice(same));
     activity.scrollTop = switched || atBottom ? activity.scrollHeight : top;
   }
-  function refreshProgress() {
+  setInterval(() => {
     const thread = current(); if (!thread) return;
     thread.messages.forEach((message, index) => { if (message.streaming) { const hit = cardCache.get(messageKey(message, index)); if (hit) updateProgress(hit.card, message); } });
-    get('#flow').querySelectorAll('.block').forEach((block, index) => { const running = thread.messages.findLast(message => message.role === thread.flow[index] && message.streaming); const node = block.querySelector('.block-progress'); if (node && running) node.textContent = progressText(running); });
+    get('#flow').querySelectorAll('.block').forEach((block, index) => { const running = runningOf(thread, thread.flow[index]), node = block.querySelector('.block-progress'); if (node && running) node.textContent = progressText(running); });
+    const running = selectedWorker ? runningOf(thread, selectedWorker) : null; if (running) get('#panel-state').textContent = progressText(running);
+  }, 1000);
+
+  // ---- Vẽ toàn bộ theo trạng thái hiện tại.
+  function paint() {
+    sidebar(); const thread = current();
+    get('#title').textContent = thread?.title || 'Không gian phát triển game'; get('#title').title = thread?.title || '';
+    options(get('#move'), thread?.project || ''); get('#pin').textContent = thread?.pinned ? '★ Bỏ ghim' : '☆ Ghim';
+    for (const id of ['#pin', '#move', '#edit-request', '#retry-blocked', '#archive', '#more']) get(id).disabled = !thread;
+    get('#archived-banner').hidden = !thread?.archived;
+    for (const id of ['#pin', '#move', '#edit-request', '#retry-blocked', '#archive', '#role', '#folders']) if (thread?.archived) get(id).disabled = true;
+    paintSessionUsage(thread);
+    get('#issues').replaceChildren(); get('#attachments').replaceChildren(); get('#folder-list').replaceChildren();
+    get('#decision-banner').hidden = thread?.status !== 'awaiting-decision';
+    get('#decision-text').textContent = `QA fail ${thread?.qaFailRounds || 0}/${qaRoundLimit} vòng. Chọn cách xử lý:`;
+    if (!thread) { paintPanel(thread); get('#flow').replaceChildren(); get('#dispatch-summary').hidden = true; get('#manual').hidden = true; get('#role').disabled = false; get('#folders').disabled = false; return; }
+    if (!thread.archived) { get('#role').disabled = false; get('#folders').disabled = false; }
+    if (selectedWorker && !thread.flow.includes(selectedWorker)) selectedWorker = undefined;
+    if (!selectedWorker) selectedWorker = thread.flow[thread.stage] || thread.flow[0];
+    paintFlow(thread); paintDispatch(thread); paintPanel(thread); renderActivity(thread);
+    const folders = [thread.folder, ...(thread.relatedFolders || [])].filter(Boolean);
+    get('#folders').textContent = `📁 Thư mục${folders.length ? ' (' + folders.length + ')' : ''}`;
+    get('#folder-list').replaceChildren(...folders.map((folder, index) => { const chip = make('span', { className: 'image-chip', textContent: `${index === 0 ? 'Chính' : 'Liên quan'}: ${folder} `, title: folder }); const remove = make('button', { type: 'button', textContent: '×', title: 'Bỏ thư mục khỏi session (không xóa trên đĩa)', disabled: thread.archived }); remove.onclick = async () => { try { await window.office.run('remove-folder', { id: selected, folder }); } catch (error) { showError(error); } }; chip.append(remove); return chip; }));
+    for (const image of thread.attachments || []) get('#attachments').append(make('span', { className: 'image-chip', textContent: '▧ ' + image.name }));
+    for (const issue of thread.issues) { const row = make('div', { className: 'issue' }); row.append(make('span', { textContent: `${issue.closed ? '✓ Đã retest' : '● Mở'} · ${issue.text}` })); if (!issue.closed) row.append(make('button', { type: 'button', textContent: 'Xác nhận retest', onclick: async () => { if (await act('retest', { issue: issue.id, text: get('#message').value })) get('#message').value = ''; } })); get('#issues').append(row); }
+    const roles = thread.flow.length > 0; get('#manual').hidden = !roles || thread.archived;
+    get('#begin').disabled = thread.status !== 'waiting'; get('#handoff').disabled = thread.status !== 'working'; get('#issue').disabled = ['done', 'awaiting-decision', 'cancelled'].includes(thread.status);
+    get('#review-reject').hidden = !isLead(thread, thread.flow[thread.stage]) || thread.leadPhase !== 'review' || thread.status !== 'working';
+    get('#run-role').hidden = !roles; get('#run-role').textContent = selectedWorker ? 'Chạy ' + selectedWorker : 'Chạy';
+    for (const id of ['#run-role', '#stop', '#message']) get(id).disabled = thread.archived;
+    get('#composer button.primary').disabled = thread.archived;
+    get('#status').textContent = (selectedWorker || 'Chat thường') + (runningOf(thread, selectedWorker || 'Claude') ? ' · Đang chạy' : ' · Sẵn sàng');
+    if (!get('#message').value && localStorage.getItem('draft:' + selected)) get('#message').value = localStorage.getItem('draft:' + selected);
   }
-  setInterval(refreshProgress, 1000);
-  window.office.onState(state => { paintAccounts(state); applyState(state); team = state.team; if (team) { if (!selected || !current()) selected = team.threads.at(-1)?.id; paint(); } });
-  get('#search').oninput = sidebar;
-  get('#new-thread').onclick = async () => { const id = await act('create', { project: current()?.project || '' }); if (id) { selected = id; localStorage.setItem('selected-thread', id); paint(); get('#message').focus(); } };
-  get('#cancel-create').onclick = () => get('#create').close();
-  get('#create-form').onsubmit = async event => { event.preventDefault(); const id = await act('create', { title: get('#new-title').value, request: get('#request').value, project: get('#new-project').value }); if (id) { selected = id; localStorage.setItem('selected-thread', selected); get('#create').close(); get('#create-form').reset(); paint(); } };
-  get('#project').onclick = () => { naming = 'project'; requestEditor.hidden = true; get('#new-name').hidden = false; get('#new-name').required = true; get('#name-label').textContent = 'Tên dự án mới'; get('#new-name').maxLength = 80; roleChoices.hidden = true; get('#naming').showModal(); };
-  const roleChoices = document.createElement('div'); roleChoices.hidden = true; get('#new-name').after(roleChoices);
-  const requestEditor = document.createElement('textarea'); requestEditor.hidden = true; requestEditor.maxLength = 12000; roleChoices.after(requestEditor);
-  get('#role').onclick = () => {
-    const thread = current(); if (!thread) { get('#status').textContent = 'Tạo session trước khi chọn role'; return; }
-    naming = 'select-roles'; requestEditor.hidden = true; get('#new-name').hidden = true; get('#new-name').required = false; get('#name-label').textContent = 'Chọn / xóa role và cấu hình'; roleChoices.hidden = false; roleChoices.replaceChildren();
-    const roles = [...new Set([...roleTypes, ...thread.flow])];
-    for (const role of roles) {
-      const section = document.createElement('section'); section.className = 'role-config';
-      const label = document.createElement('label'); const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.dataset.role = 'true'; checkbox.value = role; checkbox.checked = thread.flow.includes(role); label.append(checkbox, document.createTextNode(' ' + role)); section.append(label);
-      const config = thread.roleConfig?.[role] || team.roleTemplates?.[role] || defaultRoles[role] || {};
-      const editors = {};
-      for (const [key, title] of [['responsibility', 'Trách nhiệm'], ['output', 'Đầu ra'], ['instructions', 'Yêu cầu riêng trong session']]) { const heading = document.createElement('small'); heading.textContent = title; const field = document.createElement('textarea'); field.value = config[key] || ''; field.maxLength = key === 'instructions' ? 12000 : 6000; field.setAttribute('aria-label', role + ' · ' + title); editors[key] = field; section.append(heading, field); }
-      const saveLabel = document.createElement('label'); const saveDefault = document.createElement('input'); saveDefault.type = 'checkbox'; saveLabel.append(saveDefault, document.createTextNode(' Dùng trách nhiệm/đầu ra này làm mặc định lần sau')); section.append(saveLabel);
-      const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Lưu cấu hình ' + role;
-      save.onclick = async () => { if (await act('role-config', { role, responsibility: editors.responsibility.value, output: editors.output.value, instructions: editors.instructions.value, saveDefault: saveDefault.checked })) save.textContent = '✓ Đã lưu ' + role; }; section.append(save); roleChoices.append(section);
-    }
-    const note = document.createElement('p'); note.textContent = 'Bỏ tích để xóa role khỏi luồng, rồi Lưu. Cấu hình riêng vẫn được giữ. Đổi role khi đã chạy cần xác nhận bắt đầu lại.'; roleChoices.append(note); get('#naming').showModal();
+
+  // ---- Thêm role.
+  get('#role').onclick = async () => {
+    if (!current()) { if (!(await ensureThread())) return; team = (await window.office.run('state')).team; paint(); }
+    const thread = current(), hasLead = thread.flow.some(label => isLead(thread, label));
+    get('#add-role-choices').replaceChildren(...roleTypes.filter(type => type !== 'Lead Dev' || !hasLead).map(role => make('button', { type: 'button', textContent: '+ ' + role, onclick: async () => { const added = await act('add-worker', { type: role }); if (added) { selectedWorker = added; panelKey = ''; get('#add-role-dialog').close(); paint(); } } })));
+    get('#add-role-dialog').showModal();
   };
-  get('#cancel-name').onclick = () => get('#naming').close();
-  get('#name-form').onsubmit = async event => { event.preventDefault(); const payload = naming === 'select-roles' ? { roles: [...roleChoices.querySelectorAll('input[data-role]:checked')].map(input => input.value) } : naming === 'edit-request' ? { text: requestEditor.value } : { name: get('#new-name').value }; if (['select-roles', 'edit-request'].includes(naming) && (current().stage > 0 || current().status !== 'waiting')) { if (!confirm('Thay đổi này bắt đầu lại quy trình và yêu cầu kiểm tra lại kết quả. Tiếp tục?')) return; payload.restart = true; } if (await act(naming, payload)) { get('#naming').close(); get('#name-form').reset(); } };
-  get('#pin').onclick = () => act('pin'); get('#move').onchange = () => act('move', { project: get('#move').value }); get('#begin').onclick = () => act('start');
-  get('#handoff').onclick = async () => { if (await act('handoff', { text: get('#message').value })) get('#message').value = ''; };
-  get('#issue').onclick = async () => { if (await act('issue', { text: get('#message').value })) get('#message').value = ''; };
-  get('#composer').onsubmit = async event => {
-    event.preventDefault();
-    if (!current()) { const id = await act('create', { project: '' }); if (!id) return; selected = id; }
-    if (current()?.flow.length && !get('#message').value.trim().startsWith('/')) { if (await act('message', { text: get('#message').value })) get('#message').value = ''; return; }
-    try { await window.office.run('run-thread', { id: selected, text: get('#message').value }); get('#message').value = ''; await window.office.run('navigate', { page: 'index.html' }); }
-    catch (error) { get('#status').textContent = error.message; }
-  };
-  get('#console').onclick = () => { accountMenu.hidden = !accountMenu.hidden; get('#console').setAttribute('aria-expanded', String(!accountMenu.hidden)); if (!accountMenu.hidden) accountMenu.querySelector('button')?.focus(); };
-  window.office.run('state').then(state => { paintAccounts(state); applyState(state); team = state.team; if (!current()) selected = team?.threads.at(-1)?.id; if (team) paint(); });
-  const modelSelect = document.createElement('select'); modelSelect.id = 'chat-model'; modelSelect.setAttribute('aria-label', 'Model');
-  for (const model of ['claude-opus-5-5', 'sonnet', 'opus', 'haiku']) { const option = document.createElement('option'); option.value = model; option.textContent = model === 'claude-opus-5-5' ? 'Opus 5.5' : model[0].toUpperCase() + model.slice(1); modelSelect.append(option); }
-  const modeSelect = document.createElement('select'); modeSelect.id = 'chat-mode'; modeSelect.setAttribute('aria-label', 'Mode');
-  for (const [value, title] of [['read', 'Plan · chỉ đọc'], ['edit', 'Đọc & sửa tệp · xác nhận mỗi lượt'], ['auto', 'Auto · CLI tự xét quyền'], ['bypass', 'Bypass · bỏ duyệt tệp']]) { const option = document.createElement('option'); option.value = value; option.textContent = title; modeSelect.append(option); }
-  const stop = document.createElement('button'); stop.type = 'button'; stop.textContent = 'Dừng khối'; stop.onclick = () => window.office.run('chat-stop', { id: selected, role: selectedWorker });
-  get('#composer > div:last-child').prepend(modeSelect, modelSelect, stop);
-  const saveOptions = () => selectedWorker ? act('worker-config', { role: selectedWorker, mode: modeSelect.value, model: modelSelect.value, profileId: current().workers?.[selectedWorker]?.profileId || '', task: current().workers?.[selectedWorker]?.task || '' }) : act('chat-options', { mode: modeSelect.value, model: modelSelect.value }); modeSelect.onchange = modelSelect.onchange = saveOptions;
-  const applyPlan = document.createElement('button'); applyPlan.type = 'button'; applyPlan.textContent = 'Thử lại task bị chặn'; applyPlan.onclick = async () => { try { await window.office.run('dispatch-retry', { id: selected }); } catch (error) { get('#status').textContent = error.message; } }; get('.actions').append(applyPlan);
+  get('#add-role-cancel').onclick = () => get('#add-role-dialog').close();
+
+  // ---- Ô soạn: lệnh, gợi ý, thủ công, chạy/dừng/gửi.
+  get('#commands').append(make('option', { value: '', textContent: '/ Lệnh' }), ...['/chot', '/auto on', '/auto off', '/mcp', '/model', '/status', '/usage', '/help'].map(value => make('option', { value, textContent: value })));
+  get('#commands').onchange = () => { const value = get('#commands').value; if (value) { get('#message').value = value; get('#message').focus(); get('#commands').value = ''; } };
+  const suggestions = get('#command-suggestions'); let suggestionIndex = 0;
+  function suggest() {
+    const value = get('#message').value; const matching = value.startsWith('/') && !/\s/.test(value) ? COMMANDS.filter(([command]) => command.startsWith(value)) : [];
+    suggestions.hidden = !matching.length; suggestionIndex = 0;
+    suggestions.replaceChildren(...matching.map(([command, title]) => make('button', { type: 'button', textContent: command + ' — ' + title, onclick: () => { get('#message').value = command + (TAKES_ARGS.includes(command) ? ' ' : ''); suggestions.hidden = true; get('#message').focus(); } })));
+    suggestions.firstElementChild?.classList.add('active');
+  }
+  get('#message').addEventListener('input', suggest);
+  get('#message').addEventListener('keydown', event => {
+    if (suggestions.hidden) return; const buttons = [...suggestions.querySelectorAll('button')];
+    if (event.key === 'Escape') { suggestions.hidden = true; return; }
+    if (['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); suggestionIndex = (suggestionIndex + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length; buttons.forEach((button, index) => button.classList.toggle('active', index === suggestionIndex)); }
+    if (event.key === 'Tab' || event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); buttons[suggestionIndex]?.click(); }
+  });
+  get('#message').addEventListener('keydown', event => { if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.defaultPrevented) return; event.preventDefault(); if (get('#message').value.trim()) get('#composer').requestSubmit(); });
+  const manualText = async action => { closeMenus(); if (await act(action, { text: get('#message').value })) get('#message').value = ''; };
+  get('#begin').onclick = () => { closeMenus(); act('start'); };
+  get('#handoff').onclick = () => manualText('handoff'); get('#issue').onclick = () => manualText('issue'); get('#review-reject').onclick = () => manualText('review-reject');
+  get('#stop').onclick = () => window.office.run('chat-stop', { id: selected, role: selectedWorker }).catch(showError);
   async function sendChat(role) {
-    if (!current()) { const id = await act('create', { project: '' }); if (!id) return; selected = id; }
-    role ||= selectedWorker;
-    try { const result = await window.office.run('chat-send', { id: selected, role, text: get('#message').value.trim() || (role ? 'Thực hiện nhiệm vụ theo yêu cầu session.' : '') }); if (result?.loginStarted) { localStorage.setItem('draft:' + selected, get('#message').value); await window.office.run('navigate', { page: 'index.html' }); return; } if (result) { localStorage.removeItem('draft:' + selected); get('#message').value = ''; } } catch (error) { get('#status').textContent = error.message; }
+    if (get('#message').value.trim() === '/usage') { get('#message').value = ''; await openUsage(); return; }
+    if (!(await ensureThread())) return; role ||= selectedWorker;
+    try {
+      const result = await window.office.run('chat-send', { id: selected, role, text: get('#message').value.trim() || (role ? 'Thực hiện nhiệm vụ theo yêu cầu session.' : '') });
+      if (result?.loginStarted) { localStorage.setItem('draft:' + selected, get('#message').value); await window.office.run('navigate', { page: 'index.html' }); return; }
+      if (result) { localStorage.removeItem('draft:' + selected); get('#message').value = ''; }
+    } catch (error) { showError(error); }
   }
   get('#composer').onsubmit = event => { event.preventDefault(); sendChat(); };
-  runRole.textContent = 'Chạy khối đang chọn'; runRole.onclick = () => sendChat(selectedWorker || current()?.flow[current().stage]);
-  const suggestions = document.createElement('div'); suggestions.id = 'command-suggestions'; suggestions.hidden = true; suggestions.setAttribute('role', 'listbox'); get('#message').before(suggestions);
-  let suggestionIndex = 0;
-  const commandHelp = [['/model', 'Chọn model'], ['/status', 'Cấu hình session'], ['/role', 'Chạy/tạm dừng khối: /role <tên> start|pause'], ['/chot', 'Chốt GD, chạy tự động các bước sau'], ['/auto', 'Bật/tắt tự động: /auto on|off'], ['/mcp', 'MCP server (/mcp open để sửa)'], ['/usage', 'Usage nhận từ CLI'], ['/help', 'Trợ giúp']];
-  const takesArgs = ['/role', '/auto'];
-  function suggest() { const value = get('#message').value; const matching = value.startsWith('/') && !/\s/.test(value) ? commandHelp.filter(([command]) => command.startsWith(value)) : []; suggestions.hidden = !matching.length; suggestionIndex = 0; suggestions.replaceChildren(...matching.map(([command, title]) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = command + ' — ' + title; button.onclick = () => { get('#message').value = command + (takesArgs.includes(command) ? ' ' : ''); suggestions.hidden = true; get('#message').focus(); }; return button; })); suggestions.firstElementChild?.classList.add('active'); }
-  get('#message').addEventListener('input', suggest);
-  get('#message').addEventListener('keydown', event => { if (suggestions.hidden) return; const buttons = [...suggestions.querySelectorAll('button')]; if (event.key === 'Escape') { suggestions.hidden = true; return; } if (['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); suggestionIndex = (suggestionIndex + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length; buttons.forEach((button, index) => button.classList.toggle('active', index === suggestionIndex)); } if (event.key === 'Tab' || event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); buttons[suggestionIndex]?.click(); } });
-  const roleEditor = document.createElement('dialog'); roleEditor.id = 'role-detail';
-  const roleHeading = document.createElement('h2'); const defaultHeading = document.createElement('p'); defaultHeading.textContent = 'Mặc định · tự lưu sau khi rời ô';
-  const responsibility = document.createElement('textarea'); responsibility.setAttribute('aria-label', 'Trách nhiệm mặc định'); responsibility.maxLength = 6000;
-  const output = document.createElement('textarea'); output.setAttribute('aria-label', 'Đầu ra mặc định'); output.maxLength = 6000;
-  const ownHeading = document.createElement('p'); ownHeading.textContent = 'Trách nhiệm và nhiệm vụ riêng trong session này';
-  const ownInstructions = document.createElement('textarea'); ownInstructions.setAttribute('aria-label', 'Nhiệm vụ session'); ownInstructions.maxLength = 12000;
-  const saved = document.createElement('small'); const closeDetail = document.createElement('button'); closeDetail.textContent = 'Đóng'; closeDetail.onclick = () => roleEditor.close();
-  roleEditor.append(roleHeading, defaultHeading, responsibility, output, ownHeading, ownInstructions, saved, closeDetail); document.body.append(roleEditor);
-  let editingRole, editingThread;
-  let editingWorker;
-  const workerAccount = document.createElement('select'); workerAccount.setAttribute('aria-label', 'Tài khoản của khối');
-  const workerMode = document.createElement('select'); workerMode.setAttribute('aria-label', 'Mode của khối'); workerMode.replaceChildren(...[...modeSelect.options].map(option => option.cloneNode(true)));
-  const workerModel = document.createElement('select'); workerModel.setAttribute('aria-label', 'Model của khối'); workerModel.replaceChildren(...[...modelSelect.options].map(option => option.cloneNode(true)));
-  const workerTask = document.createElement('textarea'); workerTask.setAttribute('aria-label', 'Task riêng của khối'); workerTask.placeholder = 'Task được Lead giao: owner, phạm vi file, AC, phụ thuộc…';
-  roleEditor.insertBefore(workerAccount, ownHeading); roleEditor.insertBefore(workerMode, ownHeading); roleEditor.insertBefore(workerModel, ownHeading); roleEditor.insertBefore(workerTask, saved);
-  const saveWorker = async () => { const result = await act('worker-config', { id: editingThread, role: editingWorker, mode: workerMode.value, model: workerModel.value, profileId: workerAccount.value, task: workerTask.value }); if (result?.loginStarted) { await window.office.run('navigate', { page: 'index.html' }); return; } if (result) saved.textContent = '✓ Đã lưu cấu hình riêng của khối'; };
-  for (const field of [workerAccount, workerMode, workerModel, workerTask]) field.onchange = saveWorker;
-  async function saveDetail() { try { await window.office.run('team', { action: 'role-config', id: editingThread, role: editingRole, responsibility: responsibility.value, output: output.value, instructions: ownInstructions.value, saveDefault: true }); saved.textContent = '✓ Đã lưu'; } catch (error) { saved.textContent = error.message; } }
-  for (const field of [responsibility, output, ownInstructions]) field.onchange = saveDetail;
-  function openRole(role) { selectedWorker = role; editingWorker = role; editingRole = current().workers?.[role]?.type || role.replace(/ #\d+$/, ''); editingThread = selected; const base = team.roleTemplates?.[editingRole] || defaultRoles[editingRole] || {}; roleHeading.textContent = role; responsibility.value = base.responsibility || ''; output.value = base.output || ''; ownInstructions.value = current().roleConfig?.[editingRole]?.instructions || ''; const config = current().workers?.[role] || {}; workerTask.value = config.task || ''; workerMode.value = config.mode || current().mode || 'read'; workerModel.value = config.model || current().model || 'claude-opus-5-5'; workerAccount.replaceChildren(); for (const profile of [{ id: '', name: 'Theo tài khoản đang chọn' }, ...knownProfiles]) { const option = document.createElement('option'); option.value = profile.id; option.textContent = profile.name; workerAccount.append(option); } workerAccount.value = config.profileId || ''; saved.textContent = ''; roleEditor.showModal(); paint(); }
-  const decisionBanner = document.createElement('div'); decisionBanner.id = 'decision-banner'; decisionBanner.setAttribute('role', 'alert'); decisionBanner.hidden = true; get('#flow').before(decisionBanner);
-  const decisionText = document.createElement('p'); decisionBanner.append(decisionText);
-  for (const [choice, title] of [['continue', 'Tiếp tục thêm 1 vòng'], ['accept', 'Chấp nhận với lỗi đã biết'], ['stop', 'Dừng']]) { const button = document.createElement('button'); button.type = 'button'; button.textContent = title; button.dataset.choice = choice; button.onclick = () => act('decision', { choice }); decisionBanner.append(button); }
-  const reviewReject = document.createElement('button'); reviewReject.type = 'button'; reviewReject.id = 'review-reject'; reviewReject.textContent = 'Review không đạt → Dev'; reviewReject.title = 'Ghi mục không đạt kèm file:line vào ô nội dung rồi bấm'; reviewReject.hidden = true; get('#handoff').after(reviewReject);
-  reviewReject.onclick = async () => { if (await act('review-reject', { text: get('#message').value })) get('#message').value = ''; };
-  function paintLoop(thread) {
-    decisionBanner.hidden = thread?.status !== 'awaiting-decision';
-    decisionText.textContent = `QA fail ${thread?.qaFailRounds || 0}/${qaRoundLimit} vòng. Chọn cách xử lý:`;
-    reviewReject.hidden = !thread || !isLead(thread, thread.flow[thread.stage]) || thread.leadPhase !== 'review' || thread.status !== 'working';
-  }
-  const paintOriginal = paint;
-  paint = function () {
-    paintOriginal(); const thread = current(); paintLoop(thread); if (!thread) return;
-    if (!thread.flow.includes(selectedWorker)) selectedWorker = thread.flow[thread.stage] || thread.flow[0];
-    if (!get('#message').value && localStorage.getItem('draft:' + selected)) get('#message').value = localStorage.getItem('draft:' + selected);
-    const selectedConfig = thread.workers?.[selectedWorker]; modeSelect.value = selectedConfig?.mode || thread.mode || 'read'; modelSelect.value = selectedConfig?.model || thread.model || 'claude-opus-5-5';
-    runRole.textContent = selectedWorker ? 'Chạy ' + selectedWorker : 'Chạy role';
-    get('.notice').textContent = 'Chat trực tiếp · Plan chỉ đọc · Đọc & sửa/Auto: tệp + shell, hỏi mỗi lượt · Bypass: chỉ hỏi khi thư mục ở ổ C · MCP theo /mcp · /role <khối> start|pause.';
-    get('#status').textContent = (selectedWorker || 'Chat thường') + (thread.messages.some(message => message.streaming && message.role === (selectedWorker || 'Claude')) ? ' · Đang chạy' : ' · Sẵn sàng');
-    get('#flow').querySelectorAll('.block').forEach((block, index) => { const role = thread.flow[index]; block.tabIndex = 0; block.setAttribute('role', 'button'); block.onclick = () => openRole(role); block.onkeydown = event => { if (event.target === block && ['Enter', ' '].includes(event.key)) { event.preventDefault(); openRole(role); } }; const remove = document.createElement('button'); remove.className = 'remove-role'; remove.textContent = '×'; const check = removal[thread.id]?.[role]; remove.disabled = !check?.ok; remove.title = check?.ok ? `Xóa ${role} (${check.reason})` : check?.reason || 'Không xóa được'; remove.setAttribute('aria-label', remove.title); remove.onclick = async event => { event.stopPropagation(); if (confirm('Xóa ' + role + '? Cấu hình riêng và phiên chat của khối này sẽ bị xóa.')) await act('remove-role', { role }); }; block.append(remove); });
-    get('#flow').querySelectorAll('.block').forEach((block, index) => {
-      const role = thread.flow[index]; const task = thread.dispatch?.find(task => task.worker === role); const running = thread.messages.findLast(message => message.role === role && message.streaming); const label = block.querySelector('small');
-      if (running) label.textContent = '● Đang thực hiện'; else if (thread.workers?.[role]?.paused) label.textContent = '⏸ Tạm dừng'; else if (task) label.textContent = taskNames[task.status] || task.status;
-      if (isLead(thread, role) && qaRoundLimit) label.textContent += ` · ${phaseNames[thread.leadPhase] || phaseNames.planning} · QA ${thread.qaFailRounds || 0}/${qaRoundLimit}`;
-      if (running) { const progress = document.createElement('em'); progress.className = 'block-progress'; progress.textContent = progressText(running); block.append(progress); }
-      block.title = task?.error || task?.task || role;
-    });
-    paintDispatch(thread);
-  };
-  const taskNames = { queued: 'Chờ lượt/phụ thuộc', starting: 'Đang chuẩn bị', running: 'Đang thực hiện', finished: 'Đã trả kết quả · chưa QA', failed: 'Lỗi thực thi', blocked: 'Bị chặn', cancelled: 'Đã dừng', paused: 'Tạm dừng' };
-  const dispatchSummary = document.createElement('p'); dispatchSummary.id = 'dispatch-summary'; dispatchSummary.setAttribute('role', 'status'); get('#flow').after(dispatchSummary);
-  function paintDispatch(thread) {
-    const tasks = thread.dispatch || [], count = status => tasks.filter(task => task.status === status).length;
-    const parts = [thread.auto?.enabled ? '⚙ Tự động: bật' : 'Tự động: tắt (/chot hoặc /auto on)'];
-    if (tasks.length) { parts.push(`Dev ${count('finished')}/${tasks.length} đã xong`); for (const [status, title] of [['running', 'đang chạy'], ['queued', 'chờ'], ['paused', 'tạm dừng'], ['blocked', 'bị chặn'], ['failed', 'lỗi']]) if (count(status)) parts.push(`${count(status)} ${title}`); }
-    dispatchSummary.hidden = !thread.flow.length; dispatchSummary.textContent = parts.join(' · ');
-  }
-  const addRoleDialog = document.createElement('dialog'); addRoleDialog.id = 'add-role-dialog'; const addTitle = document.createElement('h2'); addTitle.textContent = 'Thêm role'; addRoleDialog.append(addTitle); document.body.append(addRoleDialog);
-  get('#role').onclick = async () => {
-    if (!current()) { const id = await act('create', { project: '' }); if (!id) return; selected = id; team = (await window.office.run('state')).team; paint(); }
-    addRoleDialog.replaceChildren(addTitle);
-    const thread = current(); const hasLead = thread.flow.some(label => isLead(thread, label));
-    for (const role of roleTypes.filter(type => type !== 'Lead Dev' || !hasLead)) { const button = document.createElement('button'); button.type = 'button'; button.textContent = '+ ' + role; button.onclick = async () => { const added = await act('add-worker', { type: role }); if (added) { selectedWorker = added; addRoleDialog.close(); paint(); } }; addRoleDialog.append(button); }
-    const close = document.createElement('button'); close.textContent = 'Hủy'; close.onclick = () => addRoleDialog.close(); addRoleDialog.append(close); addRoleDialog.showModal();
-  };
-  if (team) paint();
-  get('#message').addEventListener('keydown', event => { if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.defaultPrevented) return; event.preventDefault(); if (get('#message').value.trim()) get('#composer').requestSubmit(); });
-  const fileDialog = document.createElement('dialog'); fileDialog.id = 'file-viewer';
-  const fileTitle = document.createElement('h3'); const fileText = document.createElement('pre'); const fileCopy = document.createElement('button'); fileCopy.textContent = 'Copy nội dung'; fileCopy.onclick = () => window.office.run('copy-text', { text: fileText.textContent }); const fileClose = document.createElement('button'); fileClose.textContent = 'Đóng'; fileClose.onclick = () => fileDialog.close(); fileDialog.append(fileTitle, fileCopy, fileClose, fileText); document.body.append(fileDialog);
-  window.openChatFile = async reference => { try { const file = await window.office.run('file-read', { id: selected, path: reference }); fileTitle.textContent = file.path; fileText.textContent = file.content; fileDialog.showModal(); } catch (error) { get('#status').textContent = error.message; } };
-  const usageDialog = document.createElement('dialog'); usageDialog.id = 'usage-viewer'; const usageTitle = document.createElement('h3'); usageTitle.textContent = 'Usage chính thức của hồ sơ CLI'; const usageHint = document.createElement('p'); usageHint.textContent = 'Nếu CLI hiện onboarding, hoàn tất tại đây rồi nhập /usage. Không tự gửi prompt AI.'; const usageClose = document.createElement('button'); usageClose.textContent = 'Đóng'; const usageTerminal = document.createElement('div'); usageTerminal.id = 'usage-terminal'; usageDialog.append(usageTitle, usageHint, usageClose, usageTerminal); document.body.append(usageDialog);
-  let usageId, usageTerm, usageFit;
+  get('#run-role').onclick = () => sendChat(selectedWorker || current()?.flow[current().stage]);
+
+  // ---- Kéo thả ảnh vào cửa sổ (không áp dụng khi đang kéo session trong sidebar).
+  document.addEventListener('dragover', event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); });
+  document.addEventListener('drop', async event => {
+    if (!event.dataTransfer.types.includes('Files')) return; event.preventDefault();
+    try { if (!(await ensureThread())) return; for (const file of event.dataTransfer.files) await window.office.attach(selected, file); } catch (error) { showError(error); }
+  });
+
+  // ---- Xem tệp được nhắc trong chat.
+  get('#file-copy').onclick = () => window.office.run('copy-text', { text: get('#file-text').textContent });
+  get('#file-close').onclick = () => get('#file-viewer').close();
+  window.openChatFile = async reference => { try { const file = await window.office.run('file-read', { id: selected, path: reference }); get('#file-title').textContent = file.path; get('#file-text').textContent = file.content; get('#file-viewer').showModal(); } catch (error) { showError(error); } };
+
+  // ---- /usage: terminal CLI chính thức trong dialog.
+  let usageId, usageTerm;
   async function openUsage() {
+    closeMenus();
     try {
-      if (usageId) { usageDialog.showModal(); return; }
+      if (usageId) { get('#usage-viewer').showModal(); return; }
       usageId = await window.office.run('usage-open', { id: selected, role: selectedWorker });
-      usageDialog.showModal(); usageTerm = new Terminal({ fontSize: 13, cols: 90, rows: 25, theme: { background: '#10131a', foreground: '#e6e7ed' } }); usageFit = new FitAddon.FitAddon(); usageTerm.loadAddon(usageFit); usageTerm.open(usageTerminal); usageFit.fit();
+      get('#usage-viewer').showModal(); usageTerm = new Terminal({ fontSize: 13, cols: 90, rows: 25, theme: { background: '#10131a', foreground: '#e6e7ed' } }); const fit = new FitAddon.FitAddon(); usageTerm.loadAddon(fit); usageTerm.open(get('#usage-terminal')); fit.fit();
       const buffer = await window.office.run('buffer', { id: usageId }); usageTerm.write(buffer.data); usageTerm.onData(data => window.office.run('input', { id: usageId, data })); await window.office.run('resize', { id: usageId, cols: usageTerm.cols, rows: usageTerm.rows }); usageTerm.focus();
-    } catch (error) { usageId = undefined; get('#status').textContent = error.message; }
+    } catch (error) { usageId = undefined; showError(error); }
   }
   window.office.onTerminal(chunk => { if (chunk.id === usageId && usageTerm) usageTerm.write(chunk.data); });
-  usageClose.onclick = () => usageDialog.close();
-  usageDialog.addEventListener('close', () => { if (usageId) window.office.run('close', { id: usageId }).catch(() => {}); usageId = undefined; usageTerm?.dispose(); usageTerm = undefined; usageTerminal.replaceChildren(); });
-  const originalSend = sendChat; sendChat = async role => { if (get('#message').value.trim() === '/usage') { get('#message').value = ''; await openUsage(); return; } await originalSend(role); };
-  const originalAccounts = paintAccounts; paintAccounts = function (state) { originalAccounts(state); const button = [...accountMenu.querySelectorAll('button')].find(item => item.textContent.startsWith('Xem usage chính thức')); if (button) button.onclick = openUsage; };
+  get('#usage-close').onclick = () => get('#usage-viewer').close();
+  get('#usage-viewer').addEventListener('close', () => { if (usageId) window.office.run('close', { id: usageId }).catch(() => {}); usageId = undefined; usageTerm?.dispose(); usageTerm = undefined; get('#usage-terminal').replaceChildren(); });
+
+  // ---- Trạng thái từ main.
+  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
+  window.office.onState(applyState);
+  get('#search').oninput = sidebar;
+  get('#new-thread').onclick = async () => { const id = await act('create', { project: current()?.archived ? '' : current()?.project || '' }); if (id) { select(id); get('#message').focus(); } };
+  window.office.run('state').then(applyState);
 })();

@@ -1,5 +1,78 @@
-<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>Office Desk · Team</title><link rel="stylesheet" href="team.css"><link rel="stylesheet" href="accounts.css"><link rel="stylesheet" href="attachments.css"><link rel="stylesheet" href="role-editor.css"><link rel="stylesheet" href="chat.css"><link rel="stylesheet" href="text.css"><link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css"><link rel="stylesheet" href="file-viewer.css"></head><body>
-<nav><div class="brand">◈ Office Desk <small>TEAM WORKSPACE</small></div><button id="new-thread" class="primary">＋ Session mới</button><input id="search" placeholder="Tìm session…"><div id="groups"></div><footer><button id="project">＋ Dự án</button><button id="console">⚙ Tài khoản & terminal</button></footer></nav>
-<main><header><div><small>DEVELOPMENT TEAM</small><h1 id="title">Không gian phát triển game</h1></div><div class="actions"><button id="pin">☆ Ghim</button><select id="move" aria-label="Dự án"></select><button id="role">＋ Role</button></div></header><section id="flow"></section><p class="notice">Theo dõi và bàn giao thủ công · Chưa tự điều phối AI hoặc chạy Unity/Profiler.</p><section id="activity"><div class="welcome"><h2>Từ ý tưởng đến kiểm thử</h2><p>Tạo session để bắt đầu: GD → Lead Dev → Dev → QA → Code Review.</p></div></section><section id="issues"></section><form id="composer"><textarea id="message" placeholder="Nhập yêu cầu, ghi chú hoặc nội dung bàn giao…" required></textarea><div><span id="status" role="status">Sẵn sàng</span><button type="button" id="begin">Bắt đầu bước</button><button type="button" id="issue">Issue → Lead</button><button type="button" id="handoff">Bàn giao</button><button class="primary">Gửi</button></div></form></main>
-<dialog id="create"><form id="create-form"><h2>Session mới</h2><input id="new-title" placeholder="Tên session" maxlength="100" required><select id="new-project"></select><textarea id="request" placeholder="Yêu cầu đầu vào…" required></textarea><div><button type="button" id="cancel-create">Hủy</button><button class="primary">Tạo session</button></div></form></dialog>
-<dialog id="naming"><form id="name-form"><h2 id="name-label"></h2><input id="new-name" required><div><button type="button" id="cancel-name">Hủy</button><button class="primary">Lưu</button></div></form></dialog><script src="chat-format.js"></script><script src="node_modules/@xterm/xterm/lib/xterm.js"></script><script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script><script src="team-ui.js"></script></body></html>
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>Office Desk · Team</title><link rel="stylesheet" href="team.css"><link rel="stylesheet" href="accounts.css"><link rel="stylesheet" href="attachments.css"><link rel="stylesheet" href="chat.css"><link rel="stylesheet" href="text.css"><link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css"><link rel="stylesheet" href="file-viewer.css"></head><body>
+<nav>
+  <div class="brand">◈ Office Desk <small>TEAM WORKSPACE</small></div>
+  <button id="new-thread" class="primary">＋ Session mới</button>
+  <input id="search" placeholder="Tìm session…" aria-label="Tìm session">
+  <div id="groups"></div>
+  <footer><button id="project">＋ Dự án</button><button id="console">◉ Chọn tài khoản ▾</button><small id="usage-summary"></small></footer>
+</nav>
+<main>
+  <header>
+    <div class="title-block"><small>DEVELOPMENT TEAM</small><h1 id="title">Không gian phát triển game</h1><span id="usage-tokens" hidden></span></div>
+    <div class="actions">
+      <button id="folders" type="button" title="Thư mục đầu tiên là thư mục chính; các thư mục còn lại được cấp qua --add-dir.">📁 Thư mục</button>
+      <button id="panel-toggle" type="button" title="Ẩn/hiện panel khối" aria-controls="panel">▣ Khối</button>
+      <div class="menu-wrap">
+        <button id="more" type="button" aria-haspopup="menu" aria-expanded="false" title="Thao tác session">⋯</button>
+        <div id="more-menu" class="menu" role="menu" hidden>
+          <button id="pin" type="button" role="menuitem">☆ Ghim</button>
+          <label class="menu-field">Chuyển tới dự án<select id="move" aria-label="Dự án"></select></label>
+          <button id="edit-request" type="button" role="menuitem">Sửa yêu cầu</button>
+          <button id="retry-blocked" type="button" role="menuitem">Thử lại task bị chặn</button>
+          <button id="archive" type="button" role="menuitem">🗄 Lưu trữ session</button>
+        </div>
+      </div>
+    </div>
+  </header>
+  <div id="archived-banner" hidden>🗄 Session đã lưu trữ: chỉ xem, không chạy được. <button id="restore" type="button">Khôi phục</button></div>
+  <div id="decision-banner" role="alert" hidden><p id="decision-text"></p><button type="button" data-choice="continue">Tiếp tục thêm 1 vòng</button><button type="button" data-choice="accept">Chấp nhận với lỗi đã biết</button><button type="button" data-choice="stop">Dừng</button></div>
+  <section id="flow-row"><div id="flow"></div><button id="role" type="button">＋ Role</button></section>
+  <p id="dispatch-summary" role="status" hidden></p>
+  <section id="activity"><div class="welcome"><h2>Từ ý tưởng đến kiểm thử</h2><p>Tạo session để bắt đầu: GD → Lead Dev → Dev → QA → Code Review.</p></div></section>
+  <section id="issues"></section>
+  <form id="composer">
+    <div id="folder-list"></div><div id="attachments"></div>
+    <div id="command-suggestions" role="listbox" hidden></div>
+    <textarea id="message" placeholder="Nhập yêu cầu, ghi chú hoặc nội dung bàn giao…" required></textarea>
+    <div class="composer-bar">
+      <select id="commands" aria-label="Lệnh Claude Code"></select>
+      <div class="menu-wrap">
+        <button id="manual" type="button" aria-haspopup="menu" aria-expanded="false" title="Bàn giao/Issue thủ công theo nội dung ô nhập">Thủ công ▾</button>
+        <div id="manual-menu" class="menu menu-up" role="menu" hidden>
+          <button type="button" id="begin" role="menuitem">Bắt đầu bước</button>
+          <button type="button" id="handoff" role="menuitem">Bàn giao</button>
+          <button type="button" id="issue" role="menuitem">Issue → Lead</button>
+          <button type="button" id="review-reject" role="menuitem" title="Ghi mục không đạt kèm file:line vào ô nội dung rồi bấm">Review không đạt → Dev</button>
+        </div>
+      </div>
+      <span id="status" role="status">Sẵn sàng</span>
+      <button type="button" id="stop">Dừng</button>
+      <button type="button" id="run-role">Chạy</button>
+      <button class="primary">Gửi</button>
+    </div>
+  </form>
+</main>
+<aside id="panel" aria-label="Khối đang chọn">
+  <small class="eyebrow">KHỐI ĐANG CHỌN</small>
+  <h2 id="panel-title">Chat thường</h2>
+  <p id="panel-state"></p>
+  <label id="account-field">Tài khoản<select id="worker-account" aria-label="Tài khoản của khối"></select></label>
+  <label>Mode<select id="chat-mode" aria-label="Mode"></select></label>
+  <label>Model<select id="chat-model" aria-label="Model"></select></label>
+  <label id="task-field">Task<textarea id="worker-task" aria-label="Task riêng của khối" placeholder="Task được Lead giao: owner, phạm vi file, AC, phụ thuộc…"></textarea></label>
+  <details id="role-texts"><summary>Trách nhiệm & yêu cầu riêng</summary>
+    <small>Mặc định của role (dùng cho session sau)</small>
+    <textarea id="role-responsibility" aria-label="Trách nhiệm mặc định" maxlength="6000"></textarea>
+    <textarea id="role-output" aria-label="Đầu ra mặc định" maxlength="6000"></textarea>
+    <small>Yêu cầu riêng trong session này</small>
+    <textarea id="role-instructions" aria-label="Nhiệm vụ session" maxlength="12000"></textarea>
+  </details>
+  <small id="panel-saved" role="status"></small>
+  <p class="hint">Plan chỉ đọc · Đọc & sửa/Auto: tệp + shell, hỏi mỗi lượt · Bypass: chỉ hỏi khi thư mục ở ổ hệ thống, ổ hồ sơ người dùng hoặc thư mục mạng · Tự lưu khi rời ô.</p>
+</aside>
+<div id="session-menu" class="menu" role="menu" hidden></div>
+<dialog id="naming"><form id="name-form"><h2 id="name-label"></h2><input id="new-name" required><textarea id="request-editor" maxlength="12000" hidden></textarea><div><button type="button" id="cancel-name">Hủy</button><button class="primary">Lưu</button></div></form></dialog>
+<dialog id="add-role-dialog"><h2>Thêm role</h2><div id="add-role-choices"></div><button type="button" id="add-role-cancel">Hủy</button></dialog>
+<dialog id="file-viewer"><h3 id="file-title"></h3><button type="button" id="file-copy">Copy nội dung</button><button type="button" id="file-close">Đóng</button><pre id="file-text"></pre></dialog>
+<dialog id="usage-viewer"><h3>Usage chính thức của hồ sơ CLI</h3><p>Nếu CLI hiện onboarding, hoàn tất tại đây rồi nhập /usage. Không tự gửi prompt AI.</p><button type="button" id="usage-close">Đóng</button><div id="usage-terminal"></div></dialog>
+<script src="chat-format.js"></script><script src="node_modules/@xterm/xterm/lib/xterm.js"></script><script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script><script src="team-ui.js"></script></body></html>

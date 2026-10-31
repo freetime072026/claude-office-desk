@@ -84,7 +84,7 @@ app.whenReady().then(async () => {
       await new Promise(resolve => setTimeout(resolve, 150));
       const configured = await window.office.run('state');
       if (configured.team.threads.at(-1).roleConfig.QA.instructions !== 'Test only this session') throw Error('Instructions were not persisted');
-      document.querySelector('#role-detail button').click();
+      if (document.querySelector('#panel-title').textContent !== 'QA') throw Error('Selected block not shown in the side panel');
       const input = document.querySelector('#message'); input.value = '/mo'; input.dispatchEvent(new Event('input'));
       if (document.querySelector('#command-suggestions').hidden) throw Error('Command suggestions missing');
       document.querySelector('#command-suggestions button').click();
@@ -101,12 +101,26 @@ app.whenReady().then(async () => {
       const shift = new KeyboardEvent('keydown', {key:'Enter', shiftKey:true, bubbles:true, cancelable:true}); input.dispatchEvent(shift); if (shift.defaultPrevented) throw Error('Shift Enter was intercepted');
       const rendered = window.renderChatText('Doc: ' + String.fromCharCode(96) + 'README.md:2' + String.fromCharCode(96) + '\\n' + String.fromCharCode(96).repeat(3) + 'text\\ncopy me\\n' + String.fromCharCode(96).repeat(3));
       if (!rendered.querySelector('.file-reference') || !rendered.querySelector('.copy-code')) throw Error('File references or copy blocks missing');
-      [...document.querySelectorAll('.actions button')].find(button => button.textContent === 'Sửa yêu cầu').click();
+      document.querySelector('#edit-request').click();
       document.querySelector('#name-form > textarea').value = 'Updated session requirement';
       document.querySelector('#name-form').requestSubmit();
       await new Promise(resolve => setTimeout(resolve, 150));
       const edited = await window.office.run('state');
       if (edited.team.threads.at(-1).title !== 'Updated session requirement') throw Error('Requirement edit failed');
+      // Menu session ở sidebar: chuyển dự án → lưu trữ → xoá hẳn (US: xoá/move session).
+      const target = edited.team.threads.at(-1).id, projectName = edited.team.projects[0].name;
+      const row = () => [...document.querySelectorAll('#groups .thread-row')].find(item => item.querySelector('.thread').title === 'Updated session requirement');
+      const menuItem = text => [...document.querySelectorAll('#session-menu button')].find(button => button.textContent.includes(text));
+      row().querySelector('.thread-more').click();
+      if (document.querySelector('#session-menu').hidden) throw Error('Session menu did not open');
+      menuItem(projectName).click(); await new Promise(resolve => setTimeout(resolve, 150));
+      if ((await window.office.run('state')).team.threads.find(item => item.id === target).project !== edited.team.projects[0].id) throw Error('Move to project failed');
+      row().querySelector('.thread-more').click(); menuItem('Lưu trữ').click(); await new Promise(resolve => setTimeout(resolve, 150));
+      if (!(await window.office.run('state')).team.threads.find(item => item.id === target).archived) throw Error('Archive failed');
+      if (![...document.querySelectorAll('#groups summary')].some(summary => summary.textContent.startsWith('🗄 Đã lưu trữ (1)'))) throw Error('Archived group missing');
+      let refused = false; try { await window.office.run('chat-send', { id: target, text: 'x' }); } catch { refused = true; } if (!refused) throw Error('Archived session must not run');
+      window.confirm = () => true; row().querySelector('.thread-more').click(); menuItem('Xoá hẳn').click(); await new Promise(resolve => setTimeout(resolve, 150));
+      if ((await window.office.run('state')).team.threads.some(item => item.id === target)) throw Error('Delete failed');
     })()`);
     try { fs.writeFileSync(path.join(__dirname, '..', 'preview.png'), (await window.webContents.capturePage()).toPNG()); } catch { console.log('Screenshot unavailable on this display surface'); }
     console.log('UI smoke passed: ' + result);
