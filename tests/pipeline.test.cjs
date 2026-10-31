@@ -170,3 +170,56 @@ test('a session that was done restarts when GD confirms a new change', async () 
   await auto.after(thread, 'GD', reply('done'));
   assert.equal(thread.auto.enabled, true); assert.equal(thread.status, 'working'); assert.equal(thread.flow[thread.stage], 'Dev'); assert.equal(sent.at(-1), 'Dev');
 });
+
+// Mô phỏng main.cjs khi Dev trả handoff blocked: task chuyển blocked kèm lý do.
+function devBlocks(thread, label, summary) { const task = thread.dispatch.find(item => item.worker === label && item.status === 'running'); task.status = 'blocked'; task.error = summary; }
+test('parseHandoff keeps reassign only on a blocked handoff', () => {
+  assert.equal(parseHandoff(fence('handoff', { status: 'blocked', summary: 'x', reassign: true })).reassign, true);
+  assert.equal('reassign' in parseHandoff(fence('handoff', { status: 'done', reassign: true })), false);
+  assert.equal('reassign' in parseHandoff(fence('handoff', { status: 'blocked', reassign: 'yes' })), false);
+});
+test('a Dev blocked with reassign waits for the other Devs, then goes to Lead triage instead of QA', async () => {
+  const { team, thread, sent, auto } = harness(); update(team, 'add-worker', { id: thread.id, type: 'Dev' });
+  await auto.after(thread, 'GD', reply('done'));
+  leadPlans(thread, tasksText(['Dev', 'Dev #2'])); await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev', 'Dev #2']) }, { proposalApplied: true });
+  assert.deepEqual(sent.slice(-2).sort(), ['Dev', 'Dev #2']);
+  devBlocks(thread, 'Dev #2', 'AC lệch 124 ms; nghi UnitAnimator.cs');
+  await auto.after(thread, 'Dev #2', reply('blocked', { reassign: true, summary: 'AC lệch 124 ms; nghi UnitAnimator.cs' }));
+  assert.deepEqual(thread.reassign, [{ worker: 'Dev #2', summary: 'AC lệch 124 ms; nghi UnitAnimator.cs' }]);
+  assert.equal(sent.at(-1) === 'Lead Dev', false, 'Lead waits while Dev is still running');
+  devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  assert.equal(sent.at(-1), 'Lead Dev'); assert(!sent.includes('QA'), 'QA does not test the unfinished work');
+  assert.equal(thread.leadPhase, 'triage'); assert.equal(thread.reassignRounds, 1);
+  const { rolePrompt } = require('../prompt.cjs');
+  assert.match(rolePrompt({}, thread, 'Lead Dev', { content: 'x' }).body, /Dev bị chặn cần giao lại[^\n]*\n- Dev #2: AC lệch 124 ms; nghi UnitAnimator\.cs/);
+});
+test('reassign stops for the user after the limit, and a plain blocked Dev still stops', async () => {
+  const { thread, auto } = harness(['GD', 'Lead Dev', 'Dev', 'QA']);
+  await auto.after(thread, 'GD', reply('done'));
+  leadPlans(thread, tasksText(['Dev'])); await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev']) }, { proposalApplied: true });
+  thread.reassignRounds = 2; devBlocks(thread, 'Dev', 'cần giao lại');
+  await auto.after(thread, 'Dev', reply('blocked', { reassign: true }));
+  assert.match(thread.messages.at(-1).text, /đã tự chuyển Lead 2 lần/);
+  const plain = harness(['GD', 'Lead Dev', 'Dev', 'QA']);
+  await plain.auto.after(plain.thread, 'GD', reply('done'));
+  leadPlans(plain.thread, tasksText(['Dev'])); await plain.auto.after(plain.thread, 'Lead Dev', { text: tasksText(['Dev']) }, { proposalApplied: true });
+  devBlocks(plain.thread, 'Dev', 'thiếu quyền'); await plain.auto.after(plain.thread, 'Dev', reply('blocked'));
+  assert.match(plain.thread.messages.at(-1).text, /Dev bị chặn: thiếu quyền/); assert.equal(plain.thread.reassign, undefined);
+});
+test('a Lead plan typed by hand after the Lead step is done still starts the Devs (tasks never stay pending)', async () => {
+  const { thread, sent, auto } = harness();
+  await auto.after(thread, 'GD', reply('done'));
+  leadPlans(thread, tasksText(['Dev'])); await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev']) }, { proposalApplied: true });
+  devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  await auto.after(thread, 'QA', reply('issue'));
+  leadPlans(thread, tasksText(['Dev'])); await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev']) }, { proposalApplied: true });
+  devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  const qaRuns = sent.filter(label => label === 'QA').length;
+  // Bạn gõ tay cho Lead khi nút triage đã xong; main.cjs áp kế hoạch với task ở trạng thái pending (chờ tới lượt theo sơ đồ).
+  await auto.after(thread, 'QA', reply('blocked'));
+  thread.dispatch = taskPlan(tasksText(['Dev']), thread).map(task => ({ ...task, status: 'pending' }));
+  const before = sent.length;
+  await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev']) }, { proposalApplied: true });
+  assert.deepEqual(sent.slice(before), ['Dev']); assert.equal(thread.dispatch[0].status, 'running');
+  assert.equal(sent.filter(label => label === 'QA').length, qaRuns);
+});

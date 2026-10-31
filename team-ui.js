@@ -147,11 +147,13 @@
   const addUsage = (total, usage) => {
     for (const key of USAGE_FIELDS) total[key] = (total[key] || 0) + (Number(usage?.[key]) || 0);
     for (const [model, part] of Object.entries(usage?.models || {})) { total.models ||= {}; total.models[model] = addUsage(total.models[model] || {}, part); }
+    if (usage?.sessionTotal) total.sessionTotal = true;
     return total;
   };
   function usageByRole(messages) { const roles = new Map(); for (const message of messages) if (message.usage) { if (!roles.has(message.role)) roles.set(message.role, addUsage({}, null)); addUsage(roles.get(message.role), message.usage); } return roles; }
   const tokens = value => Math.round(value).toLocaleString();
-  const usageText = usage => `vào ${tokens(usage.input)} (cache ${tokens(usage.cacheRead + usage.cacheWrite)}) · ra ${tokens(usage.output)} · $${usage.costUsd.toFixed(4)}`;
+  // sessionTotal: chi phí là tổng cả phiên CLI (phiên resume tạo trước khi app tách chi phí theo lượt), không phải của riêng lượt.
+  const usageText = usage => `vào ${tokens(usage.input)} (cache ${tokens(usage.cacheRead + usage.cacheWrite)}) · ra ${tokens(usage.output)} · $${usage.costUsd.toFixed(4)}${usage.sessionTotal ? ' (cộng dồn cả phiên)' : ''}`;
   const modelLines = usage => Object.entries(usage.models || {}).map(([model, part]) => `  ${model}: cache đọc ${tokens(part.cacheRead)} · cache ghi ${tokens(part.cacheWrite)} · output ${tokens(part.output)} · $${part.costUsd.toFixed(4)}`);
   const usageDetail = usage => [`input ${tokens(usage.input)} · cache đọc ${tokens(usage.cacheRead)} · cache ghi ${tokens(usage.cacheWrite)} · output ${tokens(usage.output)} · ${usage.turns} turn`, ...modelLines(usage)].join('\n');
   // Ngữ cảnh được gửi lại ở mỗi lần gọi model: tổng lớn nghĩa là lượt quá dài hoặc đọc tệp lớn → chia task nhỏ hơn.

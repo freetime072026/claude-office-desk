@@ -11,6 +11,10 @@ const ROLE_VERBS = Object.freeze(['start', 'pause']);
 const SUMMARY_LIMIT = 4000;
 // Lead review không đạt thì cho Dev sửa thêm đúng 1 lần; lần sau vẫn không đạt thì dừng chờ người dùng.
 const REVIEW_RETRY_LIMIT = 1;
+// Số lần mỗi vòng Dev bị chặn được tự chuyển sang Lead giao lại; quá số này thì dừng chờ người dùng để không lặp mãi.
+const REASSIGN_LIMIT = 2;
+// Task Dev còn đang chạy hoặc chờ chạy: Lead chỉ lập lại kế hoạch khi các task này xong (main.cjs không áp kế hoạch khi còn task dở).
+const RUNNING_TASK = Object.freeze(['queued', 'starting', 'running']);
 const TASK_LIMIT = 11000;
 const clipText = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
 const now = () => new Date().toISOString();
@@ -25,7 +29,8 @@ function parseHandoff(text) {
   let data; try { data = JSON.parse(blocks.at(-1)[1]); } catch { return null; }
   if (!data || typeof data !== 'object' || !HANDOFF_STATUSES.includes(data.status)) return null;
   const retested = Array.isArray(data.retested) ? data.retested.filter(item => item && typeof item.id === 'string').slice(0, 50).map(item => ({ id: item.id, evidence: clipText(item.evidence, SUMMARY_LIMIT) })) : [];
-  return { status: data.status, summary: clipText(data.summary, SUMMARY_LIMIT), retested };
+  // reassign: Dev/VFX bị chặn vì AC cần sửa tệp ngoài phạm vi hoặc cần khối khác; bộ chạy chuyển sang Lead triage thay vì dừng.
+  return { status: data.status, summary: clipText(data.summary, SUMMARY_LIMIT), retested, ...(data.status === 'blocked' && data.reassign === true ? { reassign: true } : {}) };
 }
 
 // Lệnh điều khiển trong chat: /role <khối> start|pause, /auto on|off, /chot.
@@ -127,6 +132,26 @@ function createAutoRun(deps) {
     return nodes.find(node => status(node) === 'running') || nodes.find(node => ['queued', 'blocked', 'idle'].includes(status(node)) && (!node.phase || node.phase === (thread.leadPhase || 'planning'))) || nodes[0];
   }
 
+  // Dev bị chặn kèm reassign: ghi yêu cầu (prompt.cjs chèn vào lượt Lead) rồi chuyển sang Lead triage khi các Dev khác xong.
+  function reassign(thread, node, label, handoff) {
+    if ((thread.reassignRounds || 0) >= REASSIGN_LIMIT) return block(thread, node, `${label} bị chặn và cần giao lại, nhưng đã tự chuyển Lead ${REASSIGN_LIMIT} lần trong vòng này; dừng để bạn quyết định. Lý do: ${handoff.summary || '(không ghi)'}`);
+    graph.stateOf(thread, node.id).status = 'blocked'; graph.stateOf(thread, node.id).outcome = 'blocked';
+    (thread.reassign ||= []).push({ worker: label, summary: handoff.summary || label + ' cần giao lại' });
+    note(thread, `${label} bị chặn ngoài phạm vi tệp được giao · chuyển Lead triage để giao lại.`);
+    routeReassign(thread);
+  }
+  // Còn Dev đang chạy thì đợi; task Dev chưa tới lượt bị huỷ vì Lead sẽ lập kế hoạch mới. Nút đang chờ (QA) không chạy trên phần dở.
+  function routeReassign(thread) {
+    if (!thread.reassign?.length || (thread.dispatch || []).some(task => RUNNING_TASK.includes(task.status))) return;
+    const leadNodes = graph.ensureGraph(thread).nodes.filter(item => labelType(thread, item.label) === LEAD);
+    const target = leadNodes.find(item => item.phase === 'triage') || leadNodes.find(item => item.phase === 'planning');
+    if (!target) return note(thread, 'Không có nút Lead triage/lập kế hoạch trên sơ đồ; dừng để bạn giao lại task.');
+    if ((thread.dispatch || []).some(task => task.status === 'paused')) return note(thread, 'Còn task đang tạm dừng; bỏ tạm dừng hoặc huỷ task đó để Lead giao lại.');
+    for (const task of thread.dispatch || []) if (task.status === 'pending') { task.status = 'cancelled'; task.error = 'Lead lập lại kế hoạch'; }
+    for (const item of graph.ensureGraph(thread).nodes) if (item.id !== target.id && graph.stateOf(thread, item.id).status === 'queued') graph.stateOf(thread, item.id).status = 'idle';
+    thread.reassignRounds = (thread.reassignRounds || 0) + 1; graph.queue(thread, target.id);
+  }
+
   async function afterLead(thread, node, message, handoff, proposalApplied) {
     if (node.phase !== 'review') {
       if (proposalApplied) { graph.finish(thread, node.id, 'done'); return note(thread, 'Lead đã phân công; chạy Dev/VFX theo sơ đồ.'); }
@@ -164,7 +189,7 @@ function createAutoRun(deps) {
     if (busy.length) return note(thread, `GD đã chốt thay đổi nhưng ${busy.map(task => task.worker).join(', ')} còn đang làm; đợi xong rồi dùng /chot ở bước GD để chạy vòng mới.`);
     if (!thread.auto?.enabled && !(await enable(thread, 'GD chốt thay đổi mới.'))) return;
     graph.resetRun(thread); thread.leadPhase = 'planning'; thread.qaFailRounds = 0;
-    delete thread.qaPhase; delete thread.reviewRejects; delete thread.qaPassedAt; delete thread.planProblems;
+    delete thread.qaPhase; delete thread.reviewRejects; delete thread.qaPassedAt; delete thread.planProblems; delete thread.reassign; delete thread.reassignRounds;
     thread.dispatch = []; thread.round = (thread.round || 1) + 1; newRound(thread, thread.round, handoff.summary);
     focus(thread, node); handedOff(thread, node.label, handoff.summary || 'GD chốt thay đổi mới');
     const next = graph.finish(thread, node.id, 'done').map(id => graph.nodeLabel(graph.ensureGraph(thread).nodes.find(item => item.id === id)));
@@ -175,7 +200,7 @@ function createAutoRun(deps) {
   async function after(thread, label, message, { proposalApplied = false } = {}) {
     if (!label || !thread.flow.includes(label)) return;
     graph.ensureGraph(thread);
-    const handoff = parseHandoff(message.text), type = labelType(thread, label), node = nodeOfRun(thread, label);
+    const handoff = parseHandoff(message.text), type = labelType(thread, label); let node = nodeOfRun(thread, label);
     const status = graph.stateOf(thread, node.id).status, gdDone = type === 'GD' && handoff?.status === 'done' && !message.error;
     if (gdDone && status !== 'running' && started(thread)) return newRoundFromGd(thread, node, handoff);
     if (!thread.auto?.enabled) {
@@ -185,13 +210,22 @@ function createAutoRun(deps) {
       graph.resetRun(thread); focus(thread, node);
     }
     if (!active(thread) || worker(thread, label).paused) return;
+    // Lead phân công trong lúc nút Lead của pha đã xong (bạn gõ tay cho Lead, ví dụ giao lại sau khi Dev bị chặn): coi lượt này là
+    // bước Lead của pha hiện tại để các Dev chạy theo sơ đồ; nếu không, task Lead vừa giao kẹt ở "chờ tới lượt" mãi.
+    if (type === LEAD && proposalApplied && !['running', 'queued', 'blocked'].includes(graph.stateOf(thread, node.id).status)) {
+      const nodes = graph.nodesFor(thread, label);
+      node = nodes.find(item => item.phase === (thread.leadPhase || 'planning')) || nodes.find(item => item.phase === 'planning') || node;
+      graph.stateOf(thread, node.id).status = 'running';
+    }
     // Lượt chạy tay của khối không ở bước nào trên sơ đồ (nút chưa tới lượt hoặc đã xong) không làm đổi luồng.
     if (!['running', 'queued', 'blocked'].includes(graph.stateOf(thread, node.id).status) && !(gdDone && !started(thread))) return;
     try {
       if (isDevType(type)) {
         const task = (thread.dispatch || []).find(item => item.worker === label && item.status !== 'pending');
+        if (task?.status === 'blocked' && handoff?.reassign && !message.error && hasLead(thread)) { reassign(thread, node, label, handoff); return await advance(thread); }
         if (task && ['blocked', 'failed'].includes(task.status)) return block(thread, node, `${label} ${task.status === 'failed' ? 'lỗi' : 'bị chặn'}${task.error ? ': ' + task.error : ''}. Xử lý rồi dùng /role ${label} start hoặc Thử lại task bị chặn.`);
         if (task?.status === 'finished') graph.finish(thread, node.id, 'done');
+        routeReassign(thread);
         return await advance(thread);
       }
       if (message.error) return block(thread, node, `${label} lỗi hoặc bị dừng; dùng /role ${label} start để chạy lại.`);

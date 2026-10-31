@@ -38,10 +38,12 @@ const REVIEW_CHECKLIST = [
 ].join('\n');
 // Khối handoff là tín hiệu duy nhất để bộ chạy tự động chuyển bước (pipeline.cjs); không đoán từ văn bản tự do.
 const HANDOFF_FORMAT = 'Cuối câu trả lời xuất khối fenced code nhãn handoff chứa JSON';
+// pipeline.cjs chuyển Dev bị chặn có reassign sang Lead triage; blocked không có reassign thì dừng chờ người dùng.
+const REASSIGN_GUIDE = ' Phần việc trong phạm vi đã xong nhưng AC chỉ đạt được khi sửa tệp ngoài danh sách được giao hoặc cần khối khác làm thì {"status":"blocked","reassign":true,"summary":"phần đã làm, AC nào chưa đạt kèm số đo, tệp/khối nghi cần sửa"}: app chuyển Lead giao lại. Chỉ bỏ reassign khi cần người dùng (thiếu quyền, công cụ, thông tin).';
 const HANDOFF_GUIDES = {
   GD: HANDOFF_FORMAT + ' {"status":"done","summary":"tóm tắt thiết kế đã chốt"} khi không còn câu hỏi cần người dùng trả lời; nếu còn câu hỏi thì {"status":"blocked","summary":"các câu hỏi"}.',
-  Dev: HANDOFF_FORMAT + ' {"status":"done","summary":"Tệp mới: mỗi tệp một dòng kèm vai trò và API chính (để Lead ghi vào bản đồ project); Tệp sửa: tệp và lý do; lệnh đã chạy và cách kiểm"}; không làm được thì {"status":"blocked","summary":"lý do"}.',
-  VFX: HANDOFF_FORMAT + ' {"status":"done","summary":"Tệp mới: mỗi tệp một dòng kèm vai trò; Tệp sửa: tệp và lý do; cách xem hiệu ứng (scene/prefab, thao tác), cần kiểm tra trực quan gì, chi phí ước tính (particle, overdraw, draw call)"}; không làm được thì {"status":"blocked","summary":"lý do"}.',
+  Dev: HANDOFF_FORMAT + ' {"status":"done","summary":"Tệp mới: mỗi tệp một dòng kèm vai trò và API chính (để Lead ghi vào bản đồ project); Tệp sửa: tệp và lý do; lệnh đã chạy và cách kiểm"}; không làm được thì {"status":"blocked","summary":"lý do"}.' + REASSIGN_GUIDE,
+  VFX: HANDOFF_FORMAT + ' {"status":"done","summary":"Tệp mới: mỗi tệp một dòng kèm vai trò; Tệp sửa: tệp và lý do; cách xem hiệu ứng (scene/prefab, thao tác), cần kiểm tra trực quan gì, chi phí ước tính (particle, overdraw, draw call)"}; không làm được thì {"status":"blocked","summary":"lý do"}.' + REASSIGN_GUIDE,
   QA: HANDOFF_FORMAT + ' {"status":"pass","summary":"kết quả và evidence","retested":[{"id":"ID Issue đã kiểm lại","evidence":"bằng chứng"}]} khi mọi AC đạt, hoặc {"status":"issue","summary":"lỗi, bước tái hiện, expected/actual"}. Chưa chạy được thì {"status":"blocked","summary":"lý do"}.',
   review: HANDOFF_FORMAT + ' {"status":"pass","summary":"kết luận review"} hoặc {"status":"reject","summary":"mục không đạt kèm file:line"}; khi reject, kèm thêm khối ```tasks như pha planning để giao Dev sửa.',
   other: HANDOFF_FORMAT + ' {"status":"done","summary":"tóm tắt bàn giao"} hoặc {"status":"blocked","summary":"lý do cần người dùng"}.'
@@ -78,7 +80,8 @@ function briefLines(options) {
 function turnLines(options) {
   if (!options.label) return [];
   const rejected = options.lead && options.phase !== 'review' && options.planProblems ? `Kế hoạch tasks trước bị app từ chối: ${options.planProblems}. Sửa đúng lỗi này.` : '';
-  return [rejected, issueLines(options.type, options.issues || [])];
+  const reassign = options.lead && options.phase !== 'review' && options.reassign?.length ? 'Dev bị chặn cần giao lại (lập kế hoạch sửa và giao cho khối phù hợp, kể cả Dev khác):\n' + options.reassign.map(item => `- ${item.worker}: ${clip(item.summary, PROMPT_LIMITS.handoff)}`).join('\n') : '';
+  return [rejected, reassign, issueLines(options.type, options.issues || [])];
 }
 const latestHandoffs = (messages, flow) => flow.map(label => messages.findLast(message => authoredBy(message, label))).filter(Boolean);
 // Không resume: yêu cầu gốc + bàn giao gần nhất của mỗi role + N tin gần nhất, tổng ≤ limits.total.
@@ -123,6 +126,6 @@ const ROSTER_TASK_LIMIT = 160;
 const rosterOf = thread => thread.flow.map(label => label + ': ' + clip(thread.workers?.[label]?.task || 'chưa giao task', ROSTER_TASK_LIMIT)).join('\n');
 // Điểm vào duy nhất cho main.cjs: đọc trạng thái thread rồi gọi buildPrompt.
 function rolePrompt(team, thread, label, options) {
-  return buildPrompt({ label, type: label ? labelType(thread, label) : '', issues: (thread.issues || []).filter(issue => !issue.closed && !issue.accepted), lead: Boolean(label) && labelType(thread, label) === LEAD, phase: thread.leadPhase || 'planning', round: thread.qaFailRounds || 0, context: label ? roleContext(team, thread, label) : {}, task: thread.workers?.[label]?.task || '', roster: label && labelType(thread, label) === LEAD ? rosterOf(thread) : '', devFiles: thread.workers?.[label]?.files || [], qaPhase: thread.qaPhase || 'functional', planProblems: thread.planProblems || '', flow: thread.flow || [], messages: thread.messages || [],  ...options });
+  return buildPrompt({ label, type: label ? labelType(thread, label) : '', issues: (thread.issues || []).filter(issue => !issue.closed && !issue.accepted), lead: Boolean(label) && labelType(thread, label) === LEAD, phase: thread.leadPhase || 'planning', round: thread.qaFailRounds || 0, context: label ? roleContext(team, thread, label) : {}, task: thread.workers?.[label]?.task || '', roster: label && labelType(thread, label) === LEAD ? rosterOf(thread) : '', devFiles: thread.workers?.[label]?.files || [], qaPhase: thread.qaPhase || 'functional', planProblems: thread.planProblems || '', reassign: thread.reassign || [], flow: thread.flow || [], messages: thread.messages || [],  ...options });
 }
 module.exports = { PROMPT_LIMITS, FILE_ROLES, roleContext, buildPrompt, rolePrompt };

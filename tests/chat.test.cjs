@@ -15,3 +15,14 @@ test('usageOf keeps the per-model breakdown (subagent, compaction) when the CLI 
   assert.deepEqual(usage.models, { 'claude-sonnet-5-5': { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, costUsd: 0.4 }, 'claude-haiku-5-5': { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0.1 } });
   assert.equal('models' in usageOf({ modelUsage: {} }), false); assert.equal('models' in usageOf({ modelUsage: [] }), false);
 });
+test('turnUsage subtracts the session total of the previous turn: CLI cost and modelUsage are cumulative on --resume', () => {
+  const { turnUsage } = require('../chat.cjs');
+  const first = usageOf({ usage: { cache_read_input_tokens: 81796 }, total_cost_usd: 5.01, modelUsage: { opus: { costUSD: 4.65, outputTokens: 64938 }, sonnet: { costUSD: 0.33, outputTokens: 5651 } } });
+  const fresh = turnUsage(first, undefined, false); assert.equal(fresh.usage.costUsd, 5.01); assert.equal('sessionTotal' in fresh.usage, false);
+  const second = usageOf({ usage: { cache_read_input_tokens: 157615 }, total_cost_usd: 5.12, modelUsage: { opus: { costUSD: 4.65, outputTokens: 64938 }, sonnet: { costUSD: 0.43, outputTokens: 10741 } } });
+  const turn = turnUsage(second, fresh.total, true);
+  assert.equal(Math.round(turn.usage.costUsd * 100), 11); assert.equal(turn.usage.cacheRead, 157615);
+  assert.deepEqual(Object.keys(turn.usage.models), ['sonnet']); assert.equal(turn.usage.models.sonnet.output, 5090);
+  assert.equal(turn.total.costUsd, 5.12);
+  assert.equal(turnUsage(second, undefined, true).usage.sessionTotal, true);
+});

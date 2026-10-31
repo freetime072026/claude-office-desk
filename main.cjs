@@ -296,7 +296,7 @@ app.whenReady().then(() => {
       // Ảnh chụp git trong phạm vi tệp của Dev/VFX trước lượt: sau lượt so lại để biết tệp nào được tạo/sửa (file-changes.cjs).
       const devRun = Boolean(files && payload.role && isDevType(worker.type) && scope?.paths?.length), gitBefore = devRun ? fileChanges.gitStatus(thread.folder, scope.paths) : null;
       const model = payload.role ? modelFor(worker.type, worker.model, thread.leadPhase) : worker.model;
-      const runThread = { ...thread, mode: worker.mode, model, cliSessions: thread.cliSessions ||= {} };
+      const runThread = { ...thread, mode: worker.mode, model, cliSessions: thread.cliSessions ||= {}, sessionTotals: thread.sessionTotals ||= {} };
       const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: images.length ? [attachments.folderOf(root, thread.id)] : [], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
       run.message.profileId = profileId; run.message.model = model;
       run.child.once('close', () => {
@@ -318,7 +318,7 @@ app.whenReady().then(() => {
           if (proposal && !(thread.dispatch || []).some(task => ACTIVE_TASK.includes(task.status))) { thread.taskDrafts = proposal; teamStore.update(metadata.team, 'apply-task-plan', { id: thread.id }); thread.dispatch = proposal.map(task => ({ ...task, status: 'pending' })); proposalApplied = true; recordTasks(thread, proposal, 'Lead phân công'); thread.messages.push({ role: 'Điều phối', text: 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.', time: new Date().toISOString() }); }
           // Lead không nhận lịch sử chat: lý do được lưu và chèn vào prompt lượt Lead kế tiếp (prompt.cjs), xoá khi kế hoạch hợp lệ.
           else if (!proposal) { thread.planProblems = problems.join('; '); thread.messages.push({ role: 'Điều phối', text: `Lead chưa xuất phân công tasks hợp lệ (${thread.planProblems}); không tự đoán hoặc chạy Dev. Lượt Lead tiếp theo sẽ nhận lý do này.`, time: new Date().toISOString() }); }
-          if (proposal) delete thread.planProblems;
+          if (proposal) { delete thread.planProblems; delete thread.reassign; }
         }
         persist(); publish();
         autoRun.after(thread, payload.role, run.message, { proposalApplied }).catch(error => thread.messages.push({ role: 'Tự động', text: 'Dừng tự động: ' + error.message, time: new Date().toISOString() })).finally(() => { persist(); publish(); pumpThread(thread).catch(() => {}); });

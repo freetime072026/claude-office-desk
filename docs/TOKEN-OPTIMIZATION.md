@@ -129,3 +129,8 @@ Khoảng 34,7 triệu trên ~37 triệu token là cache read: chi phí ≈ kích
 
 ### Cần đo lại
 Chưa đo trên tài khoản thật sau thay đổi. Chạy lại một vòng GD → Lead → Dev → QA → review trên cùng project rồi so bảng trên.
+
+### Đính chính (2026-11-01): chi phí trên tin bị cộng dồn
+`total_cost_usd` và `modelUsage` trong event `result` của CLI là **tổng cả phiên CLI**, gồm các lượt trước khi `--resume`; còn `usage` (token) chỉ của lượt đó. Ví dụ hai lượt Lead triage sau đợt 3: app ghi $5,01 và $5,12, nhưng thực tế mỗi lượt Sonnet chỉ ~$0,33 và ~$0,10; $4,65 còn lại là Opus của các lượt Lead trước trong cùng phiên. Vì vậy bảng "Số đo trước thay đổi" ở trên **cộng trùng** chi phí của các lượt resume (tổng $39,23 cao hơn thực tế); số token trong bảng vẫn đúng.
+
+Từ bản này app lưu tổng của phiên sau mỗi lượt (`thread.sessionTotals`) và trừ đi ở lượt resume kế tiếp, nên chi phí trên tin là của riêng lượt (`turnUsage` trong `chat.cjs`). Phiên resume tạo trước bản này chưa có tổng ghi trước: lượt đầu tiên hiện "(cộng dồn cả phiên)".
