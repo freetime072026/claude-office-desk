@@ -227,7 +227,15 @@
     const tasks = thread.dispatch || [], count = status => tasks.filter(task => task.status === status).length;
     const parts = [thread.auto?.enabled ? '⚙ Tự động: bật' : 'Tự động: tắt (/chot hoặc /auto on)'];
     if (tasks.length) { parts.push(`Dev ${count('finished')}/${tasks.length} đã xong`); for (const [status, title] of [['running', 'đang chạy'], ['queued', 'chờ'], ['paused', 'tạm dừng'], ['blocked', 'bị chặn'], ['failed', 'lỗi']]) if (count(status)) parts.push(`${count(status)} ${title}`); }
-    get('#dispatch-summary').hidden = !thread.flow.length; get('#dispatch-summary').textContent = parts.join(' · ');
+    // Dòng khối gọn (thay dải khối cũ): nhãn nhỏ có chấm trạng thái, bấm để chọn khối; cuối dòng là tình trạng tự động/Dev.
+    const line = get('#dispatch-summary'); line.hidden = !thread.flow.length;
+    const chips = thread.flow.map((role, index) => {
+      const task = thread.dispatch?.find(item => item.worker === role), paused = thread.workers?.[role]?.paused;
+      const state = runningOf(thread, role) ? 'running' : paused ? 'paused' : ['blocked', 'failed'].includes(task?.status) ? 'blocked' : index < thread.stage || thread.status === 'done' || task?.status === 'finished' ? 'done' : index === thread.stage ? 'current' : 'idle';
+      const chip = make('button', { type: 'button', className: `team-chip ${state}${role === selectedWorker ? ' selected' : ''}`, textContent: role, title: `${role}: ${blockLabel(thread, role, index)}` });
+      chip.onclick = () => chooseWorker(role); return chip;
+    });
+    line.replaceChildren(...chips, make('span', { className: 'team-status', textContent: parts.join(' · ') }));
   }
 
   // ---- Panel khối đang chọn. Chỉ ghi đè ô không đang được sửa để publish (stream) không xoá chữ đang gõ.
@@ -352,7 +360,7 @@
   get('#role').onclick = async () => {
     if (!current()) { if (!(await ensureThread())) return; team = (await window.office.run('state')).team; paint(); }
     const thread = current(), hasLead = thread.flow.some(label => isLead(thread, label));
-    get('#add-role-choices').replaceChildren(...roleTypes.filter(type => type !== 'Lead Dev' || !hasLead).map(role => make('button', { type: 'button', textContent: '+ ' + role, onclick: async () => { const added = await act('add-worker', { type: role }); if (added) { selectedWorker = added; panelKey = ''; get('#add-role-dialog').close(); paint(); } } })));
+    get('#add-role-choices').replaceChildren(...roleTypes.filter(type => type !== 'Lead Dev' || !hasLead).map(role => make('button', { type: 'button', textContent: '+ ' + role, onclick: async () => { const added = await act('add-worker', { type: role }); if (added) { get('#add-role-dialog').close(); showStatus('Đã thêm ' + added); chooseWorker(added); } } })));
     get('#add-role-dialog').showModal();
   };
   get('#add-role-cancel').onclick = () => get('#add-role-dialog').close();

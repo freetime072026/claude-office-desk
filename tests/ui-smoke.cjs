@@ -65,6 +65,9 @@ app.whenReady().then(async () => {
       if (!remove.disabled || !remove.title) throw Error('Lead Dev remove button must be disabled with a reason');
       await choose('GD'); if (remove.disabled) throw Error('Passed GD should be removable');
       if (!document.querySelector('#decision-banner')?.hidden) throw Error('Decision banner should be hidden');
+      const chips = [...document.querySelectorAll('#dispatch-summary .team-chip')];
+      if (chips.map(chip => chip.textContent).join(',') !== 'GD,Lead Dev,Dev,QA') throw Error('Block chips: ' + chips.map(chip => chip.textContent).join(','));
+      chips[2].click(); await new Promise(resolve => setTimeout(resolve, 50)); if (picker.value !== 'Dev') throw Error('Chip click did not select the block');
       document.querySelector('#panel-close').click(); if (!document.body.classList.contains('panel-hidden')) throw Error('Panel close button failed');
       document.querySelector('#panel-toggle').click(); if (document.body.classList.contains('panel-hidden')) throw Error('Panel toggle failed');
       const box = document.querySelector('#message'), small = box.offsetHeight; box.value = 'a\\nb\\nc\\nd\\ne\\nf';
@@ -100,10 +103,12 @@ app.whenReady().then(async () => {
       const addQA = choices.find(button => button.textContent === '+ QA');
       if (!addQA) throw Error('Add-only role picker not displayed');
       if (!choices.some(button => button.textContent === '+ Lead Dev')) throw Error('+ Lead Dev missing for a session without Lead');
+      document.body.classList.add('panel-hidden');
       addQA.click();
       await new Promise(resolve => setTimeout(resolve, 150));
       const state = await window.office.run('state');
       if (JSON.stringify(state.team.threads.at(-1).flow) !== '["QA"]') throw Error('Role choice was not saved');
+      if (document.body.classList.contains('panel-hidden') || document.querySelector('#panel-block').value !== 'QA') throw Error('New role not shown in the panel');
       const instruction = document.querySelector('textarea[aria-label="Nhiệm vụ session"]');
       if (!instruction) throw Error('Role instructions editor missing');
       instruction.value = 'Test only this session';
