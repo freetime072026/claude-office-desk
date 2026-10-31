@@ -99,6 +99,21 @@ app.whenReady().then(async () => {
       await new Promise(resolve => setTimeout(resolve, 150));
       if (!document.querySelector('#activity').textContent.includes('Đây là cấu hình app')) throw Error('Enter did not submit chat');
       const shift = new KeyboardEvent('keydown', {key:'Enter', shiftKey:true, bubbles:true, cancelable:true}); input.dispatchEvent(shift); if (shift.defaultPrevented) throw Error('Shift Enter was intercepted');
+      // Ảnh tham chiếu: dán từ clipboard (không có đường dẫn) và kéo thả, thumbnail có nút xoá.
+      const png = new File([new Uint8Array([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82])], 'shot.png', { type: 'image/png' });
+      const clip = new DataTransfer(); clip.items.add(png);
+      const paste = new ClipboardEvent('paste', { clipboardData: clip, bubbles: true, cancelable: true }); input.dispatchEvent(paste);
+      if (!paste.defaultPrevented) throw Error('Image-only paste should not insert text');
+      const drop = new DataTransfer(); drop.items.add(new File([png], 'drop.png', { type: 'image/png' })); drop.items.add(new File(['x'], 'note.txt', { type: 'text/plain' }));
+      document.querySelector('#activity').dispatchEvent(new DragEvent('drop', { dataTransfer: drop, bubbles: true, cancelable: true }));
+      await new Promise(resolve => setTimeout(resolve, 400));
+      const pending = (await window.office.run('state')).team.threads.at(-1).attachments;
+      if (pending?.length !== 2 || pending[0].name !== 'shot.png') throw Error('Pasted/dropped images not attached: ' + JSON.stringify(pending));
+      const thumbs = [...document.querySelectorAll('#attachments .image-thumb')];
+      if (thumbs.length !== 2 || !thumbs[0].querySelector('img').src.startsWith('data:image/png')) throw Error('Thumbnails missing');
+      if (!/bỏ qua 1 tệp/.test(document.querySelector('#status').textContent)) throw Error('Non-image file not reported');
+      for (const thumb of thumbs) { thumb.querySelector('button').click(); await new Promise(resolve => setTimeout(resolve, 150)); }
+      if ((await window.office.run('state')).team.threads.at(-1).attachments.length) throw Error('Remove attachment failed');
       const rendered = window.renderChatText('Doc: ' + String.fromCharCode(96) + 'README.md:2' + String.fromCharCode(96) + '\\n' + String.fromCharCode(96).repeat(3) + 'text\\ncopy me\\n' + String.fromCharCode(96).repeat(3));
       if (!rendered.querySelector('.file-reference') || !rendered.querySelector('.copy-code')) throw Error('File references or copy blocks missing');
       document.querySelector('#edit-request').click();

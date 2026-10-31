@@ -90,7 +90,8 @@ function historyOf({ history, resumed, messages, label, flow, limits, files, typ
   if (!history || files && FILE_ROLES.includes(type)) return { lines: [], omitted: 0 };
   return resumed ? deltaContext(messages, label || 'Claude', limits) : sessionContext(messages, flow, limits);
 }
-const attachmentBlock = attachments => attachments.length ? 'Ảnh tham chiếu, dùng Read để xem:\n' + attachments.map(item => item.path).join('\n') : '';
+// Ảnh chỉ đi kèm tin người dùng gửi cùng (attachments.take); các lượt sau không gửi lại đường dẫn.
+const attachmentBlock = attachments => attachments.length ? 'Ảnh tham chiếu đính kèm tin này, dùng Read để xem:\n' + attachments.map(item => `${item.path} (${item.name})`).join('\n') : '';
 function buildPrompt(input) {
   const options = { label: '', type: '', issues: [], lead: false, phase: 'planning', round: 0, resumed: false, history: true, context: {}, task: '', roster: '', flow: [], messages: [], content: '', attachments: [], limits: PROMPT_LIMITS, files: null, qaPhase: 'functional', devFiles: [], ...input };
   options.label ||= '';
@@ -103,6 +104,6 @@ const ROSTER_TASK_LIMIT = 160;
 const rosterOf = thread => thread.flow.map(label => label + ': ' + clip(thread.workers?.[label]?.task || 'chưa giao task', ROSTER_TASK_LIMIT)).join('\n');
 // Điểm vào duy nhất cho main.cjs: đọc trạng thái thread rồi gọi buildPrompt.
 function rolePrompt(team, thread, label, options) {
-  return buildPrompt({ label, type: label ? labelType(thread, label) : '', issues: (thread.issues || []).filter(issue => !issue.closed && !issue.accepted), lead: Boolean(label) && labelType(thread, label) === LEAD, phase: thread.leadPhase || 'planning', round: thread.qaFailRounds || 0, context: label ? roleContext(team, thread, label) : {}, task: thread.workers?.[label]?.task || '', roster: label && labelType(thread, label) === LEAD ? rosterOf(thread) : '', devFiles: thread.workers?.[label]?.files || [], qaPhase: thread.qaPhase || 'functional', flow: thread.flow || [], messages: thread.messages || [], attachments: thread.attachments || [], ...options });
+  return buildPrompt({ label, type: label ? labelType(thread, label) : '', issues: (thread.issues || []).filter(issue => !issue.closed && !issue.accepted), lead: Boolean(label) && labelType(thread, label) === LEAD, phase: thread.leadPhase || 'planning', round: thread.qaFailRounds || 0, context: label ? roleContext(team, thread, label) : {}, task: thread.workers?.[label]?.task || '', roster: label && labelType(thread, label) === LEAD ? rosterOf(thread) : '', devFiles: thread.workers?.[label]?.files || [], qaPhase: thread.qaPhase || 'functional', flow: thread.flow || [], messages: thread.messages || [],  ...options });
 }
 module.exports = { PROMPT_LIMITS, FILE_ROLES, roleContext, buildPrompt, rolePrompt };

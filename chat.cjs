@@ -61,7 +61,7 @@ const userLine = prompt => JSON.stringify({ type: 'user', message: { role: 'user
 // Câu trả lời cho can_use_tool: cho phép giữ nguyên input; từ chối kèm lý do để model biết và đổi hướng.
 function permissionResult(decision, input) { return decision?.allow ? { behavior: 'allow', updatedInput: input || {} } : { behavior: 'deny', message: decision?.message || 'Người dùng từ chối thao tác này.' }; }
 // askPermission({ tool, input, toolUseId }) → Promise<{ allow, message? }>. Không truyền thì mọi yêu cầu bị từ chối (an toàn mặc định).
-function launch({ executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0 }) {
+function launch({ executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [] }) {
   const message = { id: randomUUID(), role: role || 'Claude', text: '', time: new Date().toISOString(), streaming: true };
   message.progress = { startedAt: message.time, steps: 0, lastTool: '', target: '' };
   thread.messages.push(message);
@@ -70,7 +70,7 @@ function launch({ executable, directory, settings, mcp, mcpServers = [], thread,
   args[args.indexOf('--permission-mode') + 1] = cliMode(thread.mode, scope);
   args[args.indexOf('--tools') + 1] = cliTools(thread.mode, scope);
   if (maxTurns) args.push('--max-turns', String(maxTurns));
-  args.push('--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--permission-prompt-tool', 'stdio', '--verbose', '--include-partial-messages', '--model', thread.model || 'claude-opus-5-5', ...extraFolderArgs(foldersOf(thread)), '--allowedTools', allowedFor(thread.mode, mcpServers));
+  args.push('--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--permission-prompt-tool', 'stdio', '--verbose', '--include-partial-messages', '--model', thread.model || 'claude-opus-5-5', ...extraFolderArgs(foldersOf(thread)), ...extraDirs.flatMap(dir => ['--add-dir', dir]), '--allowedTools', allowedFor(thread.mode, mcpServers));
   thread.cliSessions ||= {};
   const key = resumeKey(profileId, thread.folder, role);
   // resume=false: role làm việc theo tệp .md mở phiên mới mỗi lượt thay vì kéo dài một phiên phình mãi.

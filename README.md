@@ -1,5 +1,11 @@
 # Office Desk — Windows 11
 
+## Ảnh tham chiếu trong chat
+
+Dán ảnh (Ctrl+V, ví dụ ảnh chụp màn hình) vào ô chat hoặc kéo thả ảnh vào cửa sổ: ảnh hiện thành thumbnail phía trên ô nhập, bấm × để bỏ, bấm ảnh để xem lớn. Nhận PNG, JPEG, WebP, GIF, tối đa 20 MB mỗi ảnh và 8 ảnh mỗi tin; định dạng kiểm bằng nội dung tệp, không theo đuôi. Clipboard có cả chữ (ví dụ copy từ Word) thì chữ vẫn được dán vào ô nhập.
+
+Ảnh đi kèm **đúng tin bạn gửi**: sau khi gửi, ảnh hiện trong thẻ tin đó và không được gửi lại ở các lượt sau hay ở lượt chạy tự động (trước đây ảnh của session được liệt kê trong mọi prompt). Thư mục ảnh của session được cấp cho CLI qua `--add-dir` nên Claude đọc ảnh không phải hỏi quyền. Ảnh lưu trong `%APPDATA%/office-desk/attachments/<session>` và bị xoá khi xoá hẳn session. Đã thử với Claude Code thật: Claude đọc đúng ảnh đính kèm.
+
 ## Quy trình theo tệp .md (giảm token)
 
 Trạng thái chung nằm trong tệp, không nằm trong lịch sử chat. App tạo trong thư mục chính của session:

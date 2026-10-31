@@ -15,6 +15,7 @@ const { rolePrompt } = require('./prompt.cjs');
 const { needsConfirm, needsTurnConfirm, ALWAYS_ASK } = require('./modes.cjs');
 const { describeTool, decide, roleScope, scopesOverlap } = require('./permissions.cjs');
 const sessionFiles = require('./session-files.cjs');
+const attachments = require('./attachments.cjs');
 const { FILE_ROLES } = require('./prompt.cjs');
 const { MAX_TURNS, DEFAULT_MAX_TURNS } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
@@ -250,12 +251,14 @@ app.whenReady().then(() => {
       // Lead/Dev/QA đọc trạng thái từ tệp nên mở phiên mới mỗi lượt (không resume phiên phình mãi); GD và chat thường vẫn resume.
       const resume = !(files && FILE_ROLES.includes(worker.type));
       const resumed = resume && Boolean(thread.cliSessions?.[resumeKey(profileId, thread.folder, payload.role)]);
-      const { text: prompt } = rolePrompt(metadata.team, thread, payload.role, { content, resumed, files });
+      // Ảnh đang soạn đi kèm đúng tin này của người dùng (lượt tự động không lấy ảnh đang soạn) rồi gắn vào tin đã gửi.
+      const images = payload.auto ? [] : attachments.take(thread);
+      const { text: prompt } = rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images });
       const mcpServers = mcpServerNames();
-      if (payload.auto) thread.messages.push({ role: 'Điều phối', text: content, time: new Date().toISOString() }); else teamStore.update(metadata.team, 'message', { id: thread.id, text: content });
+      if (payload.auto) thread.messages.push({ role: 'Điều phối', text: content, time: new Date().toISOString() }); else { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); if (images.length) thread.messages.at(-1).attachments = images; }
       if (folderNote) thread.messages.push({ role: 'Hệ thống', text: folderNote, time: new Date().toISOString() });
       const runThread = { ...thread, mode: worker.mode, model: worker.model, cliSessions: thread.cliSessions ||= {} };
-      const run = chatEngine.launch({ executable, directory, settings: chatSettings, mcp, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
+      const run = chatEngine.launch({ executable, directory, settings: chatSettings, mcp, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: images.length ? [attachments.folderOf(root, thread.id)] : [], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
       run.message.profileId = profileId; run.message.model = worker.model;
       run.child.once('close', () => {
         chats.delete(activeKey);
@@ -275,20 +278,15 @@ app.whenReady().then(() => {
       }); run.child.once('error', () => chats.delete(activeKey)); persist(); publish(); return true;
     }
     if (action === 'usage-open') { const thread = metadata.team.threads.find(item => item.id === payload.id); const id = thread && payload.role ? getWorker(thread, payload.role).profileId || metadata.activeProfileId || metadata.profiles[0]?.id : metadata.activeProfileId || metadata.profiles[0]?.id; const directory = profileDir(root, id); fs.mkdirSync(directory, { recursive: true }); return start(id, 'work', { folder: directory, prompt: '/usage', runId: randomUUID() }); }
-    if (['thread-folder', 'remove-folder', 'attach-image', 'run-thread'].includes(action)) {
+    if (action === 'attachment-preview') return attachments.preview(root, String(payload.path || ''));
+    if (['thread-folder', 'remove-folder', 'attach-image', 'attach-image-data', 'remove-attachment', 'run-thread'].includes(action)) {
       const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại');
       if (action === 'thread-folder') { const result = await dialog.showOpenDialog(window, { title: 'Thêm thư mục làm việc / liên quan', properties: ['openDirectory', 'multiSelections'] }); if (!result.canceled) { const folders = foldersOf(thread); for (const chosen of result.filePaths) { const resolved = fs.realpathSync(chosen); if (!folders.some(folder => folder.toLowerCase() === resolved.toLowerCase())) folders.push(resolved); } if (folders.length > 16) throw Error('Tối đa 16 thư mục'); thread.folder = folders[0] || ''; thread.relatedFolders = folders.slice(1); } }
       if (action === 'remove-folder') { const folders = foldersOf(thread).filter(folder => folder !== payload.folder); thread.folder = folders[0] || ''; thread.relatedFolders = folders.slice(1); }
-      if (action === 'attach-image') {
-        const source = fs.realpathSync(payload.path); const stat = fs.statSync(source); const extension = path.extname(source).toLowerCase();
-        if (!stat.isFile() || stat.size > 20 * 1024 * 1024 || !['.png', '.jpg', '.jpeg', '.webp'].includes(extension)) throw Error('Chỉ nhận PNG/JPEG/WebP tối đa 20 MB');
-        const handle = fs.openSync(source, 'r'); const header = Buffer.alloc(12); try { fs.readSync(handle, header, 0, 12, 0); } finally { fs.closeSync(handle); }
-        const valid = extension === '.png' ? header.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) : extension === '.webp' ? header.toString('ascii', 0, 4) === 'RIFF' && header.toString('ascii', 8, 12) === 'WEBP' : header[0] === 255 && header[1] === 216 && header[2] === 255;
-        if (!valid) throw Error('Nội dung tệp không đúng định dạng ảnh');
-        thread.attachments ||= []; if (thread.attachments.length >= 8) throw Error('Tối đa 8 ảnh mỗi session');
-        const destination = path.join(root, 'attachments', thread.id); fs.mkdirSync(destination, { recursive: true });
-        const target = path.join(destination, randomUUID() + extension); fs.copyFileSync(source, target); thread.attachments.push({ name: path.basename(source), path: target });
-      }
+      // Ảnh tham chiếu cho tin đang soạn: kéo tệp từ đĩa (có đường dẫn) hoặc dán/kéo từ clipboard, trình duyệt (chỉ có dữ liệu).
+      if (action === 'attach-image') attachments.saveFile(root, thread, String(payload.path || ''));
+      if (action === 'attach-image-data') attachments.save(root, thread, payload.data, payload.name);
+      if (action === 'remove-attachment') attachments.remove(root, thread, payload.path);
       if (action === 'run-thread') {
         if (thread.archived) throw Error('Session đã lưu trữ; khôi phục để chạy tiếp.');
         if (!thread.folder) throw Error('Chọn thư mục làm việc trước');
@@ -297,9 +295,10 @@ app.whenReady().then(() => {
         if ([...sessions.values()].filter(item => item.running).length >= 8) throw Error('Tối đa 8 phiên');
         if (typeof payload.text !== 'string' || !payload.text.trim() || payload.text.length > 12000) throw Error('Nhập yêu cầu tối đa 12000 ký tự');
         // Terminal luôn mở phiên mới (--session-id) nên resumed = false (PLAN L-8). Lệnh slash gửi nguyên văn.
-        const prompt = payload.text.trim().startsWith('/') ? payload.text : rolePrompt(metadata.team, thread, payload.role, { content: payload.text, resumed: false, history: Boolean(payload.role) }).text;
+        const images = payload.text.trim().startsWith('/') ? [] : attachments.take(thread);
+        const prompt = payload.text.trim().startsWith('/') ? payload.text : rolePrompt(metadata.team, thread, payload.role, { content: payload.text, resumed: false, history: Boolean(payload.role), attachments: images }).text;
         start(metadata.activeProfileId || metadata.profiles[0]?.id, 'work', { folder: thread.folder, relatedFolders: thread.relatedFolders, prompt, runId: randomUUID(), threadId: thread.id });
-        if (!payload.role) teamStore.update(metadata.team, 'message', { id: thread.id, text: payload.text });
+        if (!payload.role) { teamStore.update(metadata.team, 'message', { id: thread.id, text: payload.text }); if (images.length) thread.messages.at(-1).attachments = images; }
       }
       persist(); publish(); return true;
     }

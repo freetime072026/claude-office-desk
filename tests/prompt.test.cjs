@@ -56,7 +56,7 @@ test('TC-PROMPT-04 / AC-PROMPT-02.1/02.2: resumed prompt has no history, only th
   assert.doesNotMatch(off.text, /Báo cáo QA mới/);
 });
 test('plain chat and terminal runs: no role header; history can be disabled; attachments listed once', () => {
-  const attachments = [{ path: 'C:\\img\\a.png' }];
-  assert.equal(buildPrompt({ content: 'Chạy', history: false, attachments }).text, 'Chạy\nẢnh tham chiếu, dùng Read để xem:\nC:\\img\\a.png');
+  const attachments = [{ path: 'C:\\img\\a.png', name: 'a.png' }];
+  assert.equal(buildPrompt({ content: 'Chạy', history: false, attachments }).text, 'Chạy\nẢnh tham chiếu đính kèm tin này, dùng Read để xem:\nC:\\img\\a.png (a.png)');
   assert.equal(buildPrompt({ label: null, content: 'Chạy', history: false }).text, 'Chạy');
 });

@@ -13,7 +13,10 @@
   let removal = {}, qaRoundLimit, roleTypes = [], knownProfiles = [], defaultRoles = {};
   const isLead = (thread, role) => (thread.workers?.[role]?.type || role) === 'Lead Dev';
   const current = () => team?.threads.find(thread => thread.id === selected);
-  const showError = error => { get('#status').textContent = error.message; };
+  // Thông báo ngắn ở dòng trạng thái được giữ vài giây, không bị paint() (chạy mỗi lần main publish) ghi đè ngay.
+  let flash = { text: '', until: 0 };
+  const showStatus = (text, ms = 6000) => { flash = { text, until: Date.now() + ms }; get('#status').textContent = text; };
+  const showError = error => showStatus(error.message, 10000);
   const select = id => { selected = id; localStorage.setItem('selected-thread', id); closeMenus(); paint(); };
   window.office.run('role-defaults').then(value => { defaultRoles = value; });
   async function act(action, payload = {}) { try { return await window.office.run('team', { action, id: selected, ...payload }); } catch (error) { showError(error); } }
@@ -256,6 +259,7 @@
     const card = make('article'), header = make('header');
     header.append(make('b', { textContent: message.profileId ? `${message.role} · ${profileName(message.profileId)} · ${message.model || ''}` : message.role }), make('time', { textContent: new Date(message.time).toLocaleString() }));
     card.append(header, window.renderChatText ? window.renderChatText(message.text) : make('p', { textContent: message.text }));
+    if (message.attachments?.length) { const row = make('div', { className: 'message-images' }); row.append(...message.attachments.map(image => thumbnail(image))); card.append(row); }
     if (message.progress) { const progress = make('small', { className: 'run-progress' }); progress.setAttribute('aria-live', 'polite'); card.append(progress); updateProgress(card, message); }
     if (message.streaming) card.classList.add('streaming'); if (message.error) card.classList.add('chat-error');
     if (message.tools?.length) card.append(make('small', { textContent: 'Công cụ: ' + message.tools.join(', ') }));
@@ -306,7 +310,7 @@
     const folders = [thread.folder, ...(thread.relatedFolders || [])].filter(Boolean);
     get('#folders').textContent = `📁 Thư mục${folders.length ? ' (' + folders.length + ')' : ''}`;
     get('#folder-list').replaceChildren(...folders.map((folder, index) => { const chip = make('span', { className: 'image-chip', textContent: `${index === 0 ? 'Chính' : 'Liên quan'}: ${folder} `, title: folder }); const remove = make('button', { type: 'button', textContent: '×', title: 'Bỏ thư mục khỏi session (không xóa trên đĩa)', disabled: thread.archived }); remove.onclick = async () => { try { await window.office.run('remove-folder', { id: selected, folder }); } catch (error) { showError(error); } }; chip.append(remove); return chip; }));
-    for (const image of thread.attachments || []) get('#attachments').append(make('span', { className: 'image-chip', textContent: '▧ ' + image.name }));
+    for (const image of thread.attachments || []) get('#attachments').append(thumbnail(image, thread.archived ? null : async () => { try { await window.office.run('remove-attachment', { id: selected, path: image.path }); } catch (error) { showError(error); } }));
     for (const issue of thread.issues) { const row = make('div', { className: 'issue' }); row.append(make('span', { textContent: `${issue.closed ? '✓ Đã retest' : '● Mở'} · ${issue.text}` })); if (!issue.closed) row.append(make('button', { type: 'button', textContent: 'Xác nhận retest', onclick: async () => { if (await act('retest', { issue: issue.id, text: get('#message').value })) get('#message').value = ''; } })); get('#issues').append(row); }
     const roles = thread.flow.length > 0; get('#manual').hidden = !roles || thread.archived;
     get('#begin').disabled = thread.status !== 'waiting'; get('#handoff').disabled = thread.status !== 'working'; get('#issue').disabled = ['done', 'awaiting-decision', 'cancelled'].includes(thread.status);
@@ -314,7 +318,7 @@
     get('#run-role').hidden = !roles; get('#run-role').textContent = selectedWorker ? 'Chạy ' + selectedWorker : 'Chạy';
     for (const id of ['#run-role', '#stop', '#message']) get(id).disabled = thread.archived;
     get('#composer button.primary').disabled = thread.archived;
-    get('#status').textContent = (selectedWorker || 'Chat thường') + (runningOf(thread, selectedWorker || 'Claude') ? ' · Đang chạy' : ' · Sẵn sàng');
+    get('#status').textContent = Date.now() < flash.until ? flash.text : (selectedWorker || 'Chat thường') + (runningOf(thread, selectedWorker || 'Claude') ? ' · Đang chạy' : ' · Sẵn sàng');
     if (!get('#message').value && localStorage.getItem('draft:' + selected)) get('#message').value = localStorage.getItem('draft:' + selected);
   }
 
@@ -361,12 +365,44 @@
   get('#composer').onsubmit = event => { event.preventDefault(); sendChat(); };
   get('#run-role').onclick = () => sendChat(selectedWorker || current()?.flow[current().stage]);
 
-  // ---- Kéo thả ảnh vào cửa sổ (không áp dụng khi đang kéo session trong sidebar).
-  document.addEventListener('dragover', event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); });
-  document.addEventListener('drop', async event => {
-    if (!event.dataTransfer.types.includes('Files')) return; event.preventDefault();
-    try { if (!(await ensureThread())) return; for (const file of event.dataTransfer.files) await window.office.attach(selected, file); } catch (error) { showError(error); }
+  // ---- Ảnh tham chiếu cho tin đang soạn: dán (Ctrl+V) vào ô chat hoặc kéo thả vào cửa sổ.
+  // Kéo session trong sidebar không có 'Files' nên không bị coi là ảnh.
+  const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+  async function attachImages(files) {
+    const images = files.filter(file => IMAGE_TYPES.includes(file.type)), skipped = files.length - images.length;
+    if (!images.length) { if (skipped) showStatus('Chỉ nhận ảnh PNG, JPEG, WebP hoặc GIF'); return; }
+    try { if (!(await ensureThread())) return; for (const file of images) await window.office.attach(selected, file); showStatus(`Đã đính kèm ${images.length} ảnh` + (skipped ? `, bỏ qua ${skipped} tệp không phải ảnh` : '')); }
+    catch (error) { showError(error); }
+  }
+  get('#message').addEventListener('paste', event => {
+    const files = [...event.clipboardData.items].filter(item => item.kind === 'file').map(item => item.getAsFile()).filter(Boolean);
+    if (!files.length) return;
+    // Clipboard chỉ có ảnh thì không dán gì vào ô chữ; có cả chữ (vd. copy từ Word) thì vẫn dán chữ.
+    if (!event.clipboardData.types.includes('text/plain')) event.preventDefault();
+    attachImages(files);
   });
+  let dragDepth = 0;
+  const dragging = on => get('#composer').classList.toggle('drop-target', on);
+  document.addEventListener('dragenter', event => { if (event.dataTransfer.types.includes('Files')) { dragDepth++; dragging(true); } });
+  document.addEventListener('dragleave', event => { if (event.dataTransfer.types.includes('Files') && --dragDepth <= 0) { dragDepth = 0; dragging(false); } });
+  document.addEventListener('dragover', event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); });
+  document.addEventListener('drop', event => {
+    dragDepth = 0; dragging(false);
+    if (!event.dataTransfer.types.includes('Files')) return; event.preventDefault();
+    attachImages([...event.dataTransfer.files]);
+  });
+  // Thumbnail: main đọc ảnh trong thư mục attachments của app và trả data URL; nhớ lại để không đọc lại mỗi lần vẽ.
+  const previews = new Map();
+  const previewOf = file => { if (!previews.has(file)) previews.set(file, window.office.run('attachment-preview', { path: file }).catch(() => '')); return previews.get(file); };
+  function thumbnail(image, onRemove) {
+    const chip = make('span', { className: 'image-thumb', title: image.name }), picture = make('img', { alt: image.name });
+    previewOf(image.path).then(url => { if (url) picture.src = url; else chip.classList.add('missing'); });
+    picture.onclick = () => openImage(image); chip.append(picture);
+    if (onRemove) { const remove = make('button', { type: 'button', textContent: '×', title: 'Bỏ ảnh khỏi tin đang soạn' }); remove.setAttribute('aria-label', 'Bỏ ảnh ' + image.name); remove.onclick = onRemove; chip.append(remove); }
+    return chip;
+  }
+  async function openImage(image) { const url = await previewOf(image.path); if (!url) return; get('#image-view').src = url; get('#image-title').textContent = image.name; get('#image-viewer').showModal(); }
+  get('#image-close').onclick = () => get('#image-viewer').close();
 
   // ---- Xem tệp được nhắc trong chat.
   get('#file-copy').onclick = () => window.office.run('copy-text', { text: get('#file-text').textContent });
