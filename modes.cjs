@@ -47,4 +47,6 @@ function cliTools(mode, scope) {
   else if (mode !== 'bypass') tools.push(...WEB_TOOLS);
   return tools.join(',');
 }
-module.exports = { permissionMode, validMode, toolsFor, allowedFor, cliMode, cliTools, needsConfirm, needsTurnConfirm, onSystemDrive, READ_TOOLS, WRITE_TOOLS, ALWAYS_ASK };
+// Tên MCP server trong mcp-servers.json và trong cấu hình MCP theo role (team.roleMcp).
+const MCP_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+module.exports = { MCP_NAME, permissionMode, validMode, toolsFor, allowedFor, cliMode, cliTools, needsConfirm, needsTurnConfirm, onSystemDrive, READ_TOOLS, WRITE_TOOLS, ALWAYS_ASK };

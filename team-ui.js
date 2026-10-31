@@ -10,7 +10,7 @@
   const COMMANDS = [['/compact', 'Compact ngữ cảnh của khối đang chọn'], ['/model', 'Chọn model'], ['/status', 'Cấu hình session'], ['/role', 'Chạy/tạm dừng khối: /role <tên> start|pause'], ['/chot', 'Chốt GD, chạy tự động các bước sau'], ['/auto', 'Bật/tắt tự động: /auto on|off'], ['/mcp', 'MCP server (/mcp open để sửa)'], ['/usage', 'Usage nhận từ CLI'], ['/help', 'Trợ giúp']];
   const TAKES_ARGS = ['/role', '/auto'];
   // Thứ tự role, giới hạn vòng QA và quyền xóa đều lấy từ backend (snapshot), UI không tự tính.
-  let removal = {}, qaRoundLimit, roleTypes = [], knownProfiles = [], defaultRoles = {};
+  let removal = {}, qaRoundLimit, roleTypes = [], mcpNames = [], knownProfiles = [], defaultRoles = {};
   const isLead = (thread, role) => (thread.workers?.[role]?.type || role) === 'Lead Dev';
   const current = () => team?.threads.find(thread => thread.id === selected);
   // Thông báo ngắn ở dòng trạng thái được giữ vài giây, không bị paint() (chạy mỗi lần main publish) ghi đè ngay.
@@ -192,7 +192,7 @@
     if (runningOf(thread, role)) text = '● Đang thực hiện';
     else if (thread.workers?.[role]?.paused) text = '⏸ Tạm dừng';
     else if (task) text = taskNames[task.status] || task.status;
-    else if (index < thread.stage || thread.status === 'done') text = ['Dev', 'VFX'].includes(thread.workers?.[role]?.type) && thread.flow[thread.stage] === 'QA' ? '✓ Đã làm · chờ QA' : '✓ Đã bàn giao';
+    else if (index < thread.stage || thread.status === 'done') text = ['Dev', 'VFX', 'Art'].includes(thread.workers?.[role]?.type) && thread.flow[thread.stage] === 'QA' ? '✓ Đã làm · chờ QA' : '✓ Đã bàn giao';
     else text = index === thread.stage ? names[thread.status] : 'Chưa đến bước';
     if (isLead(thread, role) && qaRoundLimit) text += ` · ${phaseNames[thread.leadPhase] || phaseNames.planning} · QA ${thread.qaFailRounds || 0}/${qaRoundLimit}`;
     return text;
@@ -276,16 +276,27 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     const account = get('#worker-account'); if (force || document.activeElement !== account) { account.replaceChildren(...[{ id: '', name: 'Theo tài khoản đang chọn' }, ...knownProfiles].map(profile => make('option', { value: profile.id, textContent: profile.name }))); account.value = config.profileId || ''; }
     setField(get('#worker-task'), config.task || '', force);
     const type = roleType(thread, role), base = team.roleTemplates?.[type] || defaultRoles[type] || {};
+    paintRoleMcp(thread, type);
     setField(get('#role-responsibility'), base.responsibility || '', force); setField(get('#role-output'), base.output || '', force); setField(get('#role-instructions'), thread.roleConfig?.[type]?.instructions || '', force);
   }
+  // US-08: mỗi loại role chỉ nạp MCP server được tích ở đây (team.roleMcp, dùng chung mọi session); chat thường nạp tất cả.
+  function paintRoleMcp(thread, type) {
+    const box = get('#role-mcp'), enabled = team.roleMcp?.[type] || []; box.hidden = !mcpNames.length;
+    const key = [type, thread.archived, ...mcpNames, '|', ...enabled].join(','); if (box.dataset.key === key) return; box.dataset.key = key;
+    box.querySelector('.mcp-choices').replaceChildren(...mcpNames.map(name => {
+      const input = make('input', { type: 'checkbox', value: name, checked: enabled.includes(name), disabled: thread.archived });
+      input.onchange = () => act('role-mcp', { role: type, servers: [...box.querySelectorAll('input:checked')].map(item => item.value) });
+      const label = make('label', { className: 'mcp-choice' }); label.append(input, ' ' + name); return label;
+    }));
+  }
   // Tệp .md của session (session-files.cjs) mở bằng trình xem tệp; tệp chỉ có sau lượt chạy role đầu tiên.
-  const SESSION_FILES = [['GDD.md', 'GDD'], ['UIUX.md', 'UI/UX'], ['TASKS.md', 'Tasks'], ['ISSUES.md', 'Issues'], ['PERF.md', 'Perf'], ['CHANGES.md', 'Changes']];
+  const SESSION_FILES = [['GDD.md', 'GDD'], ['UIUX.md', 'UI/UX'], ['ART.md', 'Art'], ['TASKS.md', 'Tasks'], ['ISSUES.md', 'Issues'], ['PERF.md', 'Perf'], ['CHANGES.md', 'Changes']];
   function paintSessionFiles(thread, role) {
     const files = role ? thread.workers?.[role]?.files || [] : [];
     get('#worker-files').hidden = !files.length; get('#worker-files').textContent = 'Tệp được sửa: ' + files.join(', ');
     const box = get('#session-files'); box.hidden = !thread?.flow.length || !thread.folder; if (box.hidden) return;
     const base = thread.folder.replace(/[\\/]+$/, '') + '\\.office-desk\\';
-    const links = [['PROJECT.md', 'Project', base + 'PROJECT.md'], ...SESSION_FILES.map(([name, title]) => [name, title, base + thread.id + '\\' + name])];
+    const links = [['PROJECT.md', 'Project', base + 'PROJECT.md'], ['STYLE.md', 'Style', base + 'STYLE.md'], ['ASSETS.md', 'Assets', base + 'ASSETS.md'], ...SESSION_FILES.map(([name, title]) => [name, title, base + thread.id + '\\' + name])];
     const key = links.map(link => link[2]).join('|'); if (box.dataset.key === key) return; box.dataset.key = key;
     box.querySelector('.file-links').replaceChildren(...links.map(([name, title, file]) => make('button', { type: 'button', textContent: title, title: file, onclick: () => window.openChatFile(file) })));
   }
@@ -412,8 +423,9 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   // ---- Thêm role.
   get('#role').onclick = async () => {
     if (!current()) { if (!(await ensureThread())) return; team = (await window.office.run('state')).team; paint(); }
-    const thread = current(), hasLead = thread.flow.some(label => isLead(thread, label));
-    get('#add-role-choices').replaceChildren(...roleTypes.filter(type => type !== 'Lead Dev' || !hasLead).map(role => make('button', { type: 'button', textContent: '+ ' + role, onclick: async () => { const added = await act('add-worker', { type: role }); if (added) { get('#add-role-dialog').close(); showStatus('Đã thêm ' + added); chooseWorker(added); } } })));
+    // Lead Dev và Art Director chỉ có một khối mỗi session (workers.SINGLE_TYPES).
+    const thread = current(), taken = type => ['Lead Dev', 'Art Director'].includes(type) && thread.flow.some(label => roleType(thread, label) === type);
+    get('#add-role-choices').replaceChildren(...roleTypes.filter(type => !taken(type)).map(role => make('button', { type: 'button', textContent: '+ ' + role, onclick: async () => { const added = await act('add-worker', { type: role }); if (added) { get('#add-role-dialog').close(); showStatus('Đã thêm ' + added); chooseWorker(added); } } })));
     get('#add-role-dialog').showModal();
   };
   get('#add-role-cancel').onclick = () => get('#add-role-dialog').close();
@@ -512,7 +524,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   get('#usage-viewer').addEventListener('close', () => { if (usageId) window.office.run('close', { id: usageId }).catch(() => {}); usageId = undefined; usageTerm?.dispose(); usageTerm = undefined; get('#usage-terminal').replaceChildren(); });
 
   // ---- Trạng thái từ main.
-  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
+  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
   window.office.onState(applyState);
   get('#search').oninput = sidebar;
   get('#new-thread').onclick = async () => { const id = await act('create', { project: current()?.archived ? '' : current()?.project || '' }); if (id) { select(id); get('#message').focus(); } };

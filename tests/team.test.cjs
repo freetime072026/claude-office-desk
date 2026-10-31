@@ -100,12 +100,12 @@ test('R1 / TC-ROLE-06b: dropping a passed Dev via select-roles forgets it; selec
 test('R1: select-roles may drop Lead Dev together with Dev/QA in an unstarted session', () => {
   const { team, id, thread } = loopSession(); update(team, 'select-roles', { id, roles: ['GD'] }); assert.deepEqual(thread.flow, ['GD']);
 });
-test('R5: roles after QA run before Lead review; flow [GD, Lead Dev, Dev, QA, Art]', () => {
-  const { team, id, thread } = loopSession(); update(team, 'assign-role', { id, name: 'Art' }); assert.deepEqual(thread.flow, ['GD', 'Lead Dev', 'Dev', 'QA', 'Art']);
+test('R5: roles after QA run before Lead review; flow [GD, Lead Dev, Dev, QA, Sound]', () => {
+  const { team, id, thread } = loopSession(); update(team, 'assign-role', { id, name: 'Sound' }); assert.deepEqual(thread.flow, ['GD', 'Lead Dev', 'Dev', 'QA', 'Sound']);
   toQA(team, id); step(team, id, 'QA pass');
-  assert.equal(thread.flow[thread.stage], 'Art'); assert(thread.qaPassedAt); assert.equal(thread.qaFailRounds, 0); assert.equal(thread.status, 'waiting');
-  step(team, id, 'Art done'); assert.equal(thread.flow[thread.stage], 'Lead Dev'); assert.equal(thread.leadPhase, 'review');
-  assert.deepEqual(removable(thread, 'Art'), { ok: true, reason: 'đã pass' });
+  assert.equal(thread.flow[thread.stage], 'Sound'); assert(thread.qaPassedAt); assert.equal(thread.qaFailRounds, 0); assert.equal(thread.status, 'waiting');
+  step(team, id, 'Sound done'); assert.equal(thread.flow[thread.stage], 'Lead Dev'); assert.equal(thread.leadPhase, 'review');
+  assert.deepEqual(removable(thread, 'Sound'), { ok: true, reason: 'đã pass' });
   step(team, id, 'Review pass'); assert.equal(thread.status, 'done');
 });
 test('AC-ROLE-04.3 (TC-MIG-01): legacy Lead Planning/Lead Review migrate to one Lead Dev', () => {
@@ -136,4 +136,12 @@ test('an Issue can be dismissed at any stage, and a retest without text uses def
   assert.equal(first.accepted, true); assert.match(thread.messages.at(-1).text, new RegExp('bỏ qua Issue ' + first.id + '$'));
   assert.throws(() => update(team, 'dismiss-issue', { id, issue: first.id }), /Không tìm thấy Issue đang mở/);
   update(team, 'dismiss-issue', { id, issue: second.id, text: 'lỗi đã biết' }); assert.match(thread.messages.at(-1).text, /: lỗi đã biết$/);
+});
+test('US-08: MCP servers are enabled per role type for every session, validated by name', () => {
+  const team = initial(); const id = update(team, 'create', { request: 'Game' }); update(team, 'add-worker', { id, type: 'Art' });
+  update(team, 'role-mcp', { id, role: 'Art', servers: ['image-gen', 'image-gen', 'comfy_ui'] });
+  assert.deepEqual(team.roleMcp, { Art: ['image-gen', 'comfy_ui'] }); assert.match(team.threads[0].messages.at(-1).text, /MCP server của Art: image-gen, comfy_ui/);
+  update(team, 'role-mcp', { id, role: 'Art', servers: [] }); assert.deepEqual(team.roleMcp.Art, []);
+  assert.throws(() => update(team, 'role-mcp', { id, role: 'Art', servers: ['bad name'] }), /không hợp lệ/);
+  assert.throws(() => update(team, 'role-mcp', { id, role: 'Nope', servers: [] }), /Role không hợp lệ/);
 });

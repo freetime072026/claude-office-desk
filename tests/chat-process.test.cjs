@@ -74,3 +74,16 @@ test('role brief goes to the CLI as --append-system-prompt-file and the temp fil
   await new Promise(resolve => setTimeout(resolve, 100)); assert.equal(fs.existsSync(file), false);
   fs.rmSync(path.join(__dirname, 'briefs'), { recursive: true, force: true });
 });
+test('US-08: a role run gets its own --mcp-config with only its servers, removed after the run', { skip, timeout: 20000 }, async () => {
+  const fs = require('node:fs');
+  const thread = { folder: __dirname, messages: [], mode: 'read', model: 'sonnet' };
+  const mcpConfig = { mcpServers: { 'image-gen': { command: 'gen', args: [] } } };
+  const started = launch({ mcpConfig, executable: path.join(__dirname, 'fake-cli.cmd'), directory: __dirname, settings: 'unused.json', mcp: 'all.json', thread, profileId: 'test-profile', prompt: '[args]', save: () => {}, publish: () => {} });
+  const file = path.join(__dirname, 'mcp', started.message.id + '.json');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), mcpConfig);
+  await new Promise((resolve, reject) => { started.child.once('error', reject); started.child.once('close', resolve); });
+  const args = JSON.parse(thread.messages[0].text);
+  assert.equal(args[args.indexOf('--mcp-config') + 1], file); assert(!args.includes('all.json'));
+  await new Promise(resolve => setTimeout(resolve, 100)); assert.equal(fs.existsSync(file), false);
+  fs.rmSync(path.join(__dirname, 'mcp'), { recursive: true, force: true });
+});

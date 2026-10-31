@@ -1,13 +1,15 @@
 const path = require('node:path');
-const { roleKey, DEFAULT_MODELS, DEFAULT_MODES, FALLBACK_MODEL, DEV_TYPES, isDevType } = require('./roles.cjs');
+const { roleKey, DEFAULT_MODELS, DEFAULT_MODES, FALLBACK_MODEL, DEV_TYPES, isDevType, ART_DIRECTOR } = require('./roles.cjs');
 const { scopesOverlap } = require('./permissions.cjs');
 const FILES_PER_TASK = 8;
 // Tệp Lead giao cho Dev: đường dẫn tương đối, không thoát khỏi thư mục chính. Thư mục kết thúc bằng /.
 const validFile = file => typeof file === 'string' && file.trim() && file.length <= 500 && !path.isAbsolute(file) && !file.split(/[\\/]/).includes('..');
 const resolvedFiles = (folder, files) => files.map(file => path.resolve(folder || '.', file) + (/[\\/]$/.test(file) ? path.sep : ''));
 // Thứ tự pipeline chuẩn (PLAN L-4). Role tùy chỉnh luôn đứng sau QA.
-const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Lead Dev', 'Dev', 'VFX', 'QA']);
+const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'QA']);
 const LEAD = 'Lead Dev';
+// Khối chỉ có một mỗi session: các pha của chúng là nút riêng trên sơ đồ (flowgraph.cjs).
+const SINGLE_TYPES = Object.freeze([LEAD, 'Art Director']);
 const QA_ROUND_LIMIT = 3;
 // 'paused': task bị /role <tên> pause; vẫn tính là việc dở (không cho xóa role, không thay phân công mới).
 // 'pending': Lead đã giao nhưng nút Dev trên sơ đồ chưa tới lượt chạy (bộ chạy chuyển sang 'queued' khi tới lượt).
@@ -33,7 +35,7 @@ function forgetWorker(thread, label) {
   if (Array.isArray(thread.taskDrafts)) thread.taskDrafts = thread.taskDrafts.filter(task => task.worker !== label);
 }
 function addWorker(thread, type) {
-  if (typeOf(type) === LEAD && thread.flow.some(label => typeOf(label) === LEAD)) throw Error('Session đã có Lead Dev');
+  for (const single of SINGLE_TYPES) if (typeOf(type) === single && thread.flow.some(label => typeOf(label) === single)) throw Error('Session đã có ' + single);
   let label = type, count = 2; while (thread.flow.includes(label)) label = type + ' #' + count++;
   const after = thread.flow.findIndex(name => orderOf(name) > orderOf(label)); const index = after < 0 ? thread.flow.length : after;
   if (started(thread) && index <= thread.stage) thread.stage++;
@@ -78,13 +80,20 @@ function removable(thread, label, { busy = false } = {}) {
   if (dependent) return { ok: false, force: true, reason: dependent.worker + ' còn phụ thuộc ' + label };
   return passed(thread, label) ? { ok: true, reason: 'đã pass' } : { ok: false, force: true, reason: label + ' có việc nhưng chưa pass' };
 }
+// Có Art Director thì Art nhận task từ Art Director (task.by), Lead chỉ giao Dev/VFX; không có thì Lead giao cả Art.
+const hasArtDirector = thread => (thread.flow || []).some(label => typeOf(label) === ART_DIRECTOR);
+const LEAD_TYPES_WITH_AD = Object.freeze(DEV_TYPES.filter(type => type !== 'Art'));
+const leadTypes = thread => hasArtDirector(thread) ? LEAD_TYPES_WITH_AD : DEV_TYPES;
+const AD_TYPES = Object.freeze(['Art']);
+const ownedByAd = (thread, task) => task.by === ART_DIRECTOR && hasArtDirector(thread);
 // problems nhận lý do khi kế hoạch bị từ chối, để báo cho người dùng/Lead thay vì chỉ "không hợp lệ".
-function taskPlan(text, thread, problems = []) {
+// types: loại khối được nhận task; reserved: task của người giao khác đang giữ tệp (không được chồng).
+function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [] } = {}) {
   const fail = reason => { problems.push(reason); return null; };
   const match = /```tasks\s*([\s\S]*?)```/.exec(text); if (!match) return fail('không có khối tasks');
   try {
     const plan = JSON.parse(match[1]); if (!Array.isArray(plan.tasks) || !plan.tasks.length || plan.tasks.length > 30) return fail('tasks phải là mảng 1–30 mục');
-    const owners = new Set(); for (const task of plan.tasks) { if (!thread.flow.includes(task.worker) || !isDevType(worker(thread, task.worker).type) || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return fail(`worker "${task.worker}" không phải Dev/VFX trong đội, bị trùng, hoặc task trống/quá dài`); owners.add(task.worker); }
+    const owners = new Set(); for (const task of plan.tasks) { if (!thread.flow.includes(task.worker) || !types.includes(worker(thread, task.worker).type) || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return fail(`worker "${task.worker}" không phải ${types.join('/')} trong đội, bị trùng, hoặc task trống/quá dài`); owners.add(task.worker); }
     // files bắt buộc và không chồng nhau giữa các Dev: điều kiện để Dev sửa song song không ghi đè nhau.
     // Tối đa FILES_PER_TASK mục: task lớn làm lượt Dev dài, ngữ cảnh phình và chi phí tăng nhanh hơn số lượt.
     for (const task of plan.tasks) {
@@ -93,9 +102,21 @@ function taskPlan(text, thread, problems = []) {
     }
     const scopes = plan.tasks.map(task => resolvedFiles(thread.folder, task.files));
     for (const [index, scope] of scopes.entries()) { const other = scopes.findIndex((item, at) => at > index && scopesOverlap(scope, item)); if (other >= 0) return fail(`${plan.tasks[index].worker} và ${plan.tasks[other].worker} có tệp chồng nhau`); }
+    for (const [index, scope] of scopes.entries()) { const held = reserved.find(task => scopesOverlap(scope, resolvedFiles(thread.folder, task.files || []))); if (held) return fail(`${plan.tasks[index].worker} chồng tệp với task đang giao cho ${held.worker}`); }
     for (const task of plan.tasks) if (task.dependsOn !== undefined && (!Array.isArray(task.dependsOn) || task.dependsOn.some(owner => !owners.has(owner) || owner === task.worker))) return fail(`${task.worker}: dependsOn chỉ gồm Dev khác trong kế hoạch`);
     const visited = new Set(); for (let count = 0; count < plan.tasks.length; count++) for (const task of plan.tasks) if ((task.dependsOn || []).every(owner => visited.has(owner))) visited.add(task.worker); if (visited.size !== owners.size) return fail('dependsOn tạo vòng phụ thuộc');
     return plan.tasks.map(task => ({ worker: task.worker, task: task.task, files: [...new Set(task.files.map(file => file.trim().replaceAll('\\', '/')))], ...(task.dependsOn?.length ? { dependsOn: [...new Set(task.dependsOn)] } : {}) }));
   } catch { return fail('JSON trong khối tasks không đọc được'); }
 }
-module.exports = { PIPELINE, LEAD, QA_ROUND_LIMIT, ACTIVE_TASK, BUSY_TASK, busyWorkers, ownsSession, authoredBy, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, runKey, resumeKey, removable, taskPlan, FILES_PER_TASK };
+// Kế hoạch của Lead (Dev/VFX; cả Art khi session không có Art Director) hoặc Art Director (Art). Thay task chưa bắt đầu của chính người
+// giao; task của người giao kia được giữ và không được chồng tệp; khối của người giao đang chạy/tạm dừng thì chưa áp. Thuần, main.cjs ghi.
+function mergePlan(thread, planner, text) {
+  const byAd = planner === ART_DIRECTOR, mine = task => byAd === ownedByAd(thread, task);
+  const others = (thread.dispatch || []).filter(task => !mine(task) && !['finished', 'cancelled'].includes(task.status));
+  const problems = [], proposal = taskPlan(text, thread, problems, { types: byAd ? AD_TYPES : leadTypes(thread), reserved: others });
+  if (!proposal) return { problems: problems.join('; ') };
+  const busy = (thread.dispatch || []).filter(task => mine(task) && BUSY_TASK.includes(task.status)).map(task => task.worker);
+  if (busy.length) return { blocked: `${planner} đã xuất kế hoạch tasks hợp lệ nhưng ${busy.join(', ')} đang chạy hoặc tạm dừng nên chưa áp dụng. Chờ khối đó xong (hoặc dừng nó) rồi dùng /role ${planner} start.` };
+  return { proposal, dispatch: [...others, ...proposal.map(task => ({ ...task, status: 'pending', ...(byAd ? { by: ART_DIRECTOR } : {}) }))] };
+}
+module.exports = { mergePlan, PIPELINE, LEAD, QA_ROUND_LIMIT, ACTIVE_TASK, BUSY_TASK, busyWorkers, hasArtDirector, leadTypes, AD_TYPES, ownedByAd, ownsSession, authoredBy, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, runKey, resumeKey, removable, taskPlan, FILES_PER_TASK };

@@ -1,5 +1,6 @@
 const { randomUUID } = require('node:crypto');
 const { defaults, roleKey, LEGACY_LEAD, isDevType } = require('./roles.cjs');
+const { MCP_NAME } = require('./modes.cjs');
 const { PIPELINE, LEAD, QA_ROUND_LIMIT, ownsSession, typeOf, sortFlow, started, openIssues, worker, forgetWorker, addWorker, removable } = require('./workers.cjs');
 const flowgraph = require('./flowgraph.cjs');
 const HALTED = ['awaiting-decision', 'cancelled'];
@@ -134,6 +135,13 @@ function update(team, action, payload) {
   if (action === 'chat-options') { if (!require('./modes.cjs').validMode(payload.mode) || !['claude-opus-5-5', 'sonnet', 'opus', 'haiku'].includes(payload.model)) throw Error('Mode/model không hợp lệ'); item.mode = payload.mode; item.model = payload.model; return true; }
   if (action === 'template') { const key = roleKey(text(payload.role, 40)); team.roleTemplates ||= {}; team.roleTemplates[key] = { responsibility: text(payload.responsibility, 6000), output: text(payload.output, 6000) }; return true; }
   if (action === 'remove-role') { removeRole(item, payload, log); return true; }
+  // US-08: MCP server bật cho từng loại role, dùng chung mọi session; role không có trong danh sách không nạp MCP nào.
+  if (action === 'role-mcp') {
+    const key = roleKey(text(payload.role, 40)); if (![...PIPELINE, ...item.flow.map(typeOf)].includes(key)) throw Error('Role không hợp lệ');
+    if (!Array.isArray(payload.servers) || payload.servers.length > 32 || !payload.servers.every(name => typeof name === 'string' && MCP_NAME.test(name))) throw Error('Danh sách MCP server không hợp lệ');
+    team.roleMcp ||= {}; team.roleMcp[key] = [...new Set(payload.servers)];
+    log('Cấu hình', `MCP server của ${key}: ${team.roleMcp[key].join(', ') || 'không có'}`); return true;
+  }
   if (action === 'role-config') {
     const key = roleKey(text(payload.role, 40)); if (![...PIPELINE, ...item.flow].includes(key)) throw Error('Role không hợp lệ');
     const config = { responsibility: text(payload.responsibility, 6000), output: text(payload.output, 6000), instructions: typeof payload.instructions === 'string' ? payload.instructions.slice(0, 12000) : '' };

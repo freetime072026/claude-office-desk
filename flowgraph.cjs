@@ -1,4 +1,4 @@
-// Sơ đồ luồng chạy của một session: nút = khối (Lead Dev tách 3 nút theo pha), cạnh = "khi nút nguồn kết thúc với kết quả X
+// Sơ đồ luồng chạy của một session: nút = khối (Lead Dev tách 3 nút theo pha, Art Director 2 nút), cạnh = "khi nút nguồn kết thúc với kết quả X
 // thì kích hoạt nút đích". Thuần dữ liệu, không Electron; bộ chạy tự động (pipeline.cjs) gọi các hàm ở đây.
 //
 // Luật chạy:
@@ -7,14 +7,17 @@
 // - Nút được kích hoạt sẽ chờ (queued) và chỉ chạy khi không còn nút nối vào nó đang chờ/đang chạy: QA chờ đủ mọi Dev,
 //   còn Dev có nhiều nguồn thay thế nhau (planning/triage/review) thì chỉ cần nguồn vừa kích hoạt.
 const { LEAD, labelType } = require('./workers.cjs');
-const { isDevType } = require('./roles.cjs');
+const { isDevType, ART_DIRECTOR, AD_PHASES } = require('./roles.cjs');
 const END = '@end';
 const LEAD_PHASES = Object.freeze(['planning', 'triage', 'review']);
+// Khối có pha: mỗi pha là một nút riêng, id = "<nhãn>@<pha>".
+const PHASED = Object.freeze({ [LEAD]: LEAD_PHASES, [ART_DIRECTOR]: AD_PHASES });
+const phaseId = (label, phase) => `${label}@${phase}`;
 const CONDITIONS = Object.freeze(['done', 'pass', 'issue', 'reject', 'always']);
 const CONDITION_NAMES = Object.freeze({ done: 'xong', pass: 'pass', issue: 'issue', reject: 'reject', always: 'luôn' });
 const PHASE_NAMES = Object.freeze({ planning: 'lập kế hoạch', triage: 'triage', review: 'review' });
 const OUTCOMES = Object.freeze(['done', 'pass', 'issue', 'reject', 'skipped', 'blocked']);
-const leadId = phase => `${LEAD}@${phase}`;
+const leadId = phase => phaseId(LEAD, phase);
 const nodeLabel = node => node.id === END ? 'Hoàn tất' : node.phase ? `${node.label} · ${PHASE_NAMES[node.phase]}` : node.label;
 function matches(when, outcome) {
   if (outcome === 'blocked' || !OUTCOMES.includes(outcome)) return false;
@@ -27,8 +30,8 @@ function defaultGraph(thread) {
   const type = label => labelType(thread, label), flow = thread.flow || [];
   const pre = flow.filter(label => ['GD', 'UI/UX'].includes(type(label)));
   const lead = flow.find(label => type(label) === LEAD), devs = flow.filter(label => isDevType(type(label)));
-  const qas = flow.filter(label => type(label) === 'QA');
-  const custom = flow.filter(label => !pre.includes(label) && label !== lead && !devs.includes(label) && !qas.includes(label));
+  const qas = flow.filter(label => type(label) === 'QA'), ad = flow.find(label => type(label) === ART_DIRECTOR);
+  const custom = flow.filter(label => !pre.includes(label) && label !== lead && label !== ad && !devs.includes(label) && !qas.includes(label));
   const nodes = [], edges = [], at = (column, row, rows) => ({ x: 40 + column * 200, y: 180 + (row - (rows - 1) / 2) * 100 });
   let column = 0;
   const add = (id, label, phase, position) => { nodes.push({ id, label, ...(phase ? { phase } : {}), ...position }); return id; };
@@ -36,21 +39,34 @@ function defaultGraph(thread) {
   const linkAll = (froms, tos, when) => { for (const from of froms) for (const to of tos) link(from, to, when); };
   let tail = [];
   for (const label of pre) { add(label, label, '', at(column++, 0, 1)); linkAll(tail, [label]); tail = [label]; }
+  // Art Director duyệt mockup UI/UX (không đạt → reject về UI/UX), viết đặc tả ảnh và giao Art trước khi Lead lập kế hoạch.
+  const adPlanning = ad ? add(phaseId(ad, 'planning'), ad, 'planning', at(column++, 0, 1)) : '';
+  if (adPlanning) { linkAll(tail, [adPlanning]); const uiux = pre.find(label => type(label) === 'UI/UX'); if (uiux) link(adPlanning, uiux, 'reject'); tail = [adPlanning]; }
   const planning = lead ? add(leadId('planning'), lead, 'planning', at(column++, 0, 1)) : '';
   if (planning) { linkAll(tail, [planning]); tail = [planning]; }
   const devColumn = column; devs.forEach((label, row) => add(label, label, '', at(column, row, devs.length))); if (devs.length) column++;
   if (devs.length) { linkAll(tail, devs); tail = devs; }
-  qas.forEach((label, row) => add(label, label, '', at(column, row, qas.length))); if (qas.length) column++;
-  if (qas.length) { linkAll(tail, qas); tail = qas; }
+  // Kiểm sau vòng Dev: QA và Art Director review chạy song song; bước sau chờ cả hai pass.
+  const adReview = ad && devs.length ? phaseId(ad, 'review') : '', checkers = [...qas, ...(adReview ? [adReview] : [])];
+  qas.forEach((label, row) => add(label, label, '', at(column, row, checkers.length)));
+  if (adReview) add(adReview, ad, 'review', at(column, qas.length, checkers.length));
+  if (checkers.length) { column++; linkAll(tail, checkers); tail = checkers; }
   // Vòng sửa lỗi: QA issue → Lead triage → Dev (không có Lead thì QA issue → Dev).
   if (qas.length && devs.length) {
     // Triage đặt phía trên nút lập kế hoạch (cùng cột) để cạnh triage → Dev đi xuôi, không đè lên các Dev.
     if (lead) { const top = Math.min(...nodes.filter(node => devs.includes(node.id)).map(node => node.y)); const triage = add(leadId('triage'), lead, 'triage', { x: 40 + (devColumn - 1) * 200, y: top - 120 }); linkAll(qas, [triage], 'issue'); linkAll([triage], devs); }
     else linkAll(qas, devs, 'issue');
   }
-  const forward = qas.length ? 'pass' : 'done';
-  for (const label of custom) { add(label, label, '', at(column++, 0, 1)); linkAll(tail, [label], tail === qas ? forward : 'done'); tail = [label]; }
-  const finalWhen = tail === qas ? forward : 'done';
+  // Art Director review: ảnh sai → reject kèm task Art làm lại; lỗi visual do code/layout → issue về Lead triage (hoặc Dev).
+  if (adReview) {
+    linkAll([adReview], devs.filter(label => type(label) === 'Art'), 'reject');
+    const triage = nodes.find(node => node.id === leadId('triage'))?.id;
+    if (triage) link(adReview, triage, 'issue'); else if (lead) { const top = Math.min(...nodes.filter(node => devs.includes(node.id)).map(node => node.y)); const id = add(leadId('triage'), lead, 'triage', { x: 40 + (devColumn - 1) * 200, y: top - 120 }); link(adReview, id, 'issue'); linkAll([id], devs); }
+    else linkAll([adReview], devs, 'issue');
+  }
+  const forward = checkers.length ? 'pass' : 'done';
+  for (const label of custom) { add(label, label, '', at(column++, 0, 1)); linkAll(tail, [label], tail === checkers ? forward : 'done'); tail = [label]; }
+  const finalWhen = tail === checkers ? forward : 'done';
   if (lead) { const review = add(leadId('review'), lead, 'review', at(column++, 0, 1)); linkAll(tail, [review], finalWhen); linkAll([review], devs, 'reject'); tail = [review]; }
   add(END, '', '', at(column, 0, 1)); linkAll(tail, [END], lead ? 'pass' : finalWhen);
   // Dời cả sơ đồ để nút cao nhất cách mép trên 40px (nhiều Dev xếp chồng có thể đẩy lên trên).
@@ -66,7 +82,8 @@ function validate(thread, graph) {
     if (ids.has(id)) throw Error('Nút trùng: ' + id); ids.add(id);
     if (id === END) return { id, label: '', x: Math.round(Number(node.x) || 0), y: Math.round(Number(node.y) || 0) };
     if (!thread.flow.includes(label)) throw Error(`Khối "${label}" không có trong session`);
-    if (labelType(thread, label) === LEAD ? !LEAD_PHASES.includes(phase) || id !== leadId(phase) : phase || id !== label) throw Error('Nút không hợp lệ: ' + id);
+    const phases = PHASED[labelType(thread, label)];
+    if (phases ? !phases.includes(phase) || id !== phaseId(label, phase) : phase || id !== label) throw Error('Nút không hợp lệ: ' + id);
     return { id, label, ...(phase ? { phase } : {}), x: Math.round(Number(node.x) || 0), y: Math.round(Number(node.y) || 0) };
   });
   const edges = [];
@@ -94,7 +111,7 @@ function addNode(thread, label) {
   if (!thread.graph?.custom) return syncGraph(thread);
   const graph = ensureGraph(thread); if (graph.nodes.some(node => node.label === label)) return graph;
   const type = labelType(thread, label), peers = graph.nodes.filter(node => node.id !== END && isDevType(labelType(thread, node.label)));
-  if (type === LEAD) { LEAD_PHASES.forEach((phase, index) => graph.nodes.push({ id: leadId(phase), label, phase, x: 40 + index * 200, y: 30 })); return graph; }
+  if (PHASED[type]) { PHASED[type].forEach((phase, index) => graph.nodes.push({ id: phaseId(label, phase), label, phase, x: 40 + index * 200, y: type === LEAD ? 30 : Math.max(30, ...graph.nodes.map(node => node.y)) + 100 })); return graph; }
   const lowest = Math.max(30, ...graph.nodes.map(node => node.y));
   if (isDevType(type) && peers.length) {
     const sample = peers[0];
@@ -131,4 +148,4 @@ function ready(thread) {
   return queued.slice(0, 1);
 }
 const nodesFor = (thread, label) => ensureGraph(thread).nodes.filter(node => node.label === label);
-module.exports = { syncGraph, END, LEAD_PHASES, CONDITIONS, CONDITION_NAMES, PHASE_NAMES, leadId, nodeLabel, matches, defaultGraph, validate, ensureGraph, addNode, runOf, stateOf, resetRun, entries, finish, queue, ready, nodesFor, incoming, outgoing };
+module.exports = { syncGraph, END, LEAD_PHASES, PHASED, phaseId, CONDITIONS, CONDITION_NAMES, PHASE_NAMES, leadId, nodeLabel, matches, defaultGraph, validate, ensureGraph, addNode, runOf, stateOf, resetRun, entries, finish, queue, ready, nodesFor, incoming, outgoing };

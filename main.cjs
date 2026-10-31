@@ -10,7 +10,7 @@ const { normalizeUsage, foldersOf, extraFolderArgs } = require('./usage.cjs');
 const { defaults: roleDefaults } = require('./roles.cjs');
 const chatEngine = require('./chat.cjs');
 const chats = new Map();
-const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK, busyWorkers } = require('./workers.cjs');
+const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK, mergePlan } = require('./workers.cjs');
 const { rolePrompt, FILE_ROLES } = require('./prompt.cjs');
 const { needsConfirm, needsTurnConfirm, ALWAYS_ASK } = require('./modes.cjs');
 const { describeTool, decide, roleScope, scopesOverlap } = require('./permissions.cjs');
@@ -19,7 +19,7 @@ const attachments = require('./attachments.cjs');
 const unity = require('./unity.cjs');
 const projectDocs = require('./project-docs.cjs');
 const fileChanges = require('./file-changes.cjs');
-const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor } = require('./roles.cjs');
+const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor, ART_DIRECTOR } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
 // policy = { scope, mode, cwd }: phạm vi ghi theo role được quyết định trước (decide), không hỏi người dùng.
@@ -44,7 +44,7 @@ const pipeline = require('./pipeline.cjs');
 const { retryable, taskSession, continuationOf } = require('./dispatch.cjs');
 // Thư mục đã chọn có thể bị xóa/đổi tên; trả false thay vì để ENOENT thô lọt ra giao diện.
 function isFolder(folder) { try { return fs.statSync(folder).isDirectory(); } catch { return false; } }
-const MCP_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+const { MCP_NAME } = require('./modes.cjs');
 // Danh sách MCP server do người dùng khai báo trong mcp-servers.json (userData). Lỗi cú pháp được báo, không bỏ qua ngầm.
 function mcpServerNames() {
   let data; try { data = JSON.parse(fs.readFileSync(mcp, 'utf8')); } catch (error) { throw Error('mcp-servers.json không hợp lệ (' + error.message + '). Sửa bằng /mcp open.'); }
@@ -52,6 +52,9 @@ function mcpServerNames() {
   const names = Object.keys(data.mcpServers); const bad = names.find(name => !MCP_NAME.test(name));
   if (bad) throw Error('Tên MCP server "' + bad + '" chỉ được gồm chữ, số, _ và -'); return names;
 }
+// Cấu hình MCP chỉ gồm các server được chọn (US-08), dùng làm --mcp-config của một lượt.
+function mcpSubset(names) { const data = JSON.parse(fs.readFileSync(mcp, 'utf8')); return { mcpServers: Object.fromEntries(names.map(name => [name, data.mcpServers[name]])) }; }
+const safeMcpNames = () => { try { return mcpServerNames(); } catch { return []; } };
 function sameOrNested(first, second) { const a = path.resolve(first).toLowerCase(), b = path.resolve(second).toLowerCase(); return a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep); }
 // Hai lượt cùng có phạm vi ghi (Dev theo danh sách tệp, GD/QA/Lead theo tệp .md) chỉ xung đột khi phạm vi chạm nhau:
 // nhờ vậy các Dev được Lead chia tệp riêng sửa song song. Lượt ghi không giới hạn vẫn xét theo thư mục như cũ.
@@ -99,7 +102,7 @@ function publish() { clearTimeout(publishTimer); publishTimer = null; if (window
 // Luồng stream gọi mỗi chunk; gửi trạng thái tối đa ~10 lần/giây thay vì mỗi chunk.
 let publishTimer = null;
 function publishSoon() { publishTimer ||= setTimeout(publish, 100); }
-function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
+function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, mcpServers: safeMcpNames(), profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
 function requireTrusted(event) { const allowed = [entry, pathToFileURL(path.join(__dirname, 'dashboard.html')).href]; if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !allowed.includes(event.senderFrame.url)) throw Error('Unauthorized'); }
 function start(profileId, kind, task) {
   const item = profile(profileId);
@@ -164,6 +167,13 @@ app.whenReady().then(() => {
   };
   const pumpThread = thread => teamStore.isHalted(thread) ? Promise.resolve() : require('./dispatch.cjs').pump(thread, task => sendTask(thread, task), () => { persist(); publish(); });
   // TASKS.md do app ghi từ khối tasks đã kiểm tra; lỗi ghi tệp chỉ báo, không chặn điều phối.
+  // Áp kế hoạch tasks của Lead (Dev/VFX; cả Art khi session không có Art Director) hoặc Art Director (Art). Kế hoạch mới thay task
+  // chưa bắt đầu của chính người giao; task của người giao kia được giữ và không được chồng tệp; khối đang chạy/tạm dừng giữ kế hoạch lại.
+  function applyPlan(thread, planner, text) {
+    const result = mergePlan(thread, planner, text); if (!result.dispatch) return result;
+    thread.taskDrafts = result.proposal; teamStore.update(metadata.team, 'apply-task-plan', { id: thread.id }); thread.dispatch = result.dispatch;
+    recordTasks(thread, result.proposal, planner === ART_DIRECTOR ? 'Art Director giao Art' : 'Lead phân công'); return { applied: true };
+  }
   const recordTasks = (thread, tasks, reason) => { try { sessionFiles.writeTasks(thread, tasks, `Vòng ${thread.round || 1} · ${reason}`); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được TASKS.md: ' + error.message, time: new Date().toISOString() }); } };
   const isRunning = (thread, label) => chats.has(runKey(thread.id, label));
   async function approveAuto(thread) {
@@ -225,7 +235,7 @@ app.whenReady().then(() => {
       const localReply = text => { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); thread.messages.push({ role: 'Hệ thống', text, time: new Date().toISOString() }); persist(); publish(); return true; };
       if (content === '/help') return localReply('/role <khối> start|pause: chạy/tạm dừng một khối (vd. /role Lead Dev pause). /chot: chốt GD và chạy tự động các bước sau. /compact [điều cần giữ]: compact phiên của khối đang chọn. /auto on|off: bật/tắt chạy tự động. /model: chọn model bên dưới. /status: cấu hình session. /mcp, /mcp open: xem/sửa MCP server. /usage: quota đã nhận từ CLI. Lệnh tương tác khác dùng trong Terminal.');
       if (content.startsWith('/model')) return localReply('Model của khối hiện tại: ' + (worker.model || 'claude-opus-5-5') + '. Đổi bằng danh sách Model dưới ô chat.');
-      if (content === '/mcp') { let names; try { names = mcpServerNames(); } catch (error) { return localReply(error.message); } return localReply((names.length ? 'MCP server được nạp: ' + names.join(', ') : 'Chưa khai báo MCP server.') + '\nCấu hình: ' + mcp + '\nDùng /mcp open để mở và sửa (dạng {"mcpServers":{"ten":{"command":"...","args":[]}}}). Áp dụng từ lượt sau; Plan chỉ đọc không gọi tool MCP.'); }
+      if (content === '/mcp') { let names; try { names = mcpServerNames(); } catch (error) { return localReply(error.message); } const own = payload.role ? names.filter(name => (metadata.team.roleMcp?.[worker.type] || []).includes(name)) : names; return localReply((names.length ? 'MCP server đã khai báo: ' + names.join(', ') + '\n' + (payload.role ? `${payload.role} nạp: ${own.join(', ') || 'không có'} (chọn trong mục Trách nhiệm & yêu cầu riêng; áp dụng cho mọi khối ${worker.type})` : 'Chat thường nạp tất cả.') : 'Chưa khai báo MCP server.') + '\nCấu hình: ' + mcp + '\nDùng /mcp open để mở và sửa (dạng {"mcpServers":{"ten":{"command":"...","args":[]}}}). Áp dụng từ lượt sau; Plan chỉ đọc không gọi tool MCP.'); }
       if (content === '/mcp open') { const failure = await shell.openPath(mcp); return localReply(failure ? 'Không mở được: ' + failure : 'Đã mở ' + mcp + '. Lưu tệp rồi gửi lượt mới.'); }
       const command = pipeline.parseCommand(content, thread.flow);
       if (command?.kind === 'error') return localReply(command.message);
@@ -290,14 +300,16 @@ app.whenReady().then(() => {
       const prompt = compactOnly ? content : briefKnown ? built.body : [built.brief, built.body].filter(Boolean).join('\n');
       if (briefHash) (thread.briefSent ||= {})[sessionKey] = briefHash;
       if (fullDocs && docsGuide) projectDocs.markSent(thread, sessionKey, resumed);
-      const mcpServers = mcpServerNames();
+      // US-08: khối trong luồng chỉ nạp MCP server bật cho loại role của nó (team.roleMcp); chat thường nạp tất cả.
+      const allMcp = mcpServerNames(), mcpServers = payload.role ? allMcp.filter(name => (metadata.team.roleMcp?.[worker.type] || []).includes(name)) : allMcp;
+      const mcpConfig = payload.role ? mcpSubset(mcpServers) : null;
       if (payload.auto) thread.messages.push({ role: 'Điều phối', text: content, time: new Date().toISOString() }); else { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); if (images.length) thread.messages.at(-1).attachments = images; }
       if (folderNote) thread.messages.push({ role: 'Hệ thống', text: folderNote, time: new Date().toISOString() });
       // Ảnh chụp git trong phạm vi tệp của Dev/VFX trước lượt: sau lượt so lại để biết tệp nào được tạo/sửa (file-changes.cjs).
       const devRun = Boolean(files && payload.role && isDevType(worker.type) && scope?.paths?.length), gitBefore = devRun ? fileChanges.gitStatus(thread.folder, scope.paths) : null;
       const model = payload.role ? modelFor(worker.type, worker.model, thread.leadPhase) : worker.model;
       const runThread = { ...thread, mode: worker.mode, model, cliSessions: thread.cliSessions ||= {}, sessionTotals: thread.sessionTotals ||= {} };
-      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: images.length ? [attachments.folderOf(root, thread.id)] : [], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
+      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: images.length ? [attachments.folderOf(root, thread.id)] : [], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
       run.message.profileId = profileId; run.message.model = model;
       run.child.once('close', () => {
         chats.delete(activeKey);
@@ -313,15 +325,15 @@ app.whenReady().then(() => {
         if (changed) run.message.changedFiles = changed;
         if (files && isDevType(worker.type) && (handoff || changed)) { try { sessionFiles.appendChange(thread, payload.role, handoff?.status || (run.message.error ? 'lỗi' : 'không có handoff'), handoff?.summary || '', changed); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } }
         let proposalApplied = false, planBlocked = '';
-        if (worker.type === LEAD && thread.leadPhase !== 'review' && !run.message.error) {
-          const problems = [], proposal = require('./workers.cjs').taskPlan(run.message.text, thread, problems);
-          // Kế hoạch mới thay task chưa bắt đầu (pending/queued) của kế hoạch trước; chỉ khối đang chạy hoặc tạm dừng mới giữ kế hoạch lại.
-          const busy = busyWorkers(thread);
-          if (proposal && busy.length) { planBlocked = `Lead đã xuất kế hoạch tasks hợp lệ nhưng ${busy.join(', ')} đang chạy hoặc tạm dừng nên chưa áp dụng. Chờ khối đó xong (hoặc dừng nó) rồi dùng /role Lead Dev start.`; thread.messages.push({ role: 'Điều phối', text: planBlocked, time: new Date().toISOString() }); }
-          if (proposal && !busy.length) { thread.taskDrafts = proposal; teamStore.update(metadata.team, 'apply-task-plan', { id: thread.id }); thread.dispatch = proposal.map(task => ({ ...task, status: 'pending' })); proposalApplied = true; recordTasks(thread, proposal, 'Lead phân công'); thread.messages.push({ role: 'Điều phối', text: 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.', time: new Date().toISOString() }); }
-          // Lead không nhận lịch sử chat: lý do được lưu và chèn vào prompt lượt Lead kế tiếp (prompt.cjs), xoá khi kế hoạch hợp lệ.
-          else if (!proposal) { thread.planProblems = problems.join('; '); thread.messages.push({ role: 'Điều phối', text: `Lead chưa xuất phân công tasks hợp lệ (${thread.planProblems}); không tự đoán hoặc chạy Dev. Lượt Lead tiếp theo sẽ nhận lý do này.`, time: new Date().toISOString() }); }
-          if (proposalApplied) { delete thread.planProblems; delete thread.reassign; }
+        // Lead (pha planning/triage) và Art Director (khi có khối tasks) giao việc; lý do kế hoạch bị từ chối được lưu và chèn vào
+        // prompt lượt kế tiếp của người giao (prompt.cjs), xoá khi kế hoạch hợp lệ.
+        const planner = run.message.error ? '' : worker.type === LEAD && thread.leadPhase !== 'review' ? LEAD : worker.type === ART_DIRECTOR && /```tasks/.test(run.message.text) ? ART_DIRECTOR : '';
+        if (planner) {
+          const result = applyPlan(thread, planner, run.message.text), problemKey = planner === LEAD ? 'planProblems' : 'adPlanProblems';
+          const note = text => thread.messages.push({ role: 'Điều phối', text, time: new Date().toISOString() });
+          if (result.applied) { proposalApplied = true; delete thread[problemKey]; if (planner === LEAD) delete thread.reassign; note(planner === LEAD ? 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.' : 'Art Director đã giao task cho Art.'); }
+          else if (result.blocked) { planBlocked = result.blocked; note(planBlocked); }
+          else { thread[problemKey] = result.problems; note(`${planner} chưa xuất phân công tasks hợp lệ (${result.problems}); không tự đoán hoặc chạy khối nhận việc. Lượt ${planner} tiếp theo sẽ nhận lý do này.`); }
         }
         persist(); publish();
         autoRun.after(thread, payload.role, run.message, { proposalApplied, planBlocked }).catch(error => thread.messages.push({ role: 'Tự động', text: 'Dừng tự động: ' + error.message, time: new Date().toISOString() })).finally(() => { persist(); publish(); pumpThread(thread).catch(() => {}); });

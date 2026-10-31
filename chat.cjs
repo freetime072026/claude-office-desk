@@ -120,12 +120,15 @@ function permissionResult(decision, input) { return decision?.allow ? { behavior
 // askPermission({ tool, input, toolUseId }) → Promise<{ allow, message? }>. Không truyền thì mọi yêu cầu bị từ chối (an toàn mặc định).
 // brief: hướng dẫn vai trò gửi qua system prompt (prompt.cjs). CLI ghi lại system prompt ở lần gọi đầu của phiên và dùng lại
 // nguyên văn khi resume, nên brief được cache và không cộng dồn vào lịch sử như khi nằm trong tin người dùng.
-function launch({ brief = '', executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [] }) {
+function launch({ brief = '', mcpConfig = null, executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [] }) {
   const message = { id: randomUUID(), role: role || 'Claude', text: '', time: new Date().toISOString(), streaming: true };
   message.progress = { startedAt: message.time, steps: 0, lastTool: '', target: '' };
   thread.messages.push(message);
   const seen = new Set();
-  const args = sessionArgs(settings, mcp);
+  // mcpConfig: chỉ các MCP server bật cho role (US-08), ghi ra tệp riêng của lượt; không có thì dùng cấu hình chung.
+  const mcpFile = mcpConfig ? path.join(directory, 'mcp', message.id + '.json') : '';
+  if (mcpFile) { fs.mkdirSync(path.dirname(mcpFile), { recursive: true }); fs.writeFileSync(mcpFile, JSON.stringify(mcpConfig)); }
+  const args = sessionArgs(settings, mcpFile || mcp);
   args[args.indexOf('--permission-mode') + 1] = cliMode(thread.mode, scope);
   args[args.indexOf('--tools') + 1] = cliTools(thread.mode, scope);
   if (maxTurns) args.push('--max-turns', String(maxTurns));
@@ -162,7 +165,7 @@ function launch({ brief = '', executable, directory, settings, mcp, mcpServers =
   child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-6000); });
   // stdin giữ mở tới khi CLI trả event result (để trả lời yêu cầu duyệt), rồi đóng để CLI thoát.
   child.stdin.on('error', () => {}); send(userLine(prompt));
-  const finish = code => { if (ended) return; ended = true; if (briefFile) fs.rm(briefFile, { force: true }, () => {}); if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
+  const finish = code => { if (ended) return; ended = true; for (const file of [briefFile, mcpFile]) if (file) fs.rm(file, { force: true }, () => {}); if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
   child.on('error', error => { errors = error.message; finish(1); }); child.on('close', finish);
   return { child, cancel: () => { if (child.pid && !ended) execFile(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); }, message };
 }

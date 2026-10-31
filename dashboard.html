@@ -77,9 +77,10 @@
     <textarea id="role-output" aria-label="Đầu ra mặc định" maxlength="6000"></textarea>
     <small>Yêu cầu riêng trong session này</small>
     <textarea id="role-instructions" aria-label="Nhiệm vụ session" maxlength="12000"></textarea>
+    <div id="role-mcp" hidden><small>MCP server của role (mọi session)</small><div class="mcp-choices"></div></div>
   </details>
   <small id="panel-saved" role="status"></small>
-  <p class="hint">Plan: chỉ đọc (+ web) · Đọc & sửa: duyệt từng lần ghi/sửa/shell · Lead/Dev/VFX/QA luôn được chạy lệnh shell (hỏi từng lần, Bypass không hỏi) · Auto: CLI tự xét, chỉ hỏi khi cần · Web luôn hỏi từng lần · Bypass: không duyệt, không có web; chỉ hỏi trước lượt khi thư mục ở ổ hệ thống, ổ hồ sơ người dùng hoặc thư mục mạng · Tự lưu khi rời ô.</p>
+  <p class="hint">Plan: chỉ đọc (+ web) · Đọc & sửa: duyệt từng lần ghi/sửa/shell · Lead/Dev/VFX/Art/QA luôn được chạy lệnh shell (hỏi từng lần, Bypass không hỏi) · Auto: CLI tự xét, chỉ hỏi khi cần · Web luôn hỏi từng lần · Bypass: không duyệt, không có web; chỉ hỏi trước lượt khi thư mục ở ổ hệ thống, ổ hồ sơ người dùng hoặc thư mục mạng · Tự lưu khi rời ô.</p>
 </aside>
 <div id="session-menu" class="menu" role="menu" hidden></div>
 <dialog id="naming"><form id="name-form"><h2 id="name-label"></h2><input id="new-name" required><textarea id="request-editor" maxlength="12000" hidden></textarea><div><button type="button" id="cancel-name">Hủy</button><button class="primary">Lưu</button></div></form></dialog>

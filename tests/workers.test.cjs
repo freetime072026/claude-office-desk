@@ -35,8 +35,8 @@ test('AC-ROLE-03.1/03.2/03.3: insert by pipeline, keep active role, log skipped 
   assert(thread.messages.some(message => message.text === 'Đã thêm GD; bỏ qua ở vòng này'));
 });
 test('AC-ROLE-03.1: custom roles stay after QA; unstarted session starts from first role', () => {
-  const { team, id, thread } = session(['QA']); update(team, 'assign-role', { id, name: 'Art' }); update(team, 'add-worker', { id, type: 'GD' });
-  assert.deepEqual(thread.flow, ['GD', 'QA', 'Art']); assert.equal(thread.stage, 0);
+  const { team, id, thread } = session(['QA']); update(team, 'assign-role', { id, name: 'Sound' }); update(team, 'add-worker', { id, type: 'GD' });
+  assert.deepEqual(thread.flow, ['GD', 'QA', 'Sound']); assert.equal(thread.stage, 0);
 });
 test('AC-ROLE-04.2: a second Lead Dev is rejected', () => {
   const { team, id } = session(['Lead Dev']);

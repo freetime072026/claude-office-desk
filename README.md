@@ -48,6 +48,33 @@ Rút ra từ một session BaseTD tốn $8: một task Dev 17 tệp chạy hết
 
 Thêm bằng **＋ Role → + VFX** (thêm nhiều lần thành VFX #2…). VFX là Dev chuyên hiệu ứng: đứng sau Dev, trước QA; Lead Dev giao task cho VFX trong cùng khối tasks với `files` riêng (ví dụ `Assets/VFX/`, `Assets/Shaders/`), không chồng tệp với Dev nên chạy song song với Dev; QA chỉ bắt đầu khi cả Dev và VFX của vòng đã xong. VFX chỉ đọc mục **VFX** trong GDD (GD ghi: hiệu ứng nào, cho sự kiện nào, cảm giác mong muốn, ảnh tham chiếu) và chỉ sửa tệp được giao. Prompt yêu cầu ưu tiên shader viết bằng code, tạo/sửa prefab, material, VFX Graph bằng script Editor thay vì sửa YAML/GUID tay. Claude không nhìn thấy hiệu ứng chạy: handoff của VFX ghi cách xem và cần kiểm tra trực quan gì; gửi kèm ảnh chụp (dán/kéo vào chat) để VFX chỉnh tiếp. QA pha performance đo thêm số particle, overdraw, draw call. Model mặc định Sonnet, giới hạn 60 lượt tool mỗi lượt chat.
 
+## Role Art và MCP theo role
+
+Thêm bằng **＋ Role → + Art** (thêm nhiều lần thành Art #2…). Art là Dev chuyên ảnh 2D (sprite, icon, ảnh UI): đứng sau Dev/VFX, trước QA; Lead Dev giao task cho Art trong cùng khối tasks với `files` riêng (ví dụ `ArtGen/icons/`, `Assets/_Art/`), không chồng tệp với Dev nên chạy song song. Art đọc mục **Art** trong GDD (GD ghi: ảnh nào, ID, kích thước, phong cách, ảnh tham chiếu) và màn hình liên quan trong UIUX.md, chỉ sửa tệp được giao. Prompt yêu cầu sinh/sửa ảnh bằng script hoặc pipeline art có sẵn của project (tra README/docs trước) hoặc tool MCP sinh ảnh nếu role được bật, không ghi byte ảnh bằng tay; import setting/atlas/prefab sửa bằng script Editor; sau khi sinh thì Read ảnh để tự kiểm. Handoff ghi kích thước, pivot, nơi dùng, cách sinh lại và ảnh cần bạn xem. Model mặc định Sonnet, giới hạn 40 lượt tool mỗi lượt chat. Bị chặn vì cần tệp ngoài phạm vi thì handoff có `"reassign": true` và app chuyển Lead giao lại như Dev.
+
+**Công cụ sinh ảnh.** Hai cách: (1) script trong project (ví dụ `art/scripts/gen_sprite.py` gọi ComfyUI/Stable Diffusion local hoặc API cloud), ghi cách dùng vào docs/README để Art tìm thấy, chạy bằng Bash qua hộp duyệt của app; API key để trong biến môi trường hoặc `.env` (app chặn Read `.env`); (2) MCP server sinh ảnh khai báo bằng `/mcp open`.
+
+**MCP theo role (US-08).** Mỗi loại role chỉ nạp MCP server được tích ở mục **Trách nhiệm & yêu cầu riêng → MCP server của role** (áp dụng cho mọi session và mọi khối cùng loại, ví dụ Art và Art #2); mặc định role không nạp MCP nào, chat thường nạp tất cả. Mỗi lượt của role nhận một tệp `--mcp-config` riêng chỉ gồm các server đó (xoá sau lượt), nên schema tool MCP không nằm trong ngữ cảnh của role không dùng. `/mcp` cho biết khối đang chọn nạp những server nào. Lưu ý: tệp do MCP server tự ghi không đi qua kiểm phạm vi tệp của app.
+
+## Role Art Director
+
+Thêm bằng **＋ Role → + Art Director** (một khối mỗi session, như Lead Dev). Art Director giữ style và chất lượng hình ảnh; có hai pha, mỗi pha là một nút trên sơ đồ:
+
+- **Pha duyệt và giao Art** (sau UI/UX, trước Lead lập kế hoạch):
+  1. **Duyệt mockup UI/UX**: vị trí, kích thước item (px, anchor), phân cấp thị giác, khớp STYLE.md. Chưa đạt thì handoff `reject` nêu từng SCR-… cần sửa; app chuyển lại UI/UX kèm lý do (tối đa 2 lần mỗi vòng, quá thì dừng chờ bạn).
+  2. **Doc chi tiết ảnh** `.office-desk/<session>/ART.md`: GD ghi popup/màn gồm những item gì; Art Director ghi mỗi ảnh/màn/popup một mục **ART-…** (gắn SCR-… hoặc item trong GDD): cách vẽ, khung, decor, hoạ tiết, bảng màu (hex), kích thước px, pivot, 9-slice, trạng thái, ảnh tham chiếu, dùng lại tài nguyên common hay vẽ mới, đường dẫn tệp đích.
+  3. **Style guide và tài nguyên** (dùng chung mọi session của project): `.office-desk/STYLE.md` (style guide đo được, ngân sách texture: kích thước tối đa, nén, atlas) và `.office-desk/ASSETS.md` (UI/icon common: đường dẫn, dùng ở đâu; quy ước thư mục theo feature, đặt tên).
+  4. **Giao task cho Art** bằng khối `tasks` như Lead: mỗi task ghi ID ART-…, yêu cầu chi tiết, `files` riêng. Khi session có Art Director, Lead chỉ giao Dev/VFX (app từ chối Lead giao Art); task Art do Art Director giao được giữ khi Lead lập kế hoạch, và tệp của Dev không được chồng tệp của Art.
+- **Pha review** (song song với QA, sau vòng Dev/VFX/Art): kiểm ảnh vừa làm bằng Read và UI trong game bằng ảnh chụp Play Mode (qua Unity-Skills nếu có): lệch style, lỗi visual (cắt mép, viền/halo, nền không trong suốt, mờ, sai pivot/9-slice, sai vị trí/kích thước so với UIUX.md), chất lượng và tối ưu (kích thước/nén texture theo ngân sách, atlas, ảnh trùng nên dùng common, ảnh sai thư mục common/feature, import setting). Chỉ kiểm phần đã đổi, trừ khi bạn yêu cầu audit.
+  - `pass` → Lead review (Lead review chờ **cả QA và Art Director** pass).
+  - `reject` kèm khối `tasks` → Art làm lại; QA và Art Director review chạy lại sau đó (tối đa 2 lần mỗi vòng).
+  - `issue` (lỗi visual do code/layout của Dev) → ghi Issue `[Visual · Art Director]` và chuyển Lead triage.
+  - QA hoặc Art Director báo issue/reject thì Lead review đang chờ bị bỏ khỏi hàng chờ, không chạy trên phần đang sửa.
+
+Art Director chỉ được ghi STYLE.md, ASSETS.md, ART.md, ISSUES.md (không sửa ảnh, không viết code), có shell để chụp màn hình/kiểm import. Art đọc STYLE.md, ASSETS.md và mục ART-… của task; UI/UX ghi vị trí, kích thước từng item để Art Director duyệt. Muốn audit toàn game: chọn khối Art Director và nhắn yêu cầu (ví dụ "audit UI màn hình chính"), rồi gửi Lead/Art Director giao sửa. Bảng tệp session có thêm nút Style, Assets, Art.
+
+Giới hạn: Art Director chỉ nhìn ảnh tĩnh (lỗi chuyển động cần QA đo hoặc bạn xem); "đúng style" đáng tin khi STYLE.md có tiêu chí đo được và ảnh tham chiếu chuẩn; mỗi ảnh chụp tốn khoảng một đến vài nghìn token.
+
 ## Ảnh tham chiếu trong chat
 
 Dán ảnh (Ctrl+V, ví dụ ảnh chụp màn hình) vào ô chat hoặc kéo thả ảnh vào cửa sổ: ảnh hiện thành thumbnail phía trên ô nhập, bấm × để bỏ, bấm ảnh để xem lớn. Nhận PNG, JPEG, WebP, GIF, tối đa 20 MB mỗi ảnh và 8 ảnh mỗi tin; định dạng kiểm bằng nội dung tệp, không theo đuôi. Clipboard có cả chữ (ví dụ copy từ Word) thì chữ vẫn được dán vào ô nhập.
