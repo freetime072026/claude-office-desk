@@ -44,7 +44,7 @@ const HANDOFF_GUIDES = {
   GD: HANDOFF_FORMAT + ' {"status":"done","summary":"tóm tắt thiết kế đã chốt"} khi không còn câu hỏi cần người dùng trả lời; nếu còn câu hỏi thì {"status":"blocked","summary":"các câu hỏi"}.',
   Dev: HANDOFF_FORMAT + ' {"status":"done","summary":"Tệp mới: mỗi tệp một dòng kèm vai trò và API chính (để Lead ghi vào bản đồ project); Tệp sửa: tệp và lý do; lệnh đã chạy và cách kiểm"}; không làm được thì {"status":"blocked","summary":"lý do"}.' + REASSIGN_GUIDE,
   VFX: HANDOFF_FORMAT + ' {"status":"done","summary":"Tệp mới: mỗi tệp một dòng kèm vai trò; Tệp sửa: tệp và lý do; cách xem hiệu ứng (scene/prefab, thao tác), cần kiểm tra trực quan gì, chi phí ước tính (particle, overdraw, draw call)"}; không làm được thì {"status":"blocked","summary":"lý do"}.' + REASSIGN_GUIDE,
-  QA: HANDOFF_FORMAT + ' {"status":"pass","summary":"kết quả và evidence","retested":[{"id":"ID Issue đã kiểm lại","evidence":"bằng chứng"}]} khi mọi AC đạt, hoặc {"status":"issue","summary":"lỗi, bước tái hiện, expected/actual"}. Chưa chạy được thì {"status":"blocked","summary":"lý do"}.',
+  QA: HANDOFF_FORMAT + ' {"status":"pass","summary":"kết quả và evidence","retested":[{"id":"ID Issue đã kiểm lại","evidence":"bằng chứng"}]} khi mọi AC đạt, hoặc {"status":"issue","summary":"lỗi, bước tái hiện, expected/actual"}. Chưa kiểm được vì project thiếu công cụ mà Dev làm được (lệnh debug, script đo, test hook) thì {"status":"blocked","reassign":true,"summary":"AC/ngân sách chưa kiểm được, công cụ cần có và cách dùng mong muốn"}: app chuyển Lead giao Dev làm rồi QA kiểm lại. Thiếu thứ chỉ người dùng có (thiết bị thật, quyền, tài khoản) thì {"status":"blocked","summary":"lý do"}, không có reassign.',
   review: HANDOFF_FORMAT + ' {"status":"pass","summary":"kết luận review"} hoặc {"status":"reject","summary":"mục không đạt kèm file:line"}; khi reject, kèm thêm khối ```tasks như pha planning để giao Dev sửa.',
   other: HANDOFF_FORMAT + ' {"status":"done","summary":"tóm tắt bàn giao"} hoặc {"status":"blocked","summary":"lý do cần người dùng"}.'
 };
@@ -80,7 +80,7 @@ function briefLines(options) {
 function turnLines(options) {
   if (!options.label) return [];
   const rejected = options.lead && options.phase !== 'review' && options.planProblems ? `Kế hoạch tasks trước bị app từ chối: ${options.planProblems}. Sửa đúng lỗi này.` : '';
-  const reassign = options.lead && options.phase !== 'review' && options.reassign?.length ? 'Dev bị chặn cần giao lại (lập kế hoạch sửa và giao cho khối phù hợp, kể cả Dev khác):\n' + options.reassign.map(item => `- ${item.worker}: ${clip(item.summary, PROMPT_LIMITS.handoff)}`).join('\n') : '';
+  const reassign = options.lead && options.phase !== 'review' && options.reassign?.length ? 'Khối bị chặn cần giao lại (lập kế hoạch sửa hoặc làm công cụ còn thiếu, giao cho Dev/VFX phù hợp):\n' + options.reassign.map(item => `- ${item.worker}: ${clip(item.summary, PROMPT_LIMITS.handoff)}`).join('\n') : '';
   return [rejected, reassign, issueLines(options.type, options.issues || [])];
 }
 const latestHandoffs = (messages, flow) => flow.map(label => messages.findLast(message => authoredBy(message, label))).filter(Boolean);
