@@ -1,4 +1,4 @@
-const path = require('node:path');
+const fs = require('node:fs'); const path = require('node:path');
 const permissionMode = mode => ({ read: 'plan', edit: 'acceptEdits', auto: 'auto', bypass: 'bypassPermissions' })[mode] || 'plan';
 const validMode = mode => ['read', 'edit', 'auto', 'bypass'].includes(mode);
 const READ_TOOLS = 'Read,Glob,Grep';
@@ -11,11 +11,16 @@ function allowedFor(mode, mcpServers = []) {
   const base = mode === 'edit' ? WRITE_TOOLS : READ_TOOLS;
   return [base, ...mcpServers.map(name => 'mcp__' + name)].join(',');
 }
-const onSystemDrive = folder => /^c:/i.test(path.resolve(folder));
-// Bypass chỉ hỏi khi có thư mục ở ổ C; Đọc & sửa/Auto luôn hỏi; Plan không hỏi.
-function needsConfirm(mode, folders) {
+// realpath.native giải cả junction, ổ subst và ổ mạng đã map (trả về \\server\share) về đường dẫn thật.
+function realFolder(folder) { try { return fs.realpathSync.native(folder); } catch { return path.resolve(folder); } }
+const driveOf = value => /^[a-z]:/i.exec(value || '')?.[0].toLowerCase() || '';
+// Ổ cần bảo vệ: C, ổ cài Windows (SystemDrive) và ổ chứa hồ sơ người dùng (USERPROFILE).
+const protectedDrives = env => new Set(['c:', driveOf(env.SystemDrive), driveOf(env.USERPROFILE)].filter(Boolean));
+function onSystemDrive(folder, env = process.env) { const real = realFolder(folder); return real.startsWith('\\\\') || protectedDrives(env).has(driveOf(real)); }
+// Bypass chỉ hỏi khi có thư mục ở ổ được bảo vệ hoặc thư mục mạng; Đọc & sửa/Auto luôn hỏi; Plan không hỏi.
+function needsConfirm(mode, folders, env = process.env) {
   if (mode === 'read' || !validMode(mode)) return false;
-  if (mode === 'bypass') return folders.some(onSystemDrive);
+  if (mode === 'bypass') return folders.some(folder => onSystemDrive(folder, env));
   return true;
 }
 module.exports = { permissionMode, validMode, toolsFor, allowedFor, needsConfirm, onSystemDrive, READ_TOOLS, WRITE_TOOLS };

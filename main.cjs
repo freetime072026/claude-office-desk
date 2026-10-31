@@ -14,6 +14,9 @@ const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELIN
 const { rolePrompt } = require('./prompt.cjs');
 const { needsConfirm } = require('./modes.cjs');
 const pipeline = require('./pipeline.cjs');
+const { retryable } = require('./dispatch.cjs');
+// Thư mục đã chọn có thể bị xóa/đổi tên; trả false thay vì để ENOENT thô lọt ra giao diện.
+function isFolder(folder) { try { return fs.statSync(folder).isDirectory(); } catch { return false; } }
 const MCP_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 // Danh sách MCP server do người dùng khai báo trong mcp-servers.json (userData). Lỗi cú pháp được báo, không bỏ qua ngầm.
 function mcpServerNames() {
@@ -37,13 +40,27 @@ async function ensureAuth(id) {
   if (!existing) start(id, 'login');
   persist(); publish(); return { loginStarted: true };
 }
-function readUsage(id) { try { return normalizeUsage(JSON.parse(fs.readFileSync(path.join(profileDir(root, id), 'usage.json'), 'utf8'))); } catch { return null; } }
+// snapshot() chạy rất thường xuyên: chỉ đọc lại usage.json khi tệp đổi (mtime); normalize lại mỗi lần vì cờ cũ/hết hạn phụ thuộc thời gian.
+const usageCache = new Map();
+function readUsage(id) {
+  try {
+    const file = path.join(profileDir(root, id), 'usage.json'), { mtimeMs } = fs.statSync(file);
+    let cached = usageCache.get(id); if (cached?.mtimeMs !== mtimeMs) usageCache.set(id, cached = { mtimeMs, value: JSON.parse(fs.readFileSync(file, 'utf8')) });
+    return normalizeUsage(cached.value);
+  } catch { usageCache.delete(id); return null; }
+}
 let window, root, metadata, executable = '', settings, mcp;
 const sessions = new Map();
 const entry = pathToFileURL(path.join(__dirname, 'index.html')).href;
-function persist() { const target = path.join(root, 'workspace.json'); fs.writeFileSync(target + '.tmp', JSON.stringify(metadata, null, 2)); fs.renameSync(target + '.tmp', target); }
+// Gom các lần lưu liên tiếp (mỗi lượt chat, mỗi thao tác) thành một lần ghi; flushPersist() ghi ngay khi thoát app.
+let persistTimer = null;
+function flushPersist() { if (!persistTimer) return; clearTimeout(persistTimer); persistTimer = null; const target = path.join(root, 'workspace.json'); fs.writeFileSync(target + '.tmp', JSON.stringify(metadata)); fs.renameSync(target + '.tmp', target); }
+function persist() { persistTimer ||= setTimeout(flushPersist, 300); }
 function profile(id) { const found = metadata.profiles.find(item => item.id === id); if (!found) throw Error('Không tìm thấy hồ sơ'); return found; }
-function publish() { if (window && !window.isDestroyed()) window.webContents.send('state', snapshot()); }
+function publish() { clearTimeout(publishTimer); publishTimer = null; if (window && !window.isDestroyed()) window.webContents.send('state', snapshot()); }
+// Luồng stream gọi mỗi chunk; gửi trạng thái tối đa ~10 lần/giây thay vì mỗi chunk.
+let publishTimer = null;
+function publishSoon() { publishTimer ||= setTimeout(publish, 100); }
 function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
 function requireTrusted(event) { const allowed = [entry, pathToFileURL(path.join(__dirname, 'dashboard.html')).href]; if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !allowed.includes(event.senderFrame.url)) throw Error('Unauthorized'); }
 function start(profileId, kind, task) {
@@ -55,7 +72,7 @@ function start(profileId, kind, task) {
   fs.mkdirSync(directory, { recursive: true });
   if (fs.lstatSync(directory).isSymbolicLink() || fs.realpathSync(directory) !== path.resolve(directory)) throw Error('Thư mục hồ sơ không được là liên kết');
   const folder = kind === 'work' ? (task?.folder || item.folder) : directory;
-  if (!folder || !fs.statSync(folder).isDirectory()) throw Error('Chọn thư mục làm việc trước');
+  if (!folder || !isFolder(folder)) throw Error(folder ? 'Thư mục không tồn tại: ' + folder : 'Chọn thư mục làm việc trước');
   const usageFile = path.join(directory, 'usage.json');
   const localSettings = path.join(directory, 'office-settings.json');
   const policy = JSON.parse(fs.readFileSync(settings, 'utf8'));
@@ -65,7 +82,7 @@ function start(profileId, kind, task) {
   fs.writeFileSync(localSettings, JSON.stringify(policy));
   if (kind !== 'work') { try { fs.unlinkSync(usageFile); } catch {} }
   const args = kind === 'work' ? sessionArgs(localSettings, mcp) : ['auth', kind];
-  if (task) { const folders = foldersOf(task); for (const extra of folders) if (!fs.statSync(extra).isDirectory()) throw Error('Thư mục không tồn tại: ' + extra); args.push(...extraFolderArgs(folders)); }
+  if (task) { const folders = foldersOf(task); for (const extra of folders) if (!isFolder(extra)) throw Error('Thư mục không tồn tại: ' + extra); args.push(...extraFolderArgs(folders)); }
   if (task) { args.push('--session-id', task.runId, '--', task.prompt); }
   const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const encoded = Buffer.from(commandFor(executable, args), 'utf16le').toString('base64');
@@ -89,12 +106,13 @@ app.whenReady().then(() => {
     catch { dialog.showErrorBox('Không đọc được cấu hình', 'Hãy sao lưu và kiểm tra workspace.json trong ' + root); app.quit(); return; }
   }
   metadata.team ||= teamStore.initial();
-  for (const thread of metadata.team.threads) { teamStore.migrateThread(thread); delete thread.dispatchPumping; for (const task of thread.dispatch || []) if (['starting', 'running'].includes(task.status)) { task.status = 'blocked'; task.error = 'Ứng dụng đã đóng trong lúc chạy; kiểm tra kết quả trước khi thử lại'; } }
+  for (const thread of metadata.team.threads) { teamStore.migrateThread(thread); delete thread.dispatchPumping; delete thread.dispatchAgain; for (const task of thread.dispatch || []) if (['starting', 'running'].includes(task.status)) { task.status = 'blocked'; task.error = 'Ứng dụng đã đóng trong lúc chạy; kiểm tra kết quả trước khi thử lại'; } }
   settings = path.join(root, 'restricted-settings.json'); mcp = path.join(root, 'mcp-servers.json');
-  // 0.10: bật Shell (Bash) cho mode có sửa tệp; vẫn chặn đọc tệp bí mật phổ biến.
+  // 0.10: bật Shell (Bash) cho mode có sửa tệp. Deny Read(...) chỉ chặn tool Read/Grep/Glob; lệnh shell (vd. type .env) vẫn đọc được,
+  // nên chỉ mode Plan thực sự không đọc được các tệp này.
   fs.writeFileSync(settings, JSON.stringify({ disableAllHooks: true, enabledPlugins: {}, permissions: { defaultMode: 'default', deny: ['NotebookEdit', 'WebFetch', 'WebSearch', 'Agent', 'Task', 'Read(**/.env)', 'Read(**/.env.*)', 'Read(**/.credentials.json)', 'Read(**/*.pem)', 'Read(**/id_rsa)', 'Read(**/id_ed25519)'] } }));
   if (!fs.existsSync(mcp)) fs.writeFileSync(mcp, JSON.stringify({ mcpServers: {} }, null, 2));
-  const pumpThread = thread => teamStore.isHalted(thread) ? Promise.resolve() : require('./dispatch.cjs').pump(thread, task => handleDesk(null, 'chat-send', { id: thread.id, role: task.worker, text: 'Thực hiện task Lead giao:\n' + task.task, auto: true }), () => { persist(); publish(); });
+  const pumpThread = thread => teamStore.isHalted(thread) ? Promise.resolve() : require('./dispatch.cjs').pump(thread, task => handleDesk(null, 'chat-send', { id: thread.id, role: task.worker, text: getWorker(thread, task.worker).task === task.task ? 'Thực hiện task Lead giao ở mục "Task của khối".' : 'Thực hiện task Lead giao:\n' + task.task, auto: true }), () => { persist(); publish(); });
   const isRunning = (thread, label) => chats.has(runKey(thread.id, label));
   async function approveAuto(thread) {
     const folders = foldersOf(thread);
@@ -147,7 +165,7 @@ app.whenReady().then(() => {
       const activeKey = runKey(thread.id, payload.role);
       const content = payload.text?.trim(); if (!content || content.length > 12000) throw Error('Nhập yêu cầu tối đa 12000 ký tự');
       // Lệnh slash xử lý cục bộ nên vẫn dùng được khi khối đang trả lời (ví dụ /role Dev pause).
-      if (!content.startsWith('/')) { if (chats.has(activeKey)) throw Error('Khối này đang trả lời. Khối khác vẫn có thể chạy.'); if (chats.size >= 8) throw Error('Tối đa 8 phiên chat'); }
+      if (!content.startsWith('/')) { if (chats.has(activeKey)) throw retryable('Khối này đang trả lời. Khối khác vẫn có thể chạy.'); if (chats.size >= 8) throw retryable('Tối đa 8 phiên chat'); }
       const localReply = text => { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); thread.messages.push({ role: 'Hệ thống', text, time: new Date().toISOString() }); persist(); publish(); return true; };
       if (content === '/help') return localReply('/role <khối> start|pause: chạy/tạm dừng một khối (vd. /role Lead Dev pause). /chot: chốt GD và chạy tự động các bước sau. /auto on|off: bật/tắt chạy tự động. /model: chọn model bên dưới. /status: cấu hình session. /mcp, /mcp open: xem/sửa MCP server. /usage: quota đã nhận từ CLI. Lệnh tương tác khác dùng trong Terminal.');
       if (content.startsWith('/model')) return localReply('Model của khối hiện tại: ' + (worker.model || 'claude-opus-5-5') + '. Đổi bằng danh sách Model dưới ô chat.');
@@ -161,18 +179,26 @@ app.whenReady().then(() => {
       if (content === '/status') return localReply(`Hồ sơ: ${profile(metadata.activeProfileId || metadata.profiles[0]?.id).name}\nModel: ${thread.model || 'claude-opus-5-5'}\nMode: ${thread.mode || 'read'}\nTự động: ${thread.auto?.enabled ? 'bật' : 'tắt'}\nThư mục: ${foldersOf(thread).join(', ') || 'chưa chọn'}\nĐây là cấu hình app, không phải xác nhận đăng nhập của CLI.`);
       if (content === '/usage') { const usage = readUsage(metadata.activeProfileId || metadata.profiles[0]?.id); return localReply(usage ? JSON.stringify(usage, null, 2) : 'CLI chưa gửi snapshot quota. Đăng nhập không tạo usage. Dùng Xem usage chính thức trong menu tài khoản để xem trực tiếp tại CLI.'); }
       if (content.startsWith('/')) return localReply('Lệnh này chưa hỗ trợ trong chat. Dùng terminal Claude Code để chạy lệnh tương tác.');
-      if (event) require('./path-input.cjs').adoptPaths(thread, content);
+      // Đường dẫn trong tin nhắn đổi phạm vi thư mục: ghi rõ vào hội thoại để không đổi ngầm.
+      let folderNote = '';
+      if (event) {
+        const before = foldersOf(thread), refused = []; require('./path-input.cjs').adoptPaths(thread, content, refused);
+        const after = foldersOf(thread), added = after.filter(folder => !before.some(item => item.toLowerCase() === folder.toLowerCase()));
+        const lines = [added.length ? 'Đã cấp thêm thư mục từ tin nhắn: ' + added.join(', ') : '', after[0] && after[0] !== before[0] ? 'Thư mục chính: ' + after[0] : '', refused.length ? 'Không tự cấp thư mục hệ thống/gốc ổ đĩa: ' + refused.join(', ') + '. Dùng Thêm thư mục nếu thật sự cần.' : ''];
+        folderNote = lines.filter(Boolean).join('\n');
+      }
       if (!thread.folder) throw Error('Chưa tìm thấy thư mục hợp lệ. Gửi đường dẫn tuyệt đối hiện có hoặc chọn thư mục.');
       persist(); publish();
-      for (const folder of foldersOf(thread)) if (!fs.statSync(folder).isDirectory()) throw Error('Thư mục không tồn tại');
+      for (const folder of foldersOf(thread)) if (!isFolder(folder)) throw Error('Thư mục không tồn tại: ' + folder + '. Bỏ thư mục này hoặc chọn lại.');
       const profileId = worker.profileId || metadata.activeProfileId || metadata.profiles[0]?.id; profile(profileId);
       if (!executable || !fs.existsSync(executable)) throw Error('Chọn Claude Code và đăng nhập tại quản lý tài khoản');
       const auth = await ensureAuth(profileId); if (auth.loginStarted) return auth;
-      // Bypass chỉ hỏi khi có thư mục ở ổ C; lượt do bộ tự động/điều phối gửi đã được duyệt một lần khi bật tự động.
-      const autoApproved = Boolean(payload.auto && thread.auto?.enabled && thread.auto.approvedAt);
-      if (worker.mode !== 'read') { if (editOverlap(thread)) throw Error('Có Dev đang sửa cùng thư mục. Đợi lượt đó xong để tránh ghi đè; các lượt chỉ đọc vẫn chạy song song.'); if (needsConfirm(worker.mode, foldersOf(thread)) && !autoApproved) { const answer = await dialog.showMessageBox(window, { type: 'warning', message: worker.mode === 'bypass' ? 'Bypass trên ổ C: bỏ duyệt thao tác tệp và lệnh shell trong lượt này?' : 'Cho phép ' + (payload.role || 'Claude') + ' đọc/sửa tệp và chạy lệnh shell cho yêu cầu này?', detail: foldersOf(thread).join('\n'), buttons: ['Hủy', 'Cho phép lần này'], defaultId: 0, cancelId: 0 }); if (answer.response !== 1) return false; } }
-      if (chats.has(activeKey)) throw Error('Khối đang trả lời');
-      if (worker.mode !== 'read' && editOverlap(thread)) throw Error('Một lượt sửa đã bắt đầu trong lúc xác nhận; hãy đợi để tránh ghi đè.');
+      // Bypass chỉ hỏi khi có thư mục ở ổ hệ thống/ổ hồ sơ người dùng hoặc thư mục mạng (modes.cjs); lượt do bộ tự động/điều phối gửi đã được duyệt một lần khi bật tự động.
+      // Duyệt một lần chỉ còn hiệu lực khi mode các khối và thư mục giữ nguyên như lúc bật tự động.
+      const autoApproved = Boolean(payload.auto && thread.auto?.enabled && thread.auto.approvedAt && thread.auto.scope === pipeline.approvalScope(thread));
+      if (worker.mode !== 'read') { if (editOverlap(thread)) throw retryable('Có Dev đang sửa cùng thư mục. Đợi lượt đó xong để tránh ghi đè; các lượt chỉ đọc vẫn chạy song song.'); if (needsConfirm(worker.mode, foldersOf(thread)) && !autoApproved) { const answer = await dialog.showMessageBox(window, { type: 'warning', message: worker.mode === 'bypass' ? 'Bypass trên ổ hệ thống hoặc thư mục mạng: bỏ duyệt thao tác tệp và lệnh shell trong lượt này?' : 'Cho phép ' + (payload.role || 'Claude') + ' đọc/sửa tệp và chạy lệnh shell cho yêu cầu này?', detail: foldersOf(thread).join('\n'), buttons: ['Hủy', 'Cho phép lần này'], defaultId: 0, cancelId: 0 }); if (answer.response !== 1) return false; } }
+      if (chats.has(activeKey)) throw retryable('Khối đang trả lời');
+      if (worker.mode !== 'read' && editOverlap(thread)) throw retryable('Một lượt sửa đã bắt đầu trong lúc xác nhận; hãy đợi để tránh ghi đè.');
       const directory = profileDir(root, profileId); fs.mkdirSync(directory, { recursive: true });
       const policy = JSON.parse(fs.readFileSync(settings, 'utf8')); policy.disableAllHooks = true;
       const chatSettings = path.join(directory, 'chat-settings.json'); fs.writeFileSync(chatSettings, JSON.stringify(policy));
@@ -180,8 +206,9 @@ app.whenReady().then(() => {
       const { text: prompt } = rolePrompt(metadata.team, thread, payload.role, { content, resumed });
       const mcpServers = mcpServerNames();
       if (payload.auto) thread.messages.push({ role: 'Điều phối', text: content, time: new Date().toISOString() }); else teamStore.update(metadata.team, 'message', { id: thread.id, text: content });
+      if (folderNote) thread.messages.push({ role: 'Hệ thống', text: folderNote, time: new Date().toISOString() });
       const runThread = { ...thread, mode: worker.mode, model: worker.model, cliSessions: thread.cliSessions ||= {} };
-      const run = chatEngine.launch({ executable, directory, settings: chatSettings, mcp, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish }); run.mode = worker.mode; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
+      const run = chatEngine.launch({ executable, directory, settings: chatSettings, mcp, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon }); run.mode = worker.mode; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
       run.message.profileId = profileId; run.message.model = worker.model;
       run.child.once('close', () => {
         chats.delete(activeKey);
@@ -257,9 +284,11 @@ if (action === 'team') { if (['remove-role', 'select-roles'].includes(payload.ac
     if (chats.size || [...sessions.values()].some(item => item.running)) { const response = dialog.showMessageBoxSync(window, { type: 'question', message: 'Đóng ứng dụng và dừng các phiên đang chạy?', buttons: ['Hủy', 'Dừng và đóng'], defaultId: 0, cancelId: 0 }); if (response !== 1) { event.preventDefault(); return; } }
     for (const run of chats.values()) run.cancel();
     for (const item of sessions.values()) item.terminal.kill();
+    flushPersist();
   });
   window.loadFile(path.join(__dirname, 'dashboard.html'));
   const usageTimer = setInterval(() => publish(), 10000); usageTimer.unref(); window.on('closed', () => clearInterval(usageTimer));
 });
 app.on('window-all-closed', () => app.quit());
+app.on('will-quit', () => { if (root) flushPersist(); });
 }

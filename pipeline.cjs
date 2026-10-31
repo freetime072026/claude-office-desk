@@ -3,12 +3,18 @@
 // Mọi thay đổi trạng thái team đi qua team.cjs (update) để giữ gate QA, giới hạn vòng và log.
 const { LEAD, ACTIVE_TASK, labelType, worker, taskPlan, openIssues } = require('./workers.cjs');
 const { isHalted } = require('./team.cjs');
+const { foldersOf } = require('./usage.cjs');
 const HANDOFF_STATUSES = Object.freeze(['done', 'blocked', 'issue', 'pass', 'reject']);
 const ROLE_VERBS = Object.freeze(['start', 'pause']);
 const SUMMARY_LIMIT = 4000;
 const TASK_LIMIT = 11000;
 const clipText = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
 const now = () => new Date().toISOString();
+// Phạm vi đã được duyệt khi bật tự động: mode từng khối + thư mục. Đổi mode/thư mục thì lượt tự động phải hỏi lại (main.cjs).
+function approvalScope(thread) {
+  const folders = foldersOf(thread).map(folder => folder.toLowerCase()).sort();
+  return JSON.stringify({ folders, modes: thread.flow.map(label => label + '=' + worker(thread, label).mode) });
+}
 
 function parseHandoff(text) {
   const blocks = [...String(text || '').matchAll(/```handoff\s*([\s\S]*?)```/g)]; if (!blocks.length) return null;
@@ -60,7 +66,7 @@ function createAutoRun(deps) {
 
   async function enable(thread, reason) {
     if (!(await approve(thread))) { note(thread, reason + ' Người dùng không xác nhận; giữ chạy thủ công.'); return false; }
-    thread.auto = { enabled: true, approvedAt: now() };
+    thread.auto = { enabled: true, approvedAt: now(), scope: approvalScope(thread) };
     note(thread, `${reason} Bật chạy tự động: ${thread.flow.slice(thread.stage).join(' → ')}.`); return true;
   }
   function disable(thread) { if (thread.auto) thread.auto.enabled = false; note(thread, 'Tắt chạy tự động; các lượt đang chạy vẫn tiếp tục tới khi xong.'); }
@@ -157,4 +163,4 @@ function createAutoRun(deps) {
   }
   return { after, runStage, chot, setAuto, enable };
 }
-module.exports = { parseHandoff, parseCommand, createAutoRun, fallbackTasks, freshDevTasks, HANDOFF_STATUSES };
+module.exports = { parseHandoff, parseCommand, createAutoRun, fallbackTasks, freshDevTasks, approvalScope, HANDOFF_STATUSES };

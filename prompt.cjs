@@ -83,7 +83,9 @@ function buildPrompt(input) {
   const lines = [...roleLines(options), ...past.lines, options.content, attachmentBlock(options.attachments)];
   return { text: lines.filter(Boolean).join('\n'), omitted: past.omitted };
 }
-const rosterOf = thread => thread.flow.map(label => label + ': ' + (thread.workers?.[label]?.task || 'chưa giao task')).join('\n');
+// Roster chỉ cần biết ai làm gì; task đầy đủ của khối đã nằm ở mục "Task của khối" nên ở đây cắt ngắn.
+const ROSTER_TASK_LIMIT = 160;
+const rosterOf = thread => thread.flow.map(label => label + ': ' + clip(thread.workers?.[label]?.task || 'chưa giao task', ROSTER_TASK_LIMIT)).join('\n');
 // Điểm vào duy nhất cho main.cjs: đọc trạng thái thread rồi gọi buildPrompt.
 function rolePrompt(team, thread, label, options) {
   return buildPrompt({ label, type: label ? labelType(thread, label) : '', issues: (thread.issues || []).filter(issue => !issue.closed && !issue.accepted), lead: Boolean(label) && labelType(thread, label) === LEAD, phase: thread.leadPhase || 'planning', round: thread.qaFailRounds || 0, context: label ? roleContext(team, thread, label) : {}, task: thread.workers?.[label]?.task || '', roster: rosterOf(thread), flow: thread.flow || [], messages: thread.messages || [], attachments: thread.attachments || [], ...options });
