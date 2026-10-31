@@ -143,7 +143,7 @@ app.whenReady().then(() => {
     catch { dialog.showErrorBox('Không đọc được cấu hình', 'Hãy sao lưu và kiểm tra workspace.json trong ' + root); app.quit(); return; }
   }
   metadata.team ||= teamStore.initial();
-  for (const thread of metadata.team.threads) { teamStore.migrateThread(thread); if (thread.flow?.length) require('./flowgraph.cjs').ensureGraph(thread); delete thread.dispatchPumping; delete thread.dispatchAgain; for (const task of thread.dispatch || []) if (['starting', 'running'].includes(task.status)) { task.status = 'blocked'; task.error = 'Ứng dụng đã đóng trong lúc chạy; kiểm tra kết quả trước khi thử lại'; } }
+  for (const thread of metadata.team.threads) { teamStore.migrateThread(thread); if (thread.flow?.length) require('./flowgraph.cjs').ensureGraph(thread); delete thread.dispatchPumping; delete thread.dispatchAgain; teamStore.recoverInterrupted(thread); }
   settings = path.join(root, 'restricted-settings.json'); mcp = path.join(root, 'mcp-servers.json');
   // 0.10: bật Shell (Bash) cho mode có sửa tệp. Deny Read(...) chỉ chặn tool Read/Grep/Glob; lệnh shell (vd. type .env) vẫn đọc được,
   // nên chỉ mode Plan thực sự không đọc được các tệp này.

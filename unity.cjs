@@ -51,35 +51,50 @@ function helperScript(info) {
 # Dùng:  bash .office-desk/${HELPER} GET /health
 #        bash .office-desk/${HELPER} GET '/skills/recommend?intent=console%20errors&topN=3'
 #        bash .office-desk/${HELPER} POST /skill/<tên> '<json>'
-# Việc lâu (test, build): UNITY_TIMEOUT=600 bash .office-desk/${HELPER} POST ...   Chờ Unity tối đa: UNITY_WAIT (giây, mặc định 180).
+#        bash .office-desk/${HELPER} wait-compile     (sau khi sửa xong các tệp .cs: chờ Unity compile + nạp lại, in lỗi compile)
+# Cả lệnh gói trong ~110 s (dưới giới hạn 120 s của Bash). Việc lâu (test, build): UNITY_TIMEOUT=600 và đặt timeout của Bash lớn hơn.
 PROJECT_KEY=${shellQuote(JSON.stringify(info.folder.replace(/\//g, '\\')).slice(1, -1))}
 PROJECT_NAME=${shellQuote(info.productName)}
 EXPECT=${shellQuote(encodeURIComponent(info.productName))}
 REGISTRY="\${UNITY_SKILLS_REGISTRY:-$HOME/.unity_skills/registry.json}"
 FIRST_PORT="\${UNITY_FIRST_PORT:-8090}"; LAST_PORT="\${UNITY_LAST_PORT:-8100}"
-WAIT="\${UNITY_WAIT:-180}"; TIMEOUT="\${UNITY_TIMEOUT:-120}"
+WAIT="\${UNITY_WAIT:-90}"; TIMEOUT="\${UNITY_TIMEOUT:-}"
 method="\${1:-GET}"; route="\${2:-/health}"; body="\${3:-}"
 case "$route" in /*) ;; *) route="/$route" ;; esac
 
-# Cổng trả /health đúng project và không đang compile/nạp lại thì dùng được.
+# Cổng trả /health đúng project và không đang compile/nạp lại thì dùng được; why giữ lý do lần dò cuối để báo khi hết giờ.
+why='chưa thấy Unity-Skills của project (Editor đóng hoặc server tắt)'
 ready() { local h; h=$(curl -s --max-time 3 "http://127.0.0.1:$1/health") || return 1
   printf '%s' "$h" | grep -qF "\\"projectName\\":\\"$PROJECT_NAME\\"" || return 1
-  printf '%s' "$h" | grep -qE '"(isCompiling|isUpdating|domainReloadPending)":true' && return 1; return 0; }
+  printf '%s' "$h" | grep -qE '"isCompiling":true' && { why='Unity đang compile'; return 1; }
+  printf '%s' "$h" | grep -qE '"isUpdating":true' && { why='Unity đang import asset'; return 1; }
+  printf '%s' "$h" | grep -qE '"domainReloadPending":true' && { why='Unity sắp nạp lại domain'; return 1; }; return 0; }
 # Khoá trong sổ đăng ký là đường dẫn JSON-escaped (E:\\\\Game); truyền qua ENVIRON vì awk -v tự xử lý dấu \\.
 registry_port() { [ -f "$REGISTRY" ] && KEY="\\"$PROJECT_KEY\\": {" awk 'index($0, ENVIRON["KEY"]) { found = 1 } found && /"port"/ { gsub(/[^0-9]/, ""); print; exit }' "$REGISTRY"; }
-find_port() { local p; p=$(registry_port); if [ -n "$p" ] && ready "$p"; then echo "$p"; return 0; fi
-  for p in $(seq "$FIRST_PORT" "$LAST_PORT"); do ready "$p" && { echo "$p"; return 0; }; done; return 1; }
-wait_port() { local start=$SECONDS p; while :; do p=$(find_port) && { echo "$p"; return 0; }
-  [ $((SECONDS - start)) -ge "$WAIT" ] && return 1; sleep 3; done; }
+# Gán PORT (không chạy trong subshell để giữ why). Cổng trong sổ đăng ký không trả lời thường là đang nạp lại domain.
+find_port() { local p; p=$(registry_port); if [ -n "$p" ]; then ready "$p" && { PORT=$p; return 0; }
+    curl -s --max-time 3 "http://127.0.0.1:$p/health" >/dev/null || why='Unity không trả lời (đang nạp lại domain, vào/ra Play Mode hoặc bị treo)'; fi
+  for p in $(seq "$FIRST_PORT" "$LAST_PORT"); do ready "$p" && { PORT=$p; return 0; }; done; return 1; }
+# WAIT tính từ lúc script bắt đầu (SECONDS), dùng chung cho mọi lần chờ trong một lệnh.
+wait_port() { while :; do find_port && return 0; [ "$SECONDS" -ge "$WAIT" ] && return 1; sleep 3; done; }
+not_ready() { echo "unity.sh: sau \${SECONDS}s Unity vẫn chưa sẵn sàng: $why. Unity ở nền vẫn tự compile/nạp lại (mỗi vòng thường dưới 1 phút): gọi lại đúng lệnh này. Nếu nhiều lần liền Unity không trả lời thì báo blocked, ghi rõ cần kiểm tra Unity." >&2; exit 3; }
 
-port=$(wait_port) || { echo "unity.sh: Unity-Skills của \\"$PROJECT_NAME\\" không sẵn sàng sau \${WAIT}s (Editor đóng, đang treo hoặc server tắt). Báo blocked, ghi rõ cần mở/khởi động lại Unity." >&2; exit 3; }
+# wait-compile: BackgroundAutoRefresh của project gom thay đổi rồi mới compile, nên chờ một nhịp rồi cần hai lần sẵn sàng
+# cách nhau vài giây (tránh khe giữa compile và nạp lại domain), sau đó hỏi kết quả compile gần nhất.
+if [ "$method" = wait-compile ]; then
+  sleep 3; wait_port || not_ready; sleep 4; wait_port || not_ready
+  method=POST; route=/skill/debug_check_compilation; body='{}'
+fi
+wait_port || not_ready
+port=$PORT
+[ -z "$TIMEOUT" ] && { TIMEOUT=$((110 - SECONDS)); [ "$TIMEOUT" -lt 15 ] && TIMEOUT=15; }
 url="http://127.0.0.1:$port$route"
 case "$route" in /skill/*|/skills/batch*) case "$route" in *\\?*) url="$url&expectProject=$EXPECT" ;; *) url="$url?expectProject=$EXPECT" ;; esac ;; esac
 send() { if [ -n "$body" ]; then curl -sS --max-time "$TIMEOUT" -X "$method" -H 'Content-Type: application/json' --data-binary "$body" "$url"
   else curl -sS --max-time "$TIMEOUT" -X "$method" "$url"; fi; }
 send; code=$?
 # Chưa kết nối được (mã 7) thì yêu cầu chưa tới Unity: chờ Unity sẵn sàng rồi gửi lại một lần.
-if [ "$code" = 7 ]; then port=$(wait_port) || exit 3; url=$(printf '%s' "$url" | sed "s#127.0.0.1:[0-9]*#127.0.0.1:$port#"); send; code=$?; fi
+if [ "$code" = 7 ]; then wait_port || not_ready; port=$PORT; url=$(printf '%s' "$url" | sed "s#127.0.0.1:[0-9]*#127.0.0.1:$port#"); send; code=$?; fi
 case "$code" in
   0) ;;
   28) echo "unity.sh: quá \${TIMEOUT}s chưa có kết quả. Unity có thể đang nạp lại (Play Mode/compile) và thao tác có thể đã chạy một phần: gọi GET /health rồi kiểm tra kết quả trước khi gọi lại; việc lâu thì tăng UNITY_TIMEOUT." >&2 ;;
@@ -100,7 +115,7 @@ function guide(info) {
   const head = `Project Unity ${info.version} ("${info.productName}"). Editor: ${info.editor || `chưa thấy bản ${info.version} trong Unity Hub`}.`;
   if (info.editorOpen && info.hasSkills) {
     const script = `bash "${helperPath(info.folder).replace(/\\/g, '/')}"`;
-    return `${head} Editor đang mở project này: KHÔNG chạy Unity.exe -batchmode trên project (bị khoá). Gọi Unity-Skills của Editor đang mở CHỈ qua ${script} <GET|POST> <đường dẫn> ['<json>'], không curl thẳng vào cổng: cổng có thể đổi mỗi lần Unity nạp lại domain (compile, vào/ra Play Mode); script tự lấy cổng hiện tại, chờ Unity sẵn sàng tới 3 phút, tự thêm expectProject và luôn có timeout (việc lâu như test/build: đặt UNITY_TIMEOUT=600 trước lệnh). Tìm skill: ${script} GET '/skills/recommend?intent=<từ khoá>&includeSchema=true&topN=3'; gọi: ${script} POST /skill/<tên> '<json>'; nhiều bước: POST /skills/batch.${info.skillsDoc ? ` Hướng dẫn skill: ${info.skillsDoc} (đọc theo đoạn khi cần).` : ''} Sau khi sửa C# hoặc vào/ra Play Mode, gọi GET /health qua script trước khi làm tiếp; sau khi sửa C# phải đọc lỗi console qua API trước khi báo done.${info.port ? '' : ' Lúc bắt đầu lượt API chưa trả lời (có thể đang nạp lại): script sẽ chờ; quá thời gian thì báo blocked.'}`;
+    return `${head} Editor đang mở project này: KHÔNG chạy Unity.exe -batchmode trên project (bị khoá). Gọi Unity-Skills của Editor đang mở CHỈ qua ${script} <GET|POST> <đường dẫn> ['<json>'], không curl thẳng vào cổng: cổng có thể đổi mỗi lần Unity nạp lại domain (compile, vào/ra Play Mode); script tự lấy cổng hiện tại, chờ Unity sẵn sàng, tự thêm expectProject và gói cả lệnh trong ~110 giây cho vừa giới hạn 120 giây của Bash (việc lâu như test/build: đặt UNITY_TIMEOUT=600 trước lệnh và đặt timeout của Bash 660000). Script báo "chưa sẵn sàng" (Unity đang compile/nạp lại) thì gọi lại đúng lệnh đó, không chuyển lệnh sang chạy nền. Tìm skill: ${script} GET '/skills/recommend?intent=<từ khoá>&includeSchema=true&topN=3'; gọi: ${script} POST /skill/<tên> '<json>'; nhiều bước: POST /skills/batch.${info.skillsDoc ? ` Hướng dẫn skill: ${info.skillsDoc} (đọc theo đoạn khi cần).` : ''} Unity tự compile khi tệp .cs đổi, kể cả lúc ở nền (mỗi vòng compile + nạp lại thường dưới 1 phút; không cần focus). Sửa xong mọi tệp .cs của task rồi mới gọi Unity, không gọi sau từng lần lưu; sau đó chạy ${script} wait-compile: lệnh chờ compile xong và in kết quả compile gần nhất (finishedAtUtc phải sau lần sửa cuối; lỗi ở tệp của Dev khác thì ghi vào handoff, không sửa tệp ngoài phạm vi). Không vào Play Mode khi compile chưa sạch; vào/ra Play Mode xong gọi GET /health qua script trước khi làm tiếp. Phải đọc lỗi compile/console qua API trước khi báo done.${info.port ? '' : ' Lúc bắt đầu lượt API chưa trả lời (có thể đang nạp lại): script sẽ chờ; quá thời gian thì báo blocked.'}`;
   }
   if (info.editorOpen) return `${head} Editor đang mở project này nên Unity dòng lệnh bị khoá và project chưa cài Unity-Skills. Không điều khiển được Editor thì báo blocked, ghi rõ bước cần người dùng làm trong Editor.`;
   if (!info.editor) return `${head} Editor đang đóng và chưa tìm thấy Unity.exe: báo blocked, nêu cần cài Unity ${info.version}.`;

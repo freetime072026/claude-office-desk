@@ -60,3 +60,7 @@ test('plain chat and terminal runs: no role header; history can be disabled; att
   assert.equal(buildPrompt({ content: 'Chạy', history: false, attachments }).text, 'Chạy\nẢnh tham chiếu đính kèm tin này, dùng Read để xem:\nC:\\img\\a.png (a.png)');
   assert.equal(buildPrompt({ label: null, content: 'Chạy', history: false }).text, 'Chạy');
 });
+test('Lead planning prompt asks for parallel Devs and limits dependsOn to real results', () => {
+  const text = buildPrompt({ label: 'Lead Dev', type: 'Lead Dev', lead: true, phase: 'planning', content: 'x' }).text;
+  assert.match(text, /Ưu tiên cho các Dev chạy song song/); assert.match(text, /Không xếp chuỗi A→B→C/);
+});

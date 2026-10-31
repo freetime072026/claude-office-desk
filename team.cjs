@@ -95,6 +95,13 @@ function moveSessions(thread, from, to) {
   for (const key of Object.keys(thread.cliSessions || {})) if (ownsSession(key, from)) thread.cliSessions[key.slice(0, -from.length) + to] ||= thread.cliSessions[key];
 }
 // AC-ROLE-04.3: gộp Lead Planning/Lead Review (≤ 0.8) thành một khối Lead Dev, giữ cấu hình và phiên CLI của Lead Planning.
+// Lúc mở app không còn tiến trình CLI nào của lần trước: task và tin đang chạy dở bị đóng lại, nếu không UI vẫn coi khối
+// đang chạy (tin "đang nghĩ" treo mãi cạnh lượt chạy mới).
+const INTERRUPTED = 'Ứng dụng đã đóng trong lúc chạy; kiểm tra kết quả trước khi thử lại';
+function recoverInterrupted(thread) {
+  for (const task of thread.dispatch || []) if (['starting', 'running'].includes(task.status)) { task.status = 'blocked'; task.error = INTERRUPTED; }
+  for (const message of thread.messages || []) if (message.streaming) { message.streaming = false; message.error = true; message.text = (message.text ? message.text + '\n\n' : '') + '[Bị ngắt: ' + INTERRUPTED + ']'; delete message.deltaSeen; }
+}
 function migrateThread(thread) {
   if (!Array.isArray(thread.flow) || !thread.flow.some(label => LEGACY_LEAD.includes(label))) return false;
   const [planning, review] = LEGACY_LEAD, active = thread.flow[thread.stage], workers = thread.workers ||= {};
@@ -155,4 +162,4 @@ function update(team, action, payload) {
   else throw Error('Thao tác không hợp lệ');
   return true;
 }
-module.exports = { initial, update, migrateThread, isHalted };
+module.exports = { initial, update, migrateThread, recoverInterrupted, isHalted };

@@ -76,5 +76,16 @@ test('unity.sh waits while Unity is reloading, and gives a clear blocked message
   const late = http.createServer((request, response) => response.end(JSON.stringify({ status: 'ok', projectName: 'Purrge!' }))).listen(port, '127.0.0.1');
   try { const result = await waiting; assert.equal(result.code, 0); assert.match(result.out, /Purrge!/); } finally { late.close(); }
   const gone = await helperFor(port, { UNITY_WAIT: '1' })(['GET', '/health']);
-  assert.equal(gone.code, 3); assert.match(gone.err, /không sẵn sàng sau 1s[\s\S]*Báo blocked/);
+  assert.equal(gone.code, 3); assert.match(gone.err, /chưa sẵn sàng: Unity không trả lời[\s\S]*gọi lại đúng lệnh này[\s\S]*báo blocked/);
+});
+test('unity.sh wait-compile waits for compile to finish, names the reason on timeout, then asks for compile results', { skip: noBash, timeout: 40000 }, async () => {
+  let compiling = true; const calls = [];
+  const server = await new Promise(resolve => { const it = http.createServer((request, response) => { calls.push(request.method + ' ' + request.url); response.end(request.url === '/health' ? JSON.stringify({ projectName: 'Purrge!', compilation: { isCompiling: compiling } }) : JSON.stringify({ result: { lastCompilation: { succeeded: true } } })); }); it.listen(0, '127.0.0.1', () => resolve(it)); });
+  try {
+    const slow = await helperFor(server.address().port, { UNITY_WAIT: '1' })(['wait-compile']);
+    assert.equal(slow.code, 3); assert.match(slow.err, /Unity đang compile/);
+    setTimeout(() => { compiling = false; }, 2000);
+    const done = await helperFor(server.address().port, { UNITY_WAIT: '30' })(['wait-compile']);
+    assert.equal(done.code, 0); assert.match(done.out, /succeeded/); assert(calls.includes('POST /skill/debug_check_compilation?expectProject=Purrge!'));
+  } finally { server.close(); }
 });

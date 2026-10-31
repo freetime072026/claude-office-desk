@@ -120,3 +120,10 @@ test('AC-ROLE-04.3 (TC-MIG-01): legacy Lead Planning/Lead Review migrate to one 
   assert.equal(migrateThread(planning), false);
 });
 test('empty session defaults to ordinary Claude Code and names from first message', () => { const team = initial(); const id = update(team, 'create', {}); assert.equal(team.threads[0].title, 'Session mới'); assert.deepEqual(team.threads[0].flow, []); update(team, 'message', { id, text: 'Tạo màn hình đăng nhập' }); assert.equal(team.threads[0].title, 'Tạo màn hình đăng nhập'); update(team, 'message', { id, text: 'Second' }); assert.equal(team.threads[0].title, 'Tạo màn hình đăng nhập'); update(team, 'assign-role', { id, name: 'GD' }); assert.deepEqual(team.threads[0].flow, ['GD']); assert.throws(() => update(team, 'move', { id, project: 'unknown' })); });
+test('startup closes runs left from a previous app process', () => {
+  const thread = { dispatch: [{ worker: 'Dev #2', status: 'running' }, { worker: 'Dev', status: 'finished' }], messages: [{ role: 'Dev #2', text: '', streaming: true }, { role: 'Dev', text: 'xong', streaming: false }] };
+  require('../team.cjs').recoverInterrupted(thread);
+  assert.deepEqual(thread.dispatch.map(task => task.status), ['blocked', 'finished']);
+  assert.equal(thread.messages[0].streaming, false); assert.equal(thread.messages[0].error, true); assert.match(thread.messages[0].text, /Bị ngắt/);
+  assert.deepEqual(thread.messages[1], { role: 'Dev', text: 'xong', streaming: false });
+});
