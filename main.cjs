@@ -16,6 +16,7 @@ const { needsConfirm, needsTurnConfirm, ALWAYS_ASK } = require('./modes.cjs');
 const { describeTool, decide, roleScope, scopesOverlap } = require('./permissions.cjs');
 const sessionFiles = require('./session-files.cjs');
 const attachments = require('./attachments.cjs');
+const unity = require('./unity.cjs');
 const { FILE_ROLES } = require('./prompt.cjs');
 const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
@@ -265,7 +266,9 @@ app.whenReady().then(() => {
       const resumed = resume && Boolean(thread.cliSessions?.[sessionKey]);
       // Ảnh đang soạn đi kèm đúng tin này của người dùng (lượt tự động không lấy ảnh đang soạn) rồi gắn vào tin đã gửi.
       const images = payload.auto ? [] : attachments.take(thread);
-      const { text: prompt } = rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images });
+      // Project Unity: khối chạy lệnh được biết Editor có đang mở project không và cách gọi Unity (unity.cjs; kiểm /health ~0,6 s).
+      const unityGuide = payload.role && SHELL_TYPES.includes(worker.type) ? unity.guide(await unity.context(thread.folder)) : '';
+      const { text: prompt } = rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide });
       const mcpServers = mcpServerNames();
       if (payload.auto) thread.messages.push({ role: 'Điều phối', text: content, time: new Date().toISOString() }); else { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); if (images.length) thread.messages.at(-1).attachments = images; }
       if (folderNote) thread.messages.push({ role: 'Hệ thống', text: folderNote, time: new Date().toISOString() });

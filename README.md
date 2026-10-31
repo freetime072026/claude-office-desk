@@ -1,5 +1,15 @@
 # Office Desk — Windows 11
 
+## Tự phát hiện project Unity
+
+Khi thư mục chính của session là project Unity (có `ProjectSettings/ProjectVersion.txt`), trước mỗi lượt của Lead Dev, Dev, VFX, QA app kiểm và chèn vào prompt một đoạn ngắn: phiên bản Unity, đường dẫn `Unity.exe` đúng phiên bản trong Unity Hub, Editor có đang mở project không (`Temp/UnityLockfile`), và cách gọi Unity phù hợp:
+
+- **Editor đang mở + có Unity-Skills** (`com.besty.unity-skills`, API trả lời ở `127.0.0.1:8090–8092` với đúng tên project): điều khiển Editor đang mở bằng `curl` (`/health`, `/skills/recommend`, `POST /skill/<tên>?expectProject=<tên project>`), không chạy `-batchmode` vì project đang bị khoá; sau khi sửa C# phải refresh/compile và đọc lỗi console qua API trước khi báo done.
+- **Editor đang mở nhưng API không trả lời / chưa cài Unity-Skills**: báo rõ là bị khoá; không điều khiển được thì báo blocked và ghi bước cần làm trong Editor.
+- **Editor đóng**: lệnh `Unity.exe -batchmode -projectPath … -executeMethod/-runTests -logFile …`, timeout Bash tới 10 phút.
+
+Unity-Skills đang ở chế độ bypass thì API làm ngay mọi thao tác trong Editor; mỗi lệnh `curl` vẫn qua hộp duyệt shell của Office Desk (trừ khi chạy tự động hoặc Bypass). Đã thử với BaseTD thật: Dev gọi `/health`, tìm và dùng skill `debug_get_errors`, báo 0 lỗi console.
+
 ## Subagent đọc code và tiếp tục phiên của task
 
 **Subagent đọc code.** Lead Dev, Dev, VFX và QA có tool `Agent` với một subagent duy nhất `code-reader`: chỉ Read/Grep/Glob, chạy model **Haiku** trong ngữ cảnh riêng và trả bản tóm tắt ngắn (đường dẫn, số dòng, hàm/lớp). Nhờ vậy việc dò code không làm phình ngữ cảnh chính, vốn được gửi lại ở mỗi lần gọi model. Mọi lời gọi Agent đi qua app (quy tắc `ask` trong settings) và bị ép về đúng `code-reader`, model Haiku, chạy chờ kết quả, kể cả khi model xin loại agent hay model khác. GD, UI/UX và chat thường không có subagent. Đã thử với Claude Code thật: model xin `general-purpose` + `opus`, app đổi thành `code-reader` + Haiku, transcript xác nhận subagent chạy `claude-haiku-5-5`. Lưu ý: settings không còn chặn `Task` vì đó là tên cũ của `Agent`.

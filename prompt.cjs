@@ -72,7 +72,7 @@ function roleLines(options) {
   const { label, resumed, context, task, roster } = options; if (!label) return [];
   const intro = resumed ? [field('Task của khối', task)] : [field('Trách nhiệm', context.responsibility), field('Đầu ra', context.output), field('Yêu cầu riêng của session', context.instructions), field('Task của khối', task), roster ? 'Đội hiện có:\n' + roster : ''];
   const rejected = options.lead && options.phase !== 'review' && options.planProblems ? `Kế hoạch tasks trước bị app từ chối: ${options.planProblems}. Sửa đúng lỗi này.` : '';
-  return [header(options), ...intro, phaseGuide(options), fileGuide(options), options.files ? WORK_GUIDE : '', options.files && SHELL_TYPES.includes(options.type) ? READER_GUIDE : '', rejected, issueLines(options.type, options.issues || []), handoffGuide(options)];
+  return [header(options), ...intro, phaseGuide(options), fileGuide(options), options.files ? WORK_GUIDE : '', options.files && SHELL_TYPES.includes(options.type) ? READER_GUIDE : '', SHELL_TYPES.includes(options.type) ? options.unity : '', rejected, issueLines(options.type, options.issues || []), handoffGuide(options)];
 }
 const latestHandoffs = (messages, flow) => flow.map(label => messages.findLast(message => authoredBy(message, label))).filter(Boolean);
 // Không resume: yêu cầu gốc + bàn giao gần nhất của mỗi role + N tin gần nhất, tổng ≤ limits.total.
@@ -103,7 +103,7 @@ function historyOf({ history, resumed, messages, label, flow, limits, files, typ
 // Ảnh chỉ đi kèm tin người dùng gửi cùng (attachments.take); các lượt sau không gửi lại đường dẫn.
 const attachmentBlock = attachments => attachments.length ? 'Ảnh tham chiếu đính kèm tin này, dùng Read để xem:\n' + attachments.map(item => `${item.path} (${item.name})`).join('\n') : '';
 function buildPrompt(input) {
-  const options = { label: '', type: '', issues: [], lead: false, phase: 'planning', round: 0, resumed: false, history: true, context: {}, task: '', roster: '', flow: [], messages: [], content: '', attachments: [], limits: PROMPT_LIMITS, files: null, qaPhase: 'functional', devFiles: [], ...input };
+  const options = { label: '', type: '', issues: [], lead: false, phase: 'planning', round: 0, resumed: false, history: true, context: {}, task: '', roster: '', flow: [], messages: [], content: '', attachments: [], limits: PROMPT_LIMITS, files: null, qaPhase: 'functional', devFiles: [], unity: '', ...input };
   options.label ||= '';
   const past = historyOf(options);
   const lines = [...roleLines(options), ...past.lines, options.content, attachmentBlock(options.attachments)];
