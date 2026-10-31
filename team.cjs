@@ -56,14 +56,25 @@ function addRole(item, type, log) {
 // payload.busy: mảng nhãn đang chạy do main.cjs (busyLabels) gán; dữ liệu ngoài app không tin được nên chuẩn hóa.
 const busyOf = payload => Array.isArray(payload.busy) ? payload.busy : [];
 // Bỏ một role theo DESIGN §8.1; ném lỗi (không đổi dữ liệu) nếu removable() từ chối. Trả về lý do cho log.
-function dropRole(item, label, busy) {
-  const check = removable(item, label, { busy: busy.includes(label) }); if (!check.ok) throw Error(check.reason);
-  const index = item.flow.indexOf(label); item.flow.splice(index, 1); forgetWorker(item, label);
+function dropRole(item, label, busy, force = false) {
+  const check = removable(item, label, { busy: busy.includes(label) }); if (!check.ok && !(force && check.force)) throw Error(check.reason);
+  const index = item.flow.indexOf(label), current = index === item.stage; item.flow.splice(index, 1); forgetWorker(item, label);
+  if (!check.ok) forceCleanup(item, label, current);
   if (index < item.stage) item.stage--;
   item.stage = Math.min(item.stage, Math.max(0, item.flow.length - 1));
-  return check.reason;
+  return check.ok ? check.reason : 'xóa bắt buộc: ' + check.reason;
 }
-function removeRole(item, payload, log) { const label = payload.role; log('Hệ thống', `Đã xóa ${label} (${dropRole(item, label, busyOf(payload))})`); flowgraph.syncGraph(item); }
+// Xóa bắt buộc: bỏ task của khối, gỡ phụ thuộc vào nó, chuyển Issue của nó cho Lead (nếu có) để không còn việc mồ côi.
+function forceCleanup(item, label, current) {
+  item.dispatch = (item.dispatch || []).filter(task => task.worker !== label).map(task => task.dependsOn?.includes(label) ? { ...task, dependsOn: task.dependsOn.filter(owner => owner !== label) } : task);
+  const lead = item.flow.find(name => typeOf(name) === LEAD);
+  for (const issue of item.issues || []) if (issue.owner === label && !issue.closed) { if (lead) issue.owner = lead; else delete issue.owner; }
+  if (current && item.status === 'working') item.status = 'idle';
+}
+function removeRole(item, payload, log) {
+  const label = payload.role; log('Hệ thống', `Đã xóa ${label} (${dropRole(item, label, busyOf(payload), payload.force === true)})`); flowgraph.syncGraph(item);
+  const ids = new Set(item.graph.nodes.map(node => node.id)); for (const id of Object.keys(item.graphRun?.nodes || {})) if (!ids.has(id)) delete item.graphRun.nodes[id];
+}
 // R1: role bị bỏ qua select-roles phải qua removable(). Bỏ theo thứ tự ngược pipeline (Lead sau Dev/QA),
 // chạy thử trên bản sao trước để một role bị từ chối thì không role nào bị đổi.
 function dropRoles(item, labels, busy) {

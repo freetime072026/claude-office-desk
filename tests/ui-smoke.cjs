@@ -62,7 +62,7 @@ app.whenReady().then(async () => {
       if (!/Planning · QA 0\\/3/.test([...picker.options].find(option => option.value === 'Lead Dev').textContent)) throw Error('Lead phase label missing');
       const choose = async role => { picker.value = role; picker.dispatchEvent(new Event('change')); await new Promise(resolve => setTimeout(resolve, 50)); };
       await choose('Lead Dev'); const remove = document.querySelector('#panel-remove');
-      if (!remove.disabled || !remove.title) throw Error('Lead Dev remove button must be disabled with a reason');
+      if (remove.disabled || !/Xóa bắt buộc/.test(remove.title) || document.querySelector('#panel-remove-note').hidden || !document.querySelector('#panel-remove-note').textContent) throw Error('Lead Dev remove must offer forced removal with a visible reason');
       await choose('GD'); if (remove.disabled) throw Error('Passed GD should be removable');
       if (!document.querySelector('#decision-banner')?.hidden) throw Error('Decision banner should be hidden');
       const chips = [...document.querySelectorAll('#dispatch-summary .team-chip')];

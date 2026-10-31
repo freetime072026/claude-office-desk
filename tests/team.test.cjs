@@ -70,6 +70,16 @@ test('AC-ROLE-02.5/02.9: refused removal leaves data unchanged; busy flag comes 
   assert.throws(() => update(team, 'remove-role', { id, role: 'GD', busy: ['GD'] }), /đang chạy/);  assert.equal(JSON.stringify(team), snapshot);
   update(team, 'remove-role', { id, role: 'GD' }); assert.equal(thread.flow[thread.stage], 'QA');
 });
+test('force removal: a non-running block with pending work is removed after confirmation; running stays blocked', () => {
+  const { team, id, thread } = loopSession(); toQA(team, id);
+  thread.dispatch = [{ worker: 'Dev', task: 'A', status: 'queued' }, { worker: 'QA', task: 'B', status: 'queued', dependsOn: ['Dev'] }];
+  thread.issues = [{ id: 1, owner: 'Dev', closed: false }];
+  assert.throws(() => update(team, 'remove-role', { id, role: 'Dev', busy: ['Dev'], force: true }), /đang chạy/);
+  update(team, 'remove-role', { id, role: 'Dev', force: true });
+  assert.equal(thread.flow.includes('Dev'), false); assert.deepEqual(thread.dispatch, [{ worker: 'QA', task: 'B', status: 'queued', dependsOn: [] }]);
+  assert.equal(thread.issues[0].owner, 'Lead Dev'); assert.match(thread.messages.at(-1).text, /xóa bắt buộc/);
+  assert.equal(Object.keys(thread.graphRun?.nodes || {}).includes('Dev'), false);
+});
 test('R1 / TC-ROLE-06a: select-roles cannot drop a working role; data unchanged', () => {
   const { team, id, thread } = loopSession();
   thread.dispatch = [{ worker: 'Dev', task: 'A', status: 'queued' }];

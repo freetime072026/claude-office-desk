@@ -64,13 +64,16 @@ function passed(thread, label) {
   return done || thread.flow.indexOf(label) < thread.stage || inReview;
 }
 // DESIGN §8.1: thuần, không đổi dữ liệu. `busy` do main.cjs truyền vào.
+// force: không xóa thường được nhưng khối không chạy → người dùng xác nhận thì vẫn xóa (bỏ task/hàng chờ của khối).
+// Chỉ khối đang chạy thật (busy) là chặn hẳn.
 function removable(thread, label, { busy = false } = {}) {
   if (!thread.flow.includes(label)) return { ok: false, reason: 'Role không tồn tại' };
-  const working = workingReason(thread, label, busy); if (working) return { ok: false, reason: working };
+  if (busy) return { ok: false, force: false, reason: label + ' đang chạy; dừng khối trước rồi xóa' };
+  const working = workingReason(thread, label, false); if (working) return { ok: false, force: true, reason: working };
   if (idle(thread, label)) return { ok: true, reason: 'không có việc' };
   const dependent = (thread.dispatch || []).find(task => task.status !== 'finished' && (task.dependsOn || []).includes(label));
-  if (dependent) return { ok: false, reason: dependent.worker + ' còn phụ thuộc ' + label };
-  return passed(thread, label) ? { ok: true, reason: 'đã pass' } : { ok: false, reason: label + ' có việc nhưng chưa pass' };
+  if (dependent) return { ok: false, force: true, reason: dependent.worker + ' còn phụ thuộc ' + label };
+  return passed(thread, label) ? { ok: true, reason: 'đã pass' } : { ok: false, force: true, reason: label + ' có việc nhưng chưa pass' };
 }
 // problems nhận lý do khi kế hoạch bị từ chối, để báo cho người dùng/Lead thay vì chỉ "không hợp lệ".
 function taskPlan(text, thread, problems = []) {

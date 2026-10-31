@@ -17,6 +17,7 @@ const { describeTool, decide, roleScope, scopesOverlap } = require('./permission
 const sessionFiles = require('./session-files.cjs');
 const attachments = require('./attachments.cjs');
 const unity = require('./unity.cjs');
+const projectDocs = require('./project-docs.cjs');
 const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
@@ -278,7 +279,11 @@ app.whenReady().then(() => {
       const unityInfo = payload.role && SHELL_TYPES.includes(worker.type) ? await unity.context(thread.folder) : null;
       unity.writeHelper(unityInfo); // .office-desk/unity.sh: dò cổng theo sổ đăng ký, chờ Unity nạp lại, luôn có timeout
       const unityGuide = unity.guide(unityInfo);
-      const prompt = compactOnly ? content : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide }).text;
+      // CLAUDE.md của dự án: cả nội dung ở lượt đầu mỗi phiên CLI, sau đó chỉ dòng tra README (project-docs.cjs).
+      const fullDocs = !compactOnly && projectDocs.needsFull(thread, sessionKey, resumed);
+      const docsGuide = projectDocs.guide(projectDocs.read(thread.folder), payload.role ? worker.type : '', fullDocs);
+      const prompt = compactOnly ? content : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide }).text;
+      if (fullDocs && docsGuide) projectDocs.markSent(thread, sessionKey, resumed);
       const mcpServers = mcpServerNames();
       if (payload.auto) thread.messages.push({ role: 'Điều phối', text: content, time: new Date().toISOString() }); else { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); if (images.length) thread.messages.at(-1).attachments = images; }
       if (folderNote) thread.messages.push({ role: 'Hệ thống', text: folderNote, time: new Date().toISOString() });

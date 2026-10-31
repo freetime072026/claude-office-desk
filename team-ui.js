@@ -197,10 +197,19 @@
     if (picker.dataset.key !== key && document.activeElement !== picker) { picker.dataset.key = key; picker.replaceChildren(...choices.map(([value, text]) => make('option', { value, textContent: text }))); }
     picker.value = thread?.flow.includes(selectedWorker) ? selectedWorker : '';
     const role = picker.value, check = role ? removal[thread.id]?.[role] : null;
-    remove.hidden = !role; remove.disabled = !check?.ok || Boolean(thread?.archived); remove.title = check?.ok ? `Xóa ${role} (${check.reason})` : check?.reason || 'Không xóa được';
+    remove.hidden = !role; remove.disabled = !(check?.ok || check?.force) || Boolean(thread?.archived); remove.title = check?.ok ? `Xóa ${role} (${check.reason})` : check?.force ? `Xóa bắt buộc: ${check.reason}` : check?.reason || 'Không xóa được';
+    const note = get('#panel-remove-note'); note.hidden = !role || Boolean(check?.ok); note.textContent = check && !check.ok ? check.reason : '';
   }
   get('#panel-block').onchange = () => chooseWorker(get('#panel-block').value);
-  get('#panel-remove').onclick = async () => { const role = get('#panel-block').value; if (role && confirm('Xóa ' + role + '? Cấu hình riêng và phiên chat của khối này sẽ bị xóa.')) await act('remove-role', { role }); };
+  // Khối có việc dang dở vẫn xóa được khi không chạy: hỏi rõ hậu quả rồi gửi force.
+  get('#panel-remove').onclick = async () => {
+    const role = get('#panel-block').value, thread = current(), check = role && thread ? removal[thread.id]?.[role] : null; if (!check) return;
+    if (check.ok) { if (confirm('Xóa ' + role + '? Cấu hình riêng và phiên chat của khối này sẽ bị xóa.')) await act('remove-role', { role }); return; }
+    if (!check.force) { showStatus(check.reason); return; }
+    if (confirm(`${check.reason}.
+
+Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Lead, cấu hình và phiên chat bị xóa.`)) await act('remove-role', { role, force: true });
+  };
   get('#panel-close').onclick = () => { try { localStorage.setItem('panel', 'closed'); } catch {} applyPanel(false); };
   window.officeSelectBlock = role => chooseWorker(role); // bấm nút trên tab Sơ đồ để chọn khối
   // Thư mục của session ở header: nhãn tên thư mục (rê chuột xem đường dẫn) có × để bỏ khỏi session; nút ＋ bên phải để thêm.

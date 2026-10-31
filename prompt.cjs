@@ -20,7 +20,7 @@ function fileGuide({ type, lead, phase, files, qaPhase, devFiles }) {
   if (lead && phase === 'review') return `Đọc ${files.changes} (tệp Dev đã sửa), ${files.issues} và ${files.perf}. Chỉ review các tệp trong CHANGES (dùng git diff nếu có). Được ghi duy nhất ${files.project}.`;
   // Dev không đọc UIUX.md cả tệp: Lead ghi vào task ID màn hình (SCR-…) và phần cần làm.
   if (type === 'UI/UX') return `Đọc mục UI/UX, US/AC trong ${files.gdd}. Ghi thiết kế vào ${files.uiux}; đây là tệp duy nhất bạn được ghi (không viết code, không chạy lệnh). Mỗi màn hình một mục có ID (SCR-…) gắn AC: luồng vào/ra, trạng thái (bình thường, trống, lỗi, đang tải), layout và component. Trong câu trả lời chỉ tóm tắt thay đổi.`;
-  if (lead) return `Chỉ nhận phần việc của Dev: đọc mục Dev và US/AC liên quan trong ${files.gdd}, màn hình trong ${files.uiux} (nếu có)${phase === 'triage' ? `, các Issue đang mở trong ${files.issues}` : ''}. Task có UI phải ghi ID màn hình (SCR-…) và chép phần cần làm vào task, vì Dev không đọc UIUX.md. Cập nhật ${files.project} (bản đồ project ngắn: thư mục, module, quy ước, tệp quan trọng) để Dev không phải dò cả project; đây là tệp duy nhất bạn được ghi. App tự ghi TASKS.md từ khối tasks.`;
+  if (lead) return `Chỉ nhận phần việc của Dev: đọc mục Dev và US/AC liên quan trong ${files.gdd}, màn hình trong ${files.uiux} (nếu có)${phase === 'triage' ? `, các Issue đang mở trong ${files.issues}` : ''}. Task có UI phải ghi ID màn hình (SCR-…) và chép phần cần làm vào task, vì Dev không đọc UIUX.md. Cập nhật ${files.project} (bản đồ project ngắn: thư mục, module, quy ước, tệp quan trọng kèm doc liên quan trong docs/ nếu dự án có; trỏ tới doc, không chép lại nội dung doc) để Dev không phải dò cả project; đây là tệp duy nhất bạn được ghi. App tự ghi TASKS.md từ khối tasks.`;
   if (type === 'Dev') return `Đọc ${files.project} trước khi tìm trong code; không cần đọc GDD.` + scopeLine(devFiles);
   // VFX là Dev chuyên hiệu ứng: chỉ đọc mục VFX của GDD; không tự nhìn được kết quả nên phải nói rõ cần kiểm tra trực quan gì.
   if (type === 'VFX') return `Đọc ${files.project} và chỉ mục VFX trong ${files.gdd}.` + scopeLine(devFiles) + ' Ưu tiên shader viết bằng code (HLSL/ShaderLab) và script điều khiển hiệu ứng. Tạo/sửa prefab, material, VFX Graph, Shader Graph bằng script Editor thay vì sửa YAML hay GUID bằng tay. Bạn không nhìn thấy hiệu ứng chạy: ghi rõ trong handoff cách xem và cần ảnh chụp/kiểm tra trực quan nào; ảnh người dùng gửi kèm là nguồn đánh giá.';
@@ -103,10 +103,10 @@ function historyOf({ history, resumed, messages, label, flow, limits, files, typ
 // Ảnh chỉ đi kèm tin người dùng gửi cùng (attachments.take); các lượt sau không gửi lại đường dẫn.
 const attachmentBlock = attachments => attachments.length ? 'Ảnh tham chiếu đính kèm tin này, dùng Read để xem:\n' + attachments.map(item => `${item.path} (${item.name})`).join('\n') : '';
 function buildPrompt(input) {
-  const options = { label: '', type: '', issues: [], lead: false, phase: 'planning', round: 0, resumed: false, history: true, context: {}, task: '', roster: '', flow: [], messages: [], content: '', attachments: [], limits: PROMPT_LIMITS, files: null, qaPhase: 'functional', devFiles: [], unity: '', ...input };
+  const options = { label: '', type: '', issues: [], lead: false, phase: 'planning', round: 0, resumed: false, history: true, context: {}, task: '', roster: '', flow: [], messages: [], content: '', attachments: [], limits: PROMPT_LIMITS, files: null, qaPhase: 'functional', devFiles: [], unity: '', projectDocs: '', ...input };
   options.label ||= '';
   const past = historyOf(options);
-  const lines = [...roleLines(options), ...past.lines, options.content, attachmentBlock(options.attachments)];
+  const lines = [...roleLines(options), options.projectDocs, ...past.lines, options.content, attachmentBlock(options.attachments)];
   return { text: lines.filter(Boolean).join('\n'), omitted: past.omitted };
 }
 // Roster chỉ cần biết ai làm gì; task đầy đủ của khối đã nằm ở mục "Task của khối" nên ở đây cắt ngắn.
