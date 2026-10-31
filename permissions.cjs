@@ -19,7 +19,8 @@ function describeTool(tool, input = {}) {
 }
 // ---- Phạm vi ghi theo role (app thực thi, không chỉ dặn trong prompt).
 // GD chỉ ghi GDD và không chạy shell; Lead chỉ ghi PROJECT.md; QA chỉ ghi ISSUES/PERF; Dev chỉ ghi các tệp Lead giao.
-// null = không giới hạn (role tùy chỉnh, UI/UX, chat thường, Dev chưa có danh sách tệp).
+// UI/UX chỉ ghi UIUX.md, không chạy shell.
+// null = không giới hạn (role tùy chỉnh, chat thường, Dev chưa có danh sách tệp).
 const path = require('node:path');
 const { isDevType } = require('./roles.cjs');
 const WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'];
@@ -29,6 +30,7 @@ function roleScope(type, files, devFiles = [], folder = '') {
   if (type === 'GD') return { paths: [files.gdd], bash: false, label: 'GD chỉ ghi GDD.md' };
   if (type === 'Lead Dev') return { paths: [files.project], bash: true, label: 'Lead Dev chỉ ghi PROJECT.md' };
   if (type === 'QA') return { paths: [files.issues, files.perf], bash: true, label: 'QA chỉ ghi ISSUES.md và PERF.md' };
+  if (type === 'UI/UX') return { paths: [files.uiux], bash: false, label: 'UI/UX chỉ ghi UIUX.md' };
   // Giữ dấu / cuối để mục thư mục vẫn là thư mục sau khi resolve.
   if (isDevType(type) && devFiles.length) return { paths: devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), bash: true, label: type + ' chỉ sửa các tệp Lead giao' };
   return null;
@@ -49,6 +51,8 @@ function decide({ scope, mode, tool, input = {}, cwd = '' }) {
   }
   if (tool === 'Bash') {
     if (scope && !scope.bash) return { action: 'deny', message: `${scope.label}; không chạy lệnh shell.` };
+    // Role có quyền shell theo phạm vi (Lead, Dev, VFX, QA) luôn chạy được lệnh: Plan và Đọc & sửa hỏi từng lần, Bypass không hỏi.
+    if (scope?.bash) return { action: mode === 'bypass' ? 'allow' : 'ask' };
     return { action: mode === 'bypass' ? 'allow' : mode === 'read' ? 'deny' : 'ask', ...(mode === 'read' ? { message: 'Mode Plan không chạy lệnh shell.' } : {}) };
   }
   return { action: 'ask' };

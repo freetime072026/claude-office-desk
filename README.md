@@ -1,5 +1,15 @@
 # Office Desk — Windows 11
 
+## Giữ chi phí token thấp
+
+Rút ra từ một session BaseTD tốn $8: một task Dev 17 tệp chạy hết 60 lượt gọi, ngữ cảnh ~150k token mỗi lần gọi; chi phí tăng nhanh hơn số lượt vì toàn bộ ngữ cảnh được gửi lại ở mỗi lần gọi.
+
+- Mỗi task của Lead tối đa **8 mục** trong `files`; Lead được dặn mỗi task nên xong trong ~20 lượt tool, việc lớn chia cho Dev #2, #3 hoặc nhiều vòng. Kế hoạch bị từ chối thì app ghi **lý do cụ thể** và chèn lý do vào prompt lượt Lead kế tiếp.
+- Mọi role làm việc theo tệp được dặn: tìm bằng Grep/Glob trước, tệp lớn đọc theo đoạn (`offset/limit`), không đọc lại tệp đã đọc, không Read ảnh trừ khi task cần, sửa bằng Edit (Write chỉ để tạo tệp mới).
+- GDD mục tiêu tối đa ~8.000 ký tự; GD không đọc code.
+- Dev/VFX giới hạn 40 lượt gọi mỗi lượt chat (trước là 60).
+- Thẻ tin hiện cảnh báo khi một lượt xử lý quá 2 triệu token ngữ cảnh hoặc trung bình quá 80k mỗi lượt.
+
 ## Role VFX
 
 Thêm bằng **＋ Role → + VFX** (thêm nhiều lần thành VFX #2…). VFX là Dev chuyên hiệu ứng: đứng sau Dev, trước QA; Lead Dev giao task cho VFX trong cùng khối tasks với `files` riêng (ví dụ `Assets/VFX/`, `Assets/Shaders/`), không chồng tệp với Dev nên chạy song song với Dev; QA chỉ bắt đầu khi cả Dev và VFX của vòng đã xong. VFX chỉ đọc mục **VFX** trong GDD (GD ghi: hiệu ứng nào, cho sự kiện nào, cảm giác mong muốn, ảnh tham chiếu) và chỉ sửa tệp được giao. Prompt yêu cầu ưu tiên shader viết bằng code, tạo/sửa prefab, material, VFX Graph bằng script Editor thay vì sửa YAML/GUID tay. Claude không nhìn thấy hiệu ứng chạy: handoff của VFX ghi cách xem và cần kiểm tra trực quan gì; gửi kèm ảnh chụp (dán/kéo vào chat) để VFX chỉnh tiếp. QA pha performance đo thêm số particle, overdraw, draw call. Model mặc định Sonnet, giới hạn 60 lượt tool mỗi lượt chat.
@@ -18,12 +28,13 @@ Trạng thái chung nằm trong tệp, không nằm trong lịch sử chat. App 
 |---|---|---|
 | `.office-desk/PROJECT.md` (dùng chung mọi session của project) | Lead Dev | Lead Dev, Dev |
 | `.office-desk/<session>/GDD.md` | GD | Lead Dev (phần Dev), QA |
+| `.office-desk/<session>/UIUX.md` (mỗi màn hình một mục SCR-…) | UI/UX | Lead Dev (chép phần cần làm vào task Dev), QA |
 | `.office-desk/<session>/TASKS.md` | App, từ khối tasks của Lead | Người dùng, Lead |
 | `.office-desk/<session>/ISSUES.md` | QA | Lead Dev |
 | `.office-desk/<session>/PERF.md` | QA (pha performance) | Lead Dev |
 | `.office-desk/<session>/CHANGES.md` | App, từ handoff của Dev | QA, Lead review |
 
-**Quy tắc app thực thi** (không chỉ dặn trong prompt): GD chỉ ghi GDD.md và không chạy shell; Lead Dev chỉ ghi PROJECT.md; QA chỉ ghi ISSUES.md/PERF.md; Dev chỉ sửa các tệp Lead giao trong `files` của khối tasks. Ghi ngoài phạm vi bị app từ chối kèm lý do; ghi trong phạm vi không hỏi. Role có phạm vi luôn chạy CLI ở permission mode `default` để mọi lần ghi đi qua app; mode chọn ở panel quyết định shell (Plan: không shell, Đọc & sửa/Auto: hỏi, Bypass: không hỏi).
+**Quy tắc app thực thi** (không chỉ dặn trong prompt): GD chỉ ghi GDD.md và không chạy shell; UI/UX chỉ ghi UIUX.md và không chạy shell (Dev không đọc UIUX.md, chỉ nhận phần màn hình Lead chép vào task); Lead Dev chỉ ghi PROJECT.md; QA chỉ ghi ISSUES.md/PERF.md; Dev chỉ sửa các tệp Lead giao trong `files` của khối tasks. Ghi ngoài phạm vi bị app từ chối kèm lý do; ghi trong phạm vi không hỏi. Role có phạm vi luôn chạy CLI ở permission mode `default` để mọi lần ghi đi qua app. **Lead Dev, Dev, VFX, QA luôn được chạy lệnh shell** (build, test, script kiểm tra) ở mọi mode: hỏi từng lần, Bypass thì không hỏi, lượt tự động đã duyệt thì tự cho phép. GD và UI/UX không bao giờ chạy shell. Khối Dev/VFX/QA mới mặc định mode Đọc & sửa; model mặc định Sonnet. Mô tả trách nhiệm/đầu ra mặc định của từng role viết ngắn kèm tiêu chí xong; session cũ giữ mô tả đã chép lúc chọn role.
 
 **Luồng.** GD làm rõ yêu cầu với bạn và ghi GDD (US/AC, phân việc theo khối, ngân sách performance) → Lead Dev chia task, mỗi task có `files` không chồng nhau → các Dev **sửa song song** khi tệp không trùng (app kiểm theo tệp thay vì theo thư mục) → khi mọi Dev xong, QA kiểm theo GDD/AC, ghi ISSUES.md → Lead lập lại kế hoạch sửa → khi hết Issue và không có Issue mới, QA chuyển sang **pha performance** (GC Alloc, CPU, GPU theo ngân sách trong GDD; GDD ghi "Không áp dụng" thì bỏ qua) → Lead review (clean, gộp code trùng). Review không đạt thì Dev sửa thêm **đúng 1 lần**; lần sau vẫn không đạt thì dừng chờ bạn.
 

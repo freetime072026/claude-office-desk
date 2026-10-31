@@ -77,3 +77,12 @@ test('AC-ROLE-02.2/02.4 (TC-ROLE-02b, TC-ROLE-05): idle role removable anytime, 
   assert.match(removable(thread, 'QA').reason, /có việc nhưng chưa pass/);
   thread.messages.push({ role: 'GD', text: 'GDD' }); assert.deepEqual(removable(thread, 'GD'), { ok: true, reason: 'đã pass' });
 });
+test('a task may list at most 8 files, and every rejected plan says why', () => {
+  const team = initial(); const id = update(team, 'create', {}); update(team, 'add-worker', { id, type: 'Dev' }); const thread = team.threads[0];
+  const plan = tasks => { const problems = []; return { result: taskPlan('```tasks\n' + JSON.stringify({ tasks }) + '\n```', thread, problems), problems }; };
+  const nine = Array.from({ length: 9 }, (_, index) => `src/F${index}.cs`);
+  const big = plan([{ worker: 'Dev', task: 'x', files: nine }]); assert.equal(big.result, null); assert.match(big.problems[0], /Dev: 9 tệp, tối đa 8 mỗi task/);
+  assert.equal(plan([{ worker: 'Dev', task: 'x', files: nine.slice(0, 8) }]).result.length, 1);
+  assert.match(plan([{ worker: 'Ghost', task: 'x', files: ['a'] }]).problems[0], /"Ghost" không phải Dev\/VFX/);
+  const none = []; assert.equal(taskPlan('no block', thread, none), null); assert.deepEqual(none, ['không có khối tasks']);
+});

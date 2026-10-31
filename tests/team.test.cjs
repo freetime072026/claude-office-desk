@@ -61,7 +61,7 @@ test('AC-ROLE-01.1–01.4, 02.6: remove then re-add gives a clean worker without
   assert.deepEqual({ stage: thread.flow[thread.stage], status: thread.status }, before); assert.equal(thread.issues[0].closed, true);
   assert.equal(thread.messages.at(-1).text, 'Đã xóa Dev (đã pass)');
   update(team, 'add-worker', { id, type: 'Dev' });
-  assert.deepEqual({ mode: thread.workers.Dev.mode, profileId: thread.workers.Dev.profileId, task: thread.workers.Dev.task }, { mode: 'read', profileId: '', task: '' });
+  assert.deepEqual({ mode: thread.workers.Dev.mode, profileId: thread.workers.Dev.profileId, task: thread.workers.Dev.task }, { mode: 'edit', profileId: '', task: '' });
 });
 test('AC-ROLE-02.5/02.9: refused removal leaves data unchanged; busy flag comes from payload', () => {
   const { team, id, thread } = loopSession(); toQA(team, id);
@@ -85,7 +85,7 @@ test('R1 / TC-ROLE-06b: dropping a passed Dev via select-roles forgets it; selec
   update(team, 'select-roles', { id, roles: ['GD', 'Lead Dev', 'QA'], restart: true });
   assert.deepEqual(thread.flow, ['GD', 'Lead Dev', 'QA']); assert.equal(thread.workers.Dev, undefined); assert.deepEqual(Object.values(thread.cliSessions), ['keep']);
   update(team, 'select-roles', { id, roles: ['GD', 'Lead Dev', 'Dev', 'QA'] });
-  assert.deepEqual({ mode: worker(thread, 'Dev').mode, profileId: worker(thread, 'Dev').profileId, task: worker(thread, 'Dev').task }, { mode: 'read', profileId: '', task: '' });
+  assert.deepEqual({ mode: worker(thread, 'Dev').mode, profileId: worker(thread, 'Dev').profileId, task: worker(thread, 'Dev').task }, { mode: 'edit', profileId: '', task: '' });
 });
 test('R1: select-roles may drop Lead Dev together with Dev/QA in an unstarted session', () => {
   const { team, id, thread } = loopSession(); update(team, 'select-roles', { id, roles: ['GD'] }); assert.deepEqual(thread.flow, ['GD']);

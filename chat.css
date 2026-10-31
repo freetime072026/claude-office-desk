@@ -2,3 +2,4 @@
 #activity{overflow-anchor:none}#activity article small.run-progress{display:block;margin-top:4px;color:#4f7a5c;font-variant-numeric:tabular-nums}#activity article small.run-usage{display:block;margin-top:2px;font-variant-numeric:tabular-nums}
 .block-progress{display:block;font-style:normal;font-size:11px;color:#4f7a5c;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 #activity article small.run-denied{display:block;color:#a2412b}
+#activity article small.run-warning{display:block;color:#a26a1b}

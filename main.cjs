@@ -17,7 +17,7 @@ const { describeTool, decide, roleScope, scopesOverlap } = require('./permission
 const sessionFiles = require('./session-files.cjs');
 const attachments = require('./attachments.cjs');
 const { FILE_ROLES } = require('./prompt.cjs');
-const { MAX_TURNS, DEFAULT_MAX_TURNS, isDevType } = require('./roles.cjs');
+const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
 // policy = { scope, mode, cwd }: phạm vi ghi theo role được quyết định trước (decide), không hỏi người dùng.
@@ -156,7 +156,8 @@ app.whenReady().then(() => {
   const isRunning = (thread, label) => chats.has(runKey(thread.id, label));
   async function approveAuto(thread) {
     const folders = foldersOf(thread);
-    if (!thread.flow.some(label => needsConfirm(getWorker(thread, label).mode, folders))) return true;
+    // Cần duyệt khi có khối ghi/sửa theo mode, hoặc khối có quyền shell (Lead/Dev/VFX/QA chạy lệnh ở mọi mode).
+    if (!thread.flow.some(label => { const config = getWorker(thread, label); return needsConfirm(config.mode, folders) || SHELL_TYPES.includes(config.type); })) return true;
     const answer = await dialog.showMessageBox(window, { type: 'warning', message: 'Chạy tự động các bước còn lại: ' + thread.flow.slice(thread.stage).join(' → ') + '?', detail: 'Các khối đọc/sửa tệp và chạy lệnh shell theo mode của từng khối, không hỏi lại từng thao tác cho tới khi tắt (/auto off). Đọc/tìm kiếm web vẫn hỏi từng lần. Thư mục:\n' + folders.join('\n'), buttons: ['Hủy', 'Chạy tự động'], defaultId: 0, cancelId: 0 });
     return answer.response === 1;
   }
@@ -269,9 +270,11 @@ app.whenReady().then(() => {
         if (files && isDevType(worker.type) && handoff) { try { sessionFiles.appendChange(thread, payload.role, handoff.status, handoff.summary); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } }
         let proposalApplied = false;
         if (worker.type === LEAD && thread.leadPhase !== 'review' && !run.message.error) {
-          const proposal = require('./workers.cjs').taskPlan(run.message.text, thread);
+          const problems = [], proposal = require('./workers.cjs').taskPlan(run.message.text, thread, problems);
           if (proposal && !(thread.dispatch || []).some(task => ACTIVE_TASK.includes(task.status))) { thread.taskDrafts = proposal; teamStore.update(metadata.team, 'apply-task-plan', { id: thread.id }); thread.dispatch = proposal.map(task => ({ ...task, status: 'queued' })); proposalApplied = true; recordTasks(thread, proposal, 'Lead phân công'); thread.messages.push({ role: 'Điều phối', text: 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.', time: new Date().toISOString() }); }
-          else if (!proposal) thread.messages.push({ role: 'Điều phối', text: 'Lead chưa xuất phân công tasks hợp lệ; không tự đoán hoặc chạy Dev.', time: new Date().toISOString() });
+          // Lead không nhận lịch sử chat: lý do được lưu và chèn vào prompt lượt Lead kế tiếp (prompt.cjs), xoá khi kế hoạch hợp lệ.
+          else if (!proposal) { thread.planProblems = problems.join('; '); thread.messages.push({ role: 'Điều phối', text: `Lead chưa xuất phân công tasks hợp lệ (${thread.planProblems}); không tự đoán hoặc chạy Dev. Lượt Lead tiếp theo sẽ nhận lý do này.`, time: new Date().toISOString() }); }
+          if (proposal) delete thread.planProblems;
         }
         persist(); publish();
         autoRun.after(thread, payload.role, run.message, { proposalApplied }).catch(error => thread.messages.push({ role: 'Tự động', text: 'Dừng tự động: ' + error.message, time: new Date().toISOString() })).finally(() => { persist(); publish(); pumpThread(thread).catch(() => {}); });

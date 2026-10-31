@@ -1,7 +1,7 @@
 const path = require('node:path');
-const { roleKey, DEFAULT_MODELS, FALLBACK_MODEL, DEV_TYPES, isDevType } = require('./roles.cjs');
+const { roleKey, DEFAULT_MODELS, DEFAULT_MODES, FALLBACK_MODEL, DEV_TYPES, isDevType } = require('./roles.cjs');
 const { scopesOverlap } = require('./permissions.cjs');
-const FILES_LIMIT = 50;
+const FILES_PER_TASK = 8;
 // Tệp Lead giao cho Dev: đường dẫn tương đối, không thoát khỏi thư mục chính. Thư mục kết thúc bằng /.
 const validFile = file => typeof file === 'string' && file.trim() && file.length <= 500 && !path.isAbsolute(file) && !file.split(/[\\/]/).includes('..');
 const resolvedFiles = (folder, files) => files.map(file => path.resolve(folder || '.', file) + (/[\\/]$/.test(file) ? path.sep : ''));
@@ -22,7 +22,7 @@ const tasksOf = (thread, label) => (thread.dispatch || []).filter(task => task.w
 const ownsSession = (key, label) => key.endsWith(':' + label);
 const authoredBy = (message, label) => message.role === label || String(message.role).startsWith(label + ' · ');
 // US-02: khối mới lấy model theo role (roles.cjs); khối đã có giữ model đã lưu.
-function worker(thread, label) { thread.workers ||= {}; const type = typeOf(label); return thread.workers[label] ||= { type, mode: thread.mode || 'read', model: DEFAULT_MODELS[type] || FALLBACK_MODEL, profileId: '', task: '' }; }
+function worker(thread, label) { thread.workers ||= {}; const type = typeOf(label); return thread.workers[label] ||= { type, mode: DEFAULT_MODES[type] || thread.mode || 'read', model: DEFAULT_MODELS[type] || FALLBACK_MODEL, profileId: '', task: '' }; }
 function forgetWorker(thread, label) {
   if (thread.workers) delete thread.workers[label];
   for (const key of Object.keys(thread.cliSessions || {})) if (ownsSession(key, label)) delete thread.cliSessions[key];
@@ -71,18 +71,24 @@ function removable(thread, label, { busy = false } = {}) {
   if (dependent) return { ok: false, reason: dependent.worker + ' còn phụ thuộc ' + label };
   return passed(thread, label) ? { ok: true, reason: 'đã pass' } : { ok: false, reason: label + ' có việc nhưng chưa pass' };
 }
-function taskPlan(text, thread) {
-  const match = /```tasks\s*([\s\S]*?)```/.exec(text); if (!match) return null;
+// problems nhận lý do khi kế hoạch bị từ chối, để báo cho người dùng/Lead thay vì chỉ "không hợp lệ".
+function taskPlan(text, thread, problems = []) {
+  const fail = reason => { problems.push(reason); return null; };
+  const match = /```tasks\s*([\s\S]*?)```/.exec(text); if (!match) return fail('không có khối tasks');
   try {
-    const plan = JSON.parse(match[1]); if (!Array.isArray(plan.tasks) || !plan.tasks.length || plan.tasks.length > 30) return null;
-    const owners = new Set(); for (const task of plan.tasks) { if (!thread.flow.includes(task.worker) || !isDevType(worker(thread, task.worker).type) || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return null; owners.add(task.worker); }
+    const plan = JSON.parse(match[1]); if (!Array.isArray(plan.tasks) || !plan.tasks.length || plan.tasks.length > 30) return fail('tasks phải là mảng 1–30 mục');
+    const owners = new Set(); for (const task of plan.tasks) { if (!thread.flow.includes(task.worker) || !isDevType(worker(thread, task.worker).type) || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return fail(`worker "${task.worker}" không phải Dev/VFX trong đội, bị trùng, hoặc task trống/quá dài`); owners.add(task.worker); }
     // files bắt buộc và không chồng nhau giữa các Dev: điều kiện để Dev sửa song song không ghi đè nhau.
-    if (plan.tasks.some(task => !Array.isArray(task.files) || !task.files.length || task.files.length > FILES_LIMIT || !task.files.every(validFile))) return null;
+    // Tối đa FILES_PER_TASK mục: task lớn làm lượt Dev dài, ngữ cảnh phình và chi phí tăng nhanh hơn số lượt.
+    for (const task of plan.tasks) {
+      if (!Array.isArray(task.files) || !task.files.length || !task.files.every(validFile)) return fail(`${task.worker}: files bắt buộc, đường dẫn tương đối nằm trong thư mục chính`);
+      if (task.files.length > FILES_PER_TASK) return fail(`${task.worker}: ${task.files.length} tệp, tối đa ${FILES_PER_TASK} mỗi task; chia cho thêm Dev hoặc làm nhiều vòng`);
+    }
     const scopes = plan.tasks.map(task => resolvedFiles(thread.folder, task.files));
-    if (scopes.some((scope, index) => scopes.slice(index + 1).some(other => scopesOverlap(scope, other)))) return null;
-    for (const task of plan.tasks) if (task.dependsOn !== undefined && (!Array.isArray(task.dependsOn) || task.dependsOn.some(owner => !owners.has(owner) || owner === task.worker))) return null;
-    const visited = new Set(); for (let count = 0; count < plan.tasks.length; count++) for (const task of plan.tasks) if ((task.dependsOn || []).every(owner => visited.has(owner))) visited.add(task.worker); if (visited.size !== owners.size) return null;
+    for (const [index, scope] of scopes.entries()) { const other = scopes.findIndex((item, at) => at > index && scopesOverlap(scope, item)); if (other >= 0) return fail(`${plan.tasks[index].worker} và ${plan.tasks[other].worker} có tệp chồng nhau`); }
+    for (const task of plan.tasks) if (task.dependsOn !== undefined && (!Array.isArray(task.dependsOn) || task.dependsOn.some(owner => !owners.has(owner) || owner === task.worker))) return fail(`${task.worker}: dependsOn chỉ gồm Dev khác trong kế hoạch`);
+    const visited = new Set(); for (let count = 0; count < plan.tasks.length; count++) for (const task of plan.tasks) if ((task.dependsOn || []).every(owner => visited.has(owner))) visited.add(task.worker); if (visited.size !== owners.size) return fail('dependsOn tạo vòng phụ thuộc');
     return plan.tasks.map(task => ({ worker: task.worker, task: task.task, files: [...new Set(task.files.map(file => file.trim().replaceAll('\\', '/')))], ...(task.dependsOn?.length ? { dependsOn: [...new Set(task.dependsOn)] } : {}) }));
-  } catch { return null; }
+  } catch { return fail('JSON trong khối tasks không đọc được'); }
 }
-module.exports = { PIPELINE, LEAD, QA_ROUND_LIMIT, ACTIVE_TASK, ownsSession, authoredBy, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, runKey, resumeKey, removable, taskPlan };
+module.exports = { PIPELINE, LEAD, QA_ROUND_LIMIT, ACTIVE_TASK, ownsSession, authoredBy, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, runKey, resumeKey, removable, taskPlan, FILES_PER_TASK };

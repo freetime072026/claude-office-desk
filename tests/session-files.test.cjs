@@ -48,7 +48,7 @@ test('role scopes: GD writes only GDD and never runs shell, Dev only its files, 
   assert.equal(decide({ scope: dev, mode: 'bypass', tool: 'Bash', input: {} }).action, 'allow');
   assert.equal(decide({ scope: qa, mode: 'auto', tool: 'Write', input: { file_path: files.issues } }).action, 'allow');
   assert.equal(decide({ scope: qa, mode: 'auto', tool: 'WebFetch', input: {} }).action, 'ask');
-  assert.equal(roleScope('Dev', files, [], folder), null); assert.equal(roleScope('UI/UX', files), null); assert.equal(roleScope('GD', null), null);
+  assert.equal(roleScope('Dev', files, [], folder), null); assert.equal(roleScope('Art', files), null); assert.equal(roleScope('GD', null), null);
 });
 
 test('scoped roles run the CLI in default mode so every write reaches the app', () => {
@@ -58,4 +58,37 @@ test('scoped roles run the CLI in default mode so every write reaches the app', 
   assert.doesNotMatch(cliTools('bypass', scope), /Bash|Web/);
   assert.match(cliTools('edit', { ...scope, bash: true }), /Bash/);
   assert.equal(cliMode('auto', null), 'auto');
+});
+
+test('UI/UX writes only UIUX.md without shell, works from files, and Lead/QA are pointed at it while Dev is not', () => {
+  const folder = 'E:\game', files = filesOf({ id: 's', folder });
+  assert.equal(files.uiux, path.join(folder, '.office-desk', 's', 'UIUX.md'));
+  const scope = roleScope('UI/UX', files);
+  assert.equal(decide({ scope, mode: 'edit', tool: 'Write', input: { file_path: files.uiux } }).action, 'allow');
+  assert.equal(decide({ scope, mode: 'edit', tool: 'Write', input: { file_path: files.gdd } }).action, 'deny');
+  assert.equal(decide({ scope, mode: 'bypass', tool: 'Bash', input: {} }).action, 'deny');
+  const text = prompts({ workers: { 'UI/UX': { type: 'UI/UX' }, Dev: { type: 'Dev', task: 'Màn hình SCR-1', files: ['Assets/UI/'] } }, flow: ['GD', 'UI/UX', 'Lead Dev', 'Dev', 'QA'] });
+  assert.match(text('UI/UX'), /UIUX\.md; đây là tệp duy nhất bạn được ghi/); assert.doesNotMatch(text('UI/UX'), /Bối cảnh session|Thiết kế dài/);
+  assert.match(text('Lead Dev'), /UIUX\.md \(nếu có\)[\s\S]*Dev không đọc UIUX\.md/); assert.match(text('QA'), /màn hình trong .*UIUX\.md/);
+  assert.doesNotMatch(text('Dev'), /UIUX\.md/);
+});
+
+test('Lead, Dev, VFX and QA can run shell in every mode (asked unless Bypass); GD and UI/UX never', () => {
+  const folder = 'E:\game', files = filesOf({ id: 's', folder });
+  for (const type of ['Lead Dev', 'QA']) assert.equal(decide({ scope: roleScope(type, files), mode: 'read', tool: 'Bash', input: {} }).action, 'ask', type);
+  const dev = roleScope('Dev', files, ['Assets/'], folder);
+  assert.equal(decide({ scope: dev, mode: 'read', tool: 'Bash', input: {} }).action, 'ask');
+  assert.equal(decide({ scope: dev, mode: 'bypass', tool: 'Bash', input: {} }).action, 'allow');
+  assert.match(cliTools('read', dev), /Bash/);
+  for (const type of ['GD', 'UI/UX']) assert.equal(decide({ scope: roleScope(type, files), mode: 'bypass', tool: 'Bash', input: {} }).action, 'deny', type);
+  assert.equal(decide({ scope: null, mode: 'read', tool: 'Bash', input: {} }).action, 'deny', 'unscoped Plan still has no shell');
+});
+
+test('file roles get the context-saving guide; Lead sees why its last plan was rejected; GDD has a size target', () => {
+  const text = prompts({ planProblems: 'Dev: 9 tệp, tối đa 8 mỗi task' });
+  for (const label of ['GD', 'Lead Dev', 'Dev', 'QA']) assert.match(text(label), /Read với offset\/limit[\s\S]*chỉ dùng Write để tạo tệp mới/, label);
+  assert.match(text('Lead Dev'), /Kế hoạch tasks trước bị app từ chối: Dev: 9 tệp, tối đa 8 mỗi task\. Sửa đúng lỗi này\./);
+  assert.doesNotMatch(text('Dev'), /bị app từ chối/);
+  assert.match(text('GD'), /tối đa khoảng 8\.000 ký tự/); assert.match(text('Lead Dev'), /tối đa 8 mục mỗi task/);
+  assert.equal(require('../roles.cjs').MAX_TURNS.Dev, 40);
 });

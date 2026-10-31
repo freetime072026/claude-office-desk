@@ -1,6 +1,7 @@
 // Tệp .md làm "trí nhớ" chung thay cho lịch sử chat. Đặt trong thư mục chính của session:
 //   .office-desk/PROJECT.md                 bản đồ project, Lead cập nhật, Dev đọc (dùng chung mọi session của project)
 //   .office-desk/<session>/GDD.md           GD ghi; Lead (phần Dev) và QA đọc
+//   .office-desk/<session>/UIUX.md          UI/UX ghi; Lead trích màn hình vào task Dev, QA đọc khi kiểm UI
 //   .office-desk/<session>/TASKS.md         app ghi từ khối tasks hợp lệ của Lead
 //   .office-desk/<session>/ISSUES.md        QA ghi; Lead đọc khi triage
 //   .office-desk/<session>/PERF.md          QA ghi ở pha performance
@@ -11,12 +12,13 @@ const SUMMARY_LIMIT = 1500;
 const TEMPLATES = {
   gdd: '# GDD\n\n## Mục tiêu\n\n## Phạm vi / ngoài phạm vi\n\n## User Stories và AC\n<!-- US-1 … / AC-1.1 … có ID để QA kiểm -->\n\n## Phân việc theo khối\n<!-- UI/UX, Dev, VFX, QA nhận gì -->\n\n## VFX\n<!-- Hiệu ứng nào, cho sự kiện nào, cảm giác mong muốn, ảnh tham chiếu; "Không có" nếu không cần -->\n\n## Ngân sách performance\n<!-- GC Alloc, CPU, GPU, frame time; ghi "Không áp dụng" nếu không cần -->\n\n## Câu hỏi mở\n',
   project: '# PROJECT\n<!-- Lead cập nhật: thư mục, module, quy ước, tệp quan trọng. Ngắn gọn để Dev đọc thay vì dò cả project. -->\n',
+  uiux: '# UIUX\n<!-- UI/UX ghi. Mỗi màn hình một mục có ID để Lead trích vào task Dev:\n## SCR-1 · Tên màn hình\nAC: AC-1.2\nLuồng vào/ra: …\nTrạng thái: bình thường, trống, lỗi, đang tải\nLayout và component: …\n-->\n',
   tasks: '# TASKS\n<!-- App ghi từ khối tasks của Lead. Không sửa tay khi đang chạy. -->\n',
   issues: '# ISSUES\n<!-- QA ghi. Mẫu:\n## ISS-1 · mở · cao\nAC: AC-1.2\nBước tái hiện: …\nKỳ vọng: …\nThực tế: …\n-->\n',
   perf: '# PERF\n<!-- QA ghi ở pha performance: ngân sách, cách đo, số đo, kết luận. -->\n',
   changes: '# CHANGES\n<!-- App ghi từ handoff của Dev: tệp đã sửa và lý do. -->\n'
 };
-const NAMES = { gdd: 'GDD.md', tasks: 'TASKS.md', issues: 'ISSUES.md', perf: 'PERF.md', changes: 'CHANGES.md' };
+const NAMES = { gdd: 'GDD.md', uiux: 'UIUX.md', tasks: 'TASKS.md', issues: 'ISSUES.md', perf: 'PERF.md', changes: 'CHANGES.md' };
 function filesOf(thread) {
   if (!thread.folder) return null;
   const base = path.join(thread.folder, DIR), own = path.join(base, thread.id);

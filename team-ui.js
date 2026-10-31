@@ -148,6 +148,13 @@
   const tokens = value => Math.round(value).toLocaleString();
   const usageText = usage => `vào ${tokens(usage.input)} (cache ${tokens(usage.cacheRead + usage.cacheWrite)}) · ra ${tokens(usage.output)} · $${usage.costUsd.toFixed(4)}`;
   const usageDetail = usage => `input ${tokens(usage.input)} · cache đọc ${tokens(usage.cacheRead)} · cache ghi ${tokens(usage.cacheWrite)} · output ${tokens(usage.output)} · ${usage.turns} turn`;
+  // Ngữ cảnh được gửi lại ở mỗi lần gọi model: tổng lớn nghĩa là lượt quá dài hoặc đọc tệp lớn → chia task nhỏ hơn.
+  const CONTEXT_TOTAL_WARN = 2000000, CONTEXT_AVERAGE_WARN = 80000;
+  function contextWarning(usage) {
+    const total = usage.input + usage.cacheRead + usage.cacheWrite, average = usage.turns ? total / usage.turns : 0;
+    if (total < CONTEXT_TOTAL_WARN && average < CONTEXT_AVERAGE_WARN) return '';
+    return `⚠ Lượt này xử lý ${tokens(total)} token ngữ cảnh (~${tokens(average)} mỗi lượt): task quá lớn hoặc đọc nhiều tệp lớn; chia task nhỏ hơn hoặc giao thêm Dev.`;
+  }
   function paintSessionUsage(thread) {
     const node = get('#usage-tokens'), roles = usageByRole(thread?.messages || []); node.hidden = !roles.size; if (!roles.size) { node.textContent = ''; return; }
     const total = [...roles.values()].reduce(addUsage, addUsage({}, null));
@@ -226,7 +233,7 @@
     setField(get('#role-responsibility'), base.responsibility || '', force); setField(get('#role-output'), base.output || '', force); setField(get('#role-instructions'), thread.roleConfig?.[type]?.instructions || '', force);
   }
   // Tệp .md của session (session-files.cjs) mở bằng trình xem tệp; tệp chỉ có sau lượt chạy role đầu tiên.
-  const SESSION_FILES = [['GDD.md', 'GDD'], ['TASKS.md', 'Tasks'], ['ISSUES.md', 'Issues'], ['PERF.md', 'Perf'], ['CHANGES.md', 'Changes']];
+  const SESSION_FILES = [['GDD.md', 'GDD'], ['UIUX.md', 'UI/UX'], ['TASKS.md', 'Tasks'], ['ISSUES.md', 'Issues'], ['PERF.md', 'Perf'], ['CHANGES.md', 'Changes']];
   function paintSessionFiles(thread, role) {
     const files = role ? thread.workers?.[role]?.files || [] : [];
     get('#worker-files').hidden = !files.length; get('#worker-files').textContent = 'Tệp được sửa: ' + files.join(', ');
@@ -264,7 +271,7 @@
     if (message.streaming) card.classList.add('streaming'); if (message.error) card.classList.add('chat-error');
     if (message.tools?.length) card.append(make('small', { textContent: 'Công cụ: ' + message.tools.join(', ') }));
     if (message.denied?.length) card.append(make('small', { className: 'run-denied', textContent: 'Bạn đã từ chối: ' + message.denied.join(', ') }));
-    if (message.usage) { const usage = addUsage({}, message.usage); card.append(make('small', { className: 'run-usage', textContent: 'Token: ' + usageText(usage), title: usageDetail(usage) })); }
+    if (message.usage) { const usage = addUsage({}, message.usage); card.append(make('small', { className: 'run-usage', textContent: 'Token: ' + usageText(usage), title: usageDetail(usage) })); const warning = contextWarning(usage); if (warning) card.append(make('small', { className: 'run-warning', textContent: warning })); }
     return card;
   }
   function renderActivity(thread) {

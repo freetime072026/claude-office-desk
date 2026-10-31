@@ -39,7 +39,7 @@ function cliMode(mode, scope) { return scope ? 'default' : permissionMode(mode);
 function cliTools(mode, scope) {
   if (!scope) return toolsFor(mode);
   const tools = [READ_TOOLS, 'Write,Edit,NotebookEdit'];
-  if (scope.bash && validMode(mode) && mode !== 'read') tools.push('Bash');
+  if (scope.bash) tools.push('Bash');
   if (mode !== 'bypass') tools.push(...WEB_TOOLS);
   return tools.join(',');
 }
