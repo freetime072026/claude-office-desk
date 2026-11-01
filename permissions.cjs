@@ -43,7 +43,8 @@ function roleScope(type, files, devFiles = [], folder = '') {
   // Art Director: shell để chụp màn hình/kiểm import qua Unity; không sửa ảnh, chỉ ghi tài liệu art và Issue.
   if (type === 'Art Director') return { paths: [files.style, files.assets, files.art, files.issues], bash: true, label: 'Art Director chỉ ghi STYLE.md, ASSETS.md, ART.md và ISSUES.md' };
   // Giữ dấu / cuối để mục thư mục vẫn là thư mục sau khi resolve.
-  if (isDevType(type) && devFiles.length) return { paths: devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), bash: true, label: type + ' chỉ sửa các tệp Lead giao' };
+  // MISSING_SOUNDS.md luôn ghi được: code cần âm thanh chưa có thì dùng sound tạm và ghi yêu cầu vào đây (prompt.cjs SOUND_GUIDE).
+  if (isDevType(type) && devFiles.length) return { paths: [...devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : [])], bash: true, label: type + ' chỉ sửa các tệp Lead giao (và MISSING_SOUNDS.md' + (type === 'Art' ? ', ART_PROMPTS.md' : '') + ')' };
   return null;
 }
 const norm = value => path.resolve(value).toLowerCase();

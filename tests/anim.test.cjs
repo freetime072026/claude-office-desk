@@ -11,7 +11,7 @@ const tasks = list => fence('tasks', { tasks: list.map(([worker, files]) => ({ w
 const session = roles => { const team = initial(); const id = update(team, 'create', { request: 'Game' }); for (const type of roles) update(team, 'add-worker', { id, type }); return { team, id, thread: team.threads[0] }; };
 
 test('Anim is a Dev-type role after Art and before QA: Sonnet, edit mode, shell, 40 tool turns, works from .md files', () => {
-  assert.deepEqual(PIPELINE, ['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'QA']);
+  assert.deepEqual(PIPELINE, ['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA']);
   const { team, id, thread } = session(['QA', 'Anim', 'Art', 'Dev', 'Lead Dev']);
   assert.deepEqual(thread.flow, ['Lead Dev', 'Dev', 'Art', 'Anim', 'QA']);
   assert.equal(worker(thread, 'Anim').model, 'sonnet'); assert.equal(worker(thread, 'Anim').mode, 'edit');
@@ -23,7 +23,7 @@ test('Anim is a Dev-type role after Art and before QA: Sonnet, edit mode, shell,
 test('who assigns Anim: Lead without an Art Director, the Art Director when there is one; AD review reject can send work back to Anim', () => {
   const solo = session(['Lead Dev', 'Dev', 'Anim']).thread;
   assert(mergePlan(solo, 'Lead Dev', tasks([['Dev', ['src/']], ['Anim', ['Assets/Anim/']]])).dispatch);
-  const { thread } = session(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'Art', 'Anim', 'QA']);
+  const { thread } = session(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'Art', 'Anim', 'Sound', 'QA']);
   assert.match(mergePlan(thread, 'Lead Dev', tasks([['Anim', ['Assets/Anim/']]])).problems, /không phải Dev\/VFX/);
   const ad = mergePlan(thread, 'Art Director', tasks([['Art', ['ArtGen/']], ['Anim', ['Assets/Anim/']]])).dispatch;
   assert.deepEqual(ad.map(task => task.worker + ':' + task.by), ['Art:Art Director', 'Anim:Art Director']);
@@ -38,6 +38,6 @@ test('Anim prompt: Anim section of GDD and ANIM specs, Editor scripts over hand-
   assert.match(brief, /mục ANIM-… của task trong .*ART\.md/); assert.match(brief, /mục Anim trong .*GDD\.md/); assert.match(brief, /Chỉ được sửa: Assets\/Anim\//);
   assert.match(brief, /không sửa YAML \.anim\/\.controller/); assert.match(brief, /chụp các frame chính hoặc contact sheet rồi Read/);
   assert.match(brief, /số frame, fps, thời lượng, event, loop/); assert.match(brief, /"reassign":true/);
-  assert.match(TEMPLATES.gdd, /## Art\n[^\n]*\n\n## Anim\n<!-- Animation nào[^\n]*\n\n## Ngân sách performance/);
+  assert.match(TEMPLATES.gdd, /## Art\n[^\n]*\n\n## Anim\n<!-- Animation nào[^\n]*\n\n## Sound\n/);
   assert.match(TEMPLATES.art, /ANIM-…: clip, số frame, fps/);
 });

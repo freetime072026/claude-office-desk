@@ -100,12 +100,12 @@ test('R1 / TC-ROLE-06b: dropping a passed Dev via select-roles forgets it; selec
 test('R1: select-roles may drop Lead Dev together with Dev/QA in an unstarted session', () => {
   const { team, id, thread } = loopSession(); update(team, 'select-roles', { id, roles: ['GD'] }); assert.deepEqual(thread.flow, ['GD']);
 });
-test('R5: roles after QA run before Lead review; flow [GD, Lead Dev, Dev, QA, Sound]', () => {
-  const { team, id, thread } = loopSession(); update(team, 'assign-role', { id, name: 'Sound' }); assert.deepEqual(thread.flow, ['GD', 'Lead Dev', 'Dev', 'QA', 'Sound']);
+test('R5: roles after QA run before Lead review; flow [GD, Lead Dev, Dev, QA, Narrative]', () => {
+  const { team, id, thread } = loopSession(); update(team, 'assign-role', { id, name: 'Narrative' }); assert.deepEqual(thread.flow, ['GD', 'Lead Dev', 'Dev', 'QA', 'Narrative']);
   toQA(team, id); step(team, id, 'QA pass');
-  assert.equal(thread.flow[thread.stage], 'Sound'); assert(thread.qaPassedAt); assert.equal(thread.qaFailRounds, 0); assert.equal(thread.status, 'waiting');
-  step(team, id, 'Sound done'); assert.equal(thread.flow[thread.stage], 'Lead Dev'); assert.equal(thread.leadPhase, 'review');
-  assert.deepEqual(removable(thread, 'Sound'), { ok: true, reason: 'đã pass' });
+  assert.equal(thread.flow[thread.stage], 'Narrative'); assert(thread.qaPassedAt); assert.equal(thread.qaFailRounds, 0); assert.equal(thread.status, 'waiting');
+  step(team, id, 'Narrative done'); assert.equal(thread.flow[thread.stage], 'Lead Dev'); assert.equal(thread.leadPhase, 'review');
+  assert.deepEqual(removable(thread, 'Narrative'), { ok: true, reason: 'đã pass' });
   step(team, id, 'Review pass'); assert.equal(thread.status, 'done');
 });
 test('AC-ROLE-04.3 (TC-MIG-01): legacy Lead Planning/Lead Review migrate to one Lead Dev', () => {

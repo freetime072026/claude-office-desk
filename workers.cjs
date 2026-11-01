@@ -6,7 +6,7 @@ const FILES_PER_TASK = 8;
 const validFile = file => typeof file === 'string' && file.trim() && file.length <= 500 && !path.isAbsolute(file) && !file.split(/[\\/]/).includes('..');
 const resolvedFiles = (folder, files) => files.map(file => path.resolve(folder || '.', file) + (/[\\/]$/.test(file) ? path.sep : ''));
 // Thứ tự pipeline chuẩn (PLAN L-4). Role tùy chỉnh luôn đứng sau QA.
-const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'QA']);
+const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA']);
 const LEAD = 'Lead Dev';
 // Khối chỉ có một mỗi session: các pha của chúng là nút riêng trên sơ đồ (flowgraph.cjs).
 const SINGLE_TYPES = Object.freeze([LEAD, 'Art Director']);

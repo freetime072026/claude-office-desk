@@ -192,7 +192,7 @@
     if (runningOf(thread, role)) text = '● Đang thực hiện';
     else if (thread.workers?.[role]?.paused) text = '⏸ Tạm dừng';
     else if (task) text = taskNames[task.status] || task.status;
-    else if (index < thread.stage || thread.status === 'done') text = ['Dev', 'VFX', 'Art', 'Anim'].includes(thread.workers?.[role]?.type) && thread.flow[thread.stage] === 'QA' ? '✓ Đã làm · chờ QA' : '✓ Đã bàn giao';
+    else if (index < thread.stage || thread.status === 'done') text = ['Dev', 'VFX', 'Art', 'Anim', 'Sound'].includes(thread.workers?.[role]?.type) && thread.flow[thread.stage] === 'QA' ? '✓ Đã làm · chờ QA' : '✓ Đã bàn giao';
     else text = index === thread.stage ? names[thread.status] : 'Chưa đến bước';
     if (isLead(thread, role) && qaRoundLimit) text += ` · ${phaseNames[thread.leadPhase] || phaseNames.planning} · QA ${thread.qaFailRounds || 0}/${qaRoundLimit}`;
     return text;
@@ -267,7 +267,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     paintBlockPicker(thread);
     const running = role ? runningOf(thread, role) : thread?.messages.findLast(message => message.role === 'Claude' && message.streaming);
     get('#panel-state').textContent = !thread ? 'Chưa có session' : running ? progressText(running) : role ? blockLabel(thread, role, thread.flow.indexOf(role)) : 'Không role · chạy Claude Code thường';
-    for (const id of ['#account-field', '#task-field', '#role-texts']) get(id).hidden = !role;
+    for (const id of ['#account-field', '#task-field', '#role-texts', '#art-gen-field']) get(id).hidden = !role;
     paintSessionFiles(thread, role);
     for (const field of document.querySelectorAll('#panel select, #panel textarea')) field.disabled = !thread || thread.archived;
     setField(get('#chat-mode'), config.mode || thread?.mode || 'read', force); setField(get('#chat-model'), config.model || thread?.model || 'claude-opus-5-5', force);
@@ -277,6 +277,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     setField(get('#worker-task'), config.task || '', force);
     const type = roleType(thread, role), base = team.roleTemplates?.[type] || defaultRoles[type] || {};
     paintRoleMcp(thread, type);
+    get('#art-gen-field').hidden = type !== 'Art'; setField(get('#art-generator'), team.artGenerator || 'chatgpt', force);
     setField(get('#role-responsibility'), base.responsibility || '', force); setField(get('#role-output'), base.output || '', force); setField(get('#role-instructions'), thread.roleConfig?.[type]?.instructions || '', force);
   }
   // US-08: mỗi loại role chỉ nạp MCP server được tích ở đây (team.roleMcp, dùng chung mọi session); chat thường nạp tất cả.
@@ -296,7 +297,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     get('#worker-files').hidden = !files.length; get('#worker-files').textContent = 'Tệp được sửa: ' + files.join(', ');
     const box = get('#session-files'); box.hidden = !thread?.flow.length || !thread.folder; if (box.hidden) return;
     const base = thread.folder.replace(/[\\/]+$/, '') + '\\.office-desk\\';
-    const links = [['PROJECT.md', 'Project', base + 'PROJECT.md'], ['STYLE.md', 'Style', base + 'STYLE.md'], ['ASSETS.md', 'Assets', base + 'ASSETS.md'], ...SESSION_FILES.map(([name, title]) => [name, title, base + thread.id + '\\' + name])];
+    const links = [['PROJECT.md', 'Project', base + 'PROJECT.md'], ['STYLE.md', 'Style', base + 'STYLE.md'], ['ASSETS.md', 'Assets', base + 'ASSETS.md'], ['MISSING_SOUNDS.md', 'Sounds thiếu', base + 'MISSING_SOUNDS.md'], ...SESSION_FILES.map(([name, title]) => [name, title, base + thread.id + '\\' + name])];
     const key = links.map(link => link[2]).join('|'); if (box.dataset.key === key) return; box.dataset.key = key;
     box.querySelector('.file-links').replaceChildren(...links.map(([name, title, file]) => make('button', { type: 'button', textContent: title, title: file, onclick: () => window.openChatFile(file) })));
   }
@@ -307,6 +308,8 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     if (result?.loginStarted) { await window.office.run('navigate', { page: 'index.html' }); return; } if (result) saved.textContent = '✓ Đã lưu cấu hình riêng của khối';
   }
   for (const id of ['#chat-mode', '#chat-model', '#worker-account', '#worker-task']) get(id).onchange = saveWorker;
+  // Công cụ sinh ảnh dùng chung cho mọi khối Art ở mọi session (team.artGenerator).
+  get('#art-generator').onchange = async () => { if (await act('art-generator', { mode: get('#art-generator').value })) get('#panel-saved').textContent = '✓ Đã lưu công cụ sinh ảnh của Art'; };
   async function saveRoleTexts() {
     const thread = current(); if (!thread?.flow.includes(selectedWorker)) return;
     try { await window.office.run('team', { action: 'role-config', id: selected, role: roleType(thread, selectedWorker), responsibility: get('#role-responsibility').value, output: get('#role-output').value, instructions: get('#role-instructions').value, saveDefault: true }); get('#panel-saved').textContent = '✓ Đã lưu'; } catch (error) { get('#panel-saved').textContent = error.message; }
