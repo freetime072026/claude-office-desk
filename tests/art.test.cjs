@@ -9,7 +9,7 @@ const fence = (name, value) => '```' + name + '\n' + JSON.stringify(value) + '\n
 const session = roles => { const team = initial(); const id = update(team, 'create', { request: 'Game' }); for (const type of roles) update(team, 'add-worker', { id, type }); return { team, id, thread: team.threads[0] }; };
 
 test('Art is a Dev-type role after VFX and before QA: Sonnet, edit mode, shell, 40 tool turns, works from .md files', () => {
-  assert.deepEqual(PIPELINE, ['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'QA']);
+  assert.deepEqual(PIPELINE, ['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'QA']);
   const { team, id, thread } = session(['QA', 'Art', 'Dev', 'Lead Dev']);
   assert.deepEqual(thread.flow, ['Lead Dev', 'Dev', 'Art', 'QA']);
   assert.equal(worker(thread, 'Art').model, 'sonnet'); assert.equal(worker(thread, 'Art').mode, 'edit');
@@ -34,5 +34,5 @@ test('Art prompt: Art section of GDD and UI/UX screens, its files, project pipel
 });
 test('GDD template has an Art section', () => {
   const { TEMPLATES } = require('../session-files.cjs');
-  assert.match(TEMPLATES.gdd, /## VFX\n[^\n]*\n\n## Art\n<!-- Sprite\/icon\/ảnh UI cần làm[^\n]*\n\n## Ngân sách performance/);
+  assert.match(TEMPLATES.gdd, /## VFX\n[^\n]*\n\n## Art\n<!-- Sprite\/icon\/ảnh UI cần làm[^\n]*\n\n## Anim\n/);
 });

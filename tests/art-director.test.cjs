@@ -105,7 +105,7 @@ test('prompts: AD planning approves mockups and writes ART.md specs; review chec
   assert.match(planning, /decor, hoạ tiết/); assert.match(planning, /quy ước thư mục theo feature/); assert.match(planning, /"status":"reject"/);
   thread.adPhase = 'review'; const review = rolePrompt({}, thread, 'Art Director', { content: 'x', files }).brief;
   assert.match(review, /lệch style/); assert.match(review, /nén texture theo ngân sách STYLE\.md/); assert.match(review, /ảnh trùng nên dùng tài nguyên common/); assert.match(review, /"status":"issue"/);
-  assert.match(rolePrompt({}, thread, 'Lead Dev', { content: 'x', files }).brief, /không đưa khối Art vào tasks của bạn/);
+  assert.match(rolePrompt({}, thread, 'Lead Dev', { content: 'x', files }).brief, /không đưa khối Art\/Anim vào tasks của bạn/);
   const art = rolePrompt({}, thread, 'Art', { content: 'x', files }).brief; assert.match(art, /STYLE\.md/); assert.match(art, /mục ART-… của task trong .*ART\.md/);
   assert.match(rolePrompt({}, thread, 'UI/UX', { content: 'x', files }).brief, /kích thước từng item \(px, anchor\) để Art Director duyệt/);
 });

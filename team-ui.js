@@ -192,7 +192,7 @@
     if (runningOf(thread, role)) text = '● Đang thực hiện';
     else if (thread.workers?.[role]?.paused) text = '⏸ Tạm dừng';
     else if (task) text = taskNames[task.status] || task.status;
-    else if (index < thread.stage || thread.status === 'done') text = ['Dev', 'VFX', 'Art'].includes(thread.workers?.[role]?.type) && thread.flow[thread.stage] === 'QA' ? '✓ Đã làm · chờ QA' : '✓ Đã bàn giao';
+    else if (index < thread.stage || thread.status === 'done') text = ['Dev', 'VFX', 'Art', 'Anim'].includes(thread.workers?.[role]?.type) && thread.flow[thread.stage] === 'QA' ? '✓ Đã làm · chờ QA' : '✓ Đã bàn giao';
     else text = index === thread.stage ? names[thread.status] : 'Chưa đến bước';
     if (isLead(thread, role) && qaRoundLimit) text += ` · ${phaseNames[thread.leadPhase] || phaseNames.planning} · QA ${thread.qaFailRounds || 0}/${qaRoundLimit}`;
     return text;

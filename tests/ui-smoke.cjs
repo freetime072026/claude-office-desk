@@ -33,7 +33,7 @@ app.whenReady().then(async () => {
       if (JSON.stringify(mcpState.team.roleMcp?.GD) !== '["image-gen"]' || JSON.stringify(mcpState.mcpServers) !== '["image-gen"]') throw Error('Role MCP not saved: ' + JSON.stringify(mcpState.team.roleMcp));
       document.querySelector('#role').click(); await new Promise(resolve => setTimeout(resolve, 200));
       const roleChoices = [...document.querySelectorAll('#add-role-choices button')].map(button => button.textContent); document.querySelector('#add-role-dialog').close();
-      if (!roleChoices.includes('+ Art Director') || !roleChoices.includes('+ Art')) throw Error('Role choices missing Art/Art Director: ' + roleChoices.join(', '));
+      if (!['+ Art Director', '+ Art', '+ Anim'].every(choice => roleChoices.includes(choice))) throw Error('Role choices missing Art/Art Director: ' + roleChoices.join(', '));
       const project = await window.office.run('team', {action:'project', name:'UI test project'});
       const thread = await window.office.run('team', {action:'create', project, title:'UI test session', request:'Test request'});
       for (const name of ['GD', 'Lead Dev', 'Dev', 'QA']) await window.office.run('team', {action:'assign-role', id:thread, name});

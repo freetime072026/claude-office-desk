@@ -56,6 +56,10 @@ Thêm bằng **＋ Role → + Art** (thêm nhiều lần thành Art #2…). Art 
 
 **MCP theo role (US-08).** Mỗi loại role chỉ nạp MCP server được tích ở mục **Trách nhiệm & yêu cầu riêng → MCP server của role** (áp dụng cho mọi session và mọi khối cùng loại, ví dụ Art và Art #2); mặc định role không nạp MCP nào, chat thường nạp tất cả. Mỗi lượt của role nhận một tệp `--mcp-config` riêng chỉ gồm các server đó (xoá sau lượt), nên schema tool MCP không nằm trong ngữ cảnh của role không dùng. `/mcp` cho biết khối đang chọn nạp những server nào. Lưu ý: tệp do MCP server tự ghi không đi qua kiểm phạm vi tệp của app.
 
+## Role Anim
+
+Thêm bằng **＋ Role → + Anim** (thêm nhiều lần thành Anim #2…). Anim là Dev chuyên animation (sprite theo frame, rig/skeletal 2D, Animator controller và state, timing, animation event): đứng sau Art, trước QA, chạy song song với Dev/VFX/Art khi tệp không chồng nhau. **Người giao task:** session có Art Director thì Art Director giao (đặc tả mỗi animation một mục **ANIM-…** trong ART.md: clip, số frame, fps, thời lượng, pose chính, frame có event, loop, tham chiếu) và Lead không được giao Anim; không có Art Director thì Lead giao. Anim đọc mục **Anim** trong GDD (GD ghi animation nào, cho unit/sự kiện nào, cảm giác, timing) và mục ANIM-… của task. Prompt yêu cầu tạo clip/Animator/rig bằng script Editor hoặc pipeline animation có sẵn của project, không sửa YAML `.anim`/`.controller` hay GUID bằng tay; tham số Animator/event mà code cần thì ghi chữ ký trong handoff để Lead giao Dev. Claude không xem được chuyển động: Anim chụp các frame chính hoặc contact sheet rồi Read để tự kiểm, handoff ghi số frame, fps, thời lượng, event, loop, cách xem và cần kiểm tra trực quan gì. Art Director review kiểm animation bằng chuỗi frame (timing, pose, frame lỗi) và có thể trả Anim làm lại. Model mặc định Sonnet, 40 lượt tool mỗi lượt chat.
+
 ## Role Art Director
 
 Thêm bằng **＋ Role → + Art Director** (một khối mỗi session, như Lead Dev). Art Director giữ style và chất lượng hình ảnh; có hai pha, mỗi pha là một nút trên sơ đồ:

@@ -6,7 +6,7 @@ const FILES_PER_TASK = 8;
 const validFile = file => typeof file === 'string' && file.trim() && file.length <= 500 && !path.isAbsolute(file) && !file.split(/[\\/]/).includes('..');
 const resolvedFiles = (folder, files) => files.map(file => path.resolve(folder || '.', file) + (/[\\/]$/.test(file) ? path.sep : ''));
 // Thứ tự pipeline chuẩn (PLAN L-4). Role tùy chỉnh luôn đứng sau QA.
-const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'QA']);
+const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'QA']);
 const LEAD = 'Lead Dev';
 // Khối chỉ có một mỗi session: các pha của chúng là nút riêng trên sơ đồ (flowgraph.cjs).
 const SINGLE_TYPES = Object.freeze([LEAD, 'Art Director']);
@@ -80,11 +80,12 @@ function removable(thread, label, { busy = false } = {}) {
   if (dependent) return { ok: false, force: true, reason: dependent.worker + ' còn phụ thuộc ' + label };
   return passed(thread, label) ? { ok: true, reason: 'đã pass' } : { ok: false, force: true, reason: label + ' có việc nhưng chưa pass' };
 }
-// Có Art Director thì Art nhận task từ Art Director (task.by), Lead chỉ giao Dev/VFX; không có thì Lead giao cả Art.
+// Có Art Director thì Art và Anim nhận task từ Art Director (task.by), Lead chỉ giao Dev/VFX; không có thì Lead giao cả Art/Anim.
 const hasArtDirector = thread => (thread.flow || []).some(label => typeOf(label) === ART_DIRECTOR);
-const LEAD_TYPES_WITH_AD = Object.freeze(DEV_TYPES.filter(type => type !== 'Art'));
+const VISUAL_TYPES = Object.freeze(['Art', 'Anim']);
+const LEAD_TYPES_WITH_AD = Object.freeze(DEV_TYPES.filter(type => !VISUAL_TYPES.includes(type)));
 const leadTypes = thread => hasArtDirector(thread) ? LEAD_TYPES_WITH_AD : DEV_TYPES;
-const AD_TYPES = Object.freeze(['Art']);
+const AD_TYPES = VISUAL_TYPES;
 const ownedByAd = (thread, task) => task.by === ART_DIRECTOR && hasArtDirector(thread);
 // problems nhận lý do khi kế hoạch bị từ chối, để báo cho người dùng/Lead thay vì chỉ "không hợp lệ".
 // types: loại khối được nhận task; reserved: task của người giao khác đang giữ tệp (không được chồng).
@@ -108,7 +109,7 @@ function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [
     return plan.tasks.map(task => ({ worker: task.worker, task: task.task, files: [...new Set(task.files.map(file => file.trim().replaceAll('\\', '/')))], ...(task.dependsOn?.length ? { dependsOn: [...new Set(task.dependsOn)] } : {}) }));
   } catch { return fail('JSON trong khối tasks không đọc được'); }
 }
-// Kế hoạch của Lead (Dev/VFX; cả Art khi session không có Art Director) hoặc Art Director (Art). Thay task chưa bắt đầu của chính người
+// Kế hoạch của Lead (Dev/VFX; cả Art/Anim khi session không có Art Director) hoặc Art Director (Art/Anim). Thay task chưa bắt đầu của chính người
 // giao; task của người giao kia được giữ và không được chồng tệp; khối của người giao đang chạy/tạm dừng thì chưa áp. Thuần, main.cjs ghi.
 function mergePlan(thread, planner, text) {
   const byAd = planner === ART_DIRECTOR, mine = task => byAd === ownedByAd(thread, task);

@@ -57,9 +57,9 @@ function defaultGraph(thread) {
     if (lead) { const top = Math.min(...nodes.filter(node => devs.includes(node.id)).map(node => node.y)); const triage = add(leadId('triage'), lead, 'triage', { x: 40 + (devColumn - 1) * 200, y: top - 120 }); linkAll(qas, [triage], 'issue'); linkAll([triage], devs); }
     else linkAll(qas, devs, 'issue');
   }
-  // Art Director review: ảnh sai → reject kèm task Art làm lại; lỗi visual do code/layout → issue về Lead triage (hoặc Dev).
+  // Art Director review: ảnh/animation sai → reject kèm task Art/Anim làm lại; lỗi visual do code/layout → issue về Lead triage (hoặc Dev).
   if (adReview) {
-    linkAll([adReview], devs.filter(label => type(label) === 'Art'), 'reject');
+    linkAll([adReview], devs.filter(label => ['Art', 'Anim'].includes(type(label))), 'reject');
     const triage = nodes.find(node => node.id === leadId('triage'))?.id;
     if (triage) link(adReview, triage, 'issue'); else if (lead) { const top = Math.min(...nodes.filter(node => devs.includes(node.id)).map(node => node.y)); const id = add(leadId('triage'), lead, 'triage', { x: 40 + (devColumn - 1) * 200, y: top - 120 }); link(adReview, id, 'issue'); linkAll([id], devs); }
     else linkAll([adReview], devs, 'issue');
