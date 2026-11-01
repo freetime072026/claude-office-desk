@@ -19,6 +19,7 @@ const attachments = require('./attachments.cjs');
 const unity = require('./unity.cjs');
 const projectDocs = require('./project-docs.cjs');
 const fileChanges = require('./file-changes.cjs');
+const penpot = require('./penpot.cjs');
 const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor, ART_DIRECTOR } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
@@ -233,9 +234,11 @@ app.whenReady().then(() => {
       // Lệnh slash xử lý cục bộ nên vẫn dùng được khi khối đang trả lời (ví dụ /role Dev pause).
       if (!content.startsWith('/')) { if (chats.has(activeKey)) throw retryable('Khối này đang trả lời. Khối khác vẫn có thể chạy.'); if (chats.size >= 8) throw retryable('Tối đa 8 phiên chat'); }
       const localReply = text => { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); thread.messages.push({ role: 'Hệ thống', text, time: new Date().toISOString() }); persist(); publish(); return true; };
-      if (content === '/help') return localReply('/role <khối> start|pause: chạy/tạm dừng một khối (vd. /role Lead Dev pause). /chot: chốt GD và chạy tự động các bước sau. /compact [điều cần giữ]: compact phiên của khối đang chọn. /auto on|off: bật/tắt chạy tự động. /model: chọn model bên dưới. /status: cấu hình session. /mcp, /mcp open: xem/sửa MCP server. /usage: quota đã nhận từ CLI. Lệnh tương tác khác dùng trong Terminal.');
+      if (content === '/help') return localReply('/role <khối> start|pause: chạy/tạm dừng một khối (vd. /role Lead Dev pause). /chot: chốt GD và chạy tự động các bước sau. /compact [điều cần giữ]: compact phiên của khối đang chọn. /auto on|off: bật/tắt chạy tự động. /model: chọn model bên dưới. /status: cấu hình session. /mcp, /mcp open: xem/sửa MCP server. /mcp penpot: thêm Penpot MCP cho UI/UX, Art Director, Art. /usage: quota đã nhận từ CLI. Lệnh tương tác khác dùng trong Terminal.');
       if (content.startsWith('/model')) return localReply('Model của khối hiện tại: ' + (worker.model || 'claude-opus-5-5') + '. Đổi bằng danh sách Model dưới ô chat.');
       if (content === '/mcp') { let names; try { names = mcpServerNames(); } catch (error) { return localReply(error.message); } const own = payload.role ? names.filter(name => (metadata.team.roleMcp?.[worker.type] || []).includes(name)) : names; return localReply((names.length ? 'MCP server đã khai báo: ' + names.join(', ') + '\n' + (payload.role ? `${payload.role} nạp: ${own.join(', ') || 'không có'} (chọn trong mục Trách nhiệm & yêu cầu riêng; áp dụng cho mọi khối ${worker.type})` : 'Chat thường nạp tất cả.') : 'Chưa khai báo MCP server.') + '\nCấu hình: ' + mcp + '\nDùng /mcp open để mở và sửa (dạng {"mcpServers":{"ten":{"command":"...","args":[]}}}). Áp dụng từ lượt sau; Plan chỉ đọc không gọi tool MCP.'); }
+      // Thêm Penpot MCP (penpot.cjs) vào mcp-servers.json, bật cho UI/UX, Art Director, Art và hướng dẫn chạy server + plugin.
+      if (content === '/mcp penpot') { let text; try { mcpServerNames(); text = penpot.install(mcp, metadata.team); } catch (error) { return localReply(error.message); } persist(); publish(); return localReply(text); }
       if (content === '/mcp open') { const failure = await shell.openPath(mcp); return localReply(failure ? 'Không mở được: ' + failure : 'Đã mở ' + mcp + '. Lưu tệp rồi gửi lượt mới.'); }
       const command = pipeline.parseCommand(content, thread.flow);
       if (command?.kind === 'error') return localReply(command.message);
@@ -272,6 +275,11 @@ app.whenReady().then(() => {
       if (writes) { if (editOverlap(thread, scope?.paths)) throw retryable('Có Dev đang sửa cùng thư mục. Đợi lượt đó xong để tránh ghi đè; các lượt chỉ đọc vẫn chạy song song.'); if (needsTurnConfirm(worker.mode, foldersOf(thread)) && !autoApproved) { const answer = await dialog.showMessageBox(window, { type: 'warning', message: 'Bypass trên ổ hệ thống hoặc thư mục mạng: bỏ duyệt thao tác tệp và lệnh shell trong lượt này?', detail: foldersOf(thread).join('\n'), buttons: ['Hủy', 'Cho phép lần này'], defaultId: 0, cancelId: 0 }); if (answer.response !== 1) return false; } }
       if (chats.has(activeKey)) throw retryable('Khối đang trả lời');
       if (writes && editOverlap(thread, scope?.paths)) throw retryable('Một lượt sửa đã bắt đầu trong lúc xác nhận; hãy đợi để tránh ghi đè.');
+      // US-08: khối trong luồng chỉ nạp MCP server bật cho loại role của nó (team.roleMcp); chat thường nạp tất cả.
+      const allMcp = mcpServerNames(), mcpServers = payload.role ? allMcp.filter(name => (metadata.team.roleMcp?.[worker.type] || []).includes(name)) : allMcp;
+      // Penpot MCP chỉ thao tác trên page đang mở trong một tab: mỗi lúc một khối dùng Penpot (penpot.cjs).
+      const penpotRun = !compactOnly && penpot.usesPenpot(mcpServers), penpotBusy = penpotRun && [...chats.values()].find(run => run.penpot);
+      if (penpotBusy) throw retryable(`Penpot đang được ${penpotBusy.message?.role || 'khối khác'} dùng; đợi lượt đó xong.`);
       const directory = profileDir(root, profileId); fs.mkdirSync(directory, { recursive: true });
       const policy = JSON.parse(fs.readFileSync(settings, 'utf8')); policy.disableAllHooks = true;
       const chatSettings = path.join(directory, 'chat-settings.json'); fs.writeFileSync(chatSettings, JSON.stringify(policy));
@@ -293,15 +301,13 @@ app.whenReady().then(() => {
       // CLAUDE.md của dự án: cả nội dung ở lượt đầu mỗi phiên CLI, sau đó chỉ dòng tra README (project-docs.cjs).
       const fullDocs = !compactOnly && projectDocs.needsFull(thread, sessionKey, resumed);
       const docsGuide = projectDocs.guide(projectDocs.read(thread.folder), payload.role ? worker.type : '', fullDocs);
-      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide });
+      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun });
       // Brief vai trò đi qua system prompt. CLI giữ system prompt của lần gọi đầu khi resume, nên brief đổi (task/pha mới) trong
       // phiên đang tiếp tục được gửi một lần trong tin; thread.briefSent nhớ bản phiên đã có.
       const briefHash = built?.brief ? createHash('sha1').update(built.brief).digest('hex') : '', briefKnown = !resumed || thread.briefSent?.[sessionKey] === briefHash;
       const prompt = compactOnly ? content : briefKnown ? built.body : [built.brief, built.body].filter(Boolean).join('\n');
       if (briefHash) (thread.briefSent ||= {})[sessionKey] = briefHash;
       if (fullDocs && docsGuide) projectDocs.markSent(thread, sessionKey, resumed);
-      // US-08: khối trong luồng chỉ nạp MCP server bật cho loại role của nó (team.roleMcp); chat thường nạp tất cả.
-      const allMcp = mcpServerNames(), mcpServers = payload.role ? allMcp.filter(name => (metadata.team.roleMcp?.[worker.type] || []).includes(name)) : allMcp;
       const mcpConfig = payload.role ? mcpSubset(mcpServers) : null;
       if (payload.auto) thread.messages.push({ role: 'Điều phối', text: content, time: new Date().toISOString() }); else { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); if (images.length) thread.messages.at(-1).attachments = images; }
       if (folderNote) thread.messages.push({ role: 'Hệ thống', text: folderNote, time: new Date().toISOString() });
@@ -310,7 +316,7 @@ app.whenReady().then(() => {
       const model = payload.role ? modelFor(worker.type, worker.model, thread.leadPhase) : worker.model;
       const runThread = { ...thread, mode: worker.mode, model, cliSessions: thread.cliSessions ||= {}, sessionTotals: thread.sessionTotals ||= {} };
       const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: images.length ? [attachments.folderOf(root, thread.id)] : [], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
-      run.message.profileId = profileId; run.message.model = model;
+      run.message.profileId = profileId; run.message.model = model; run.penpot = penpotRun;
       run.child.once('close', () => {
         chats.delete(activeKey);
         if (compactOnly) { persist(); publish(); return; }

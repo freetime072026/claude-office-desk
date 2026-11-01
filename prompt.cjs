@@ -2,6 +2,7 @@
 const path = require('node:path');
 const { defaults, SHELL_TYPES, ART_DIRECTOR } = require('./roles.cjs');
 const { GUIDE: READER_GUIDE } = require('./subagent.cjs');
+const { guide: penpotGuide } = require('./penpot.cjs');
 const { LEAD, QA_ROUND_LIMIT, labelType, authoredBy, hasArtDirector } = require('./workers.cjs');
 // US-04 / AC-04.3: lịch sử gọn cho role còn nhận lịch sử chat (GD, chat thường, role tùy chỉnh).
 const PROMPT_LIMITS = Object.freeze({ recent: 8, total: 8000, handoff: 1500, resumeDelta: 8 });
@@ -103,7 +104,7 @@ function phaseGuide({ lead, phase }) { if (!lead) return ''; if (phase === 'revi
 // không cộng dồn vào lịch sử mỗi lượt). Phần đổi theo lượt (kế hoạch bị từ chối, Issue đang mở) nằm ở body.
 function briefLines(options) {
   const { label, context, task, roster } = options; if (!label) return [];
-  return [header(options), field('Trách nhiệm', context.responsibility), field('Đầu ra', context.output), field('Yêu cầu riêng của session', context.instructions), field('Task của khối', task), roster ? 'Đội hiện có:\n' + roster : '', phaseGuide(options), fileGuide(options), options.files ? WORK_GUIDE : '', options.files && SHELL_TYPES.includes(options.type) ? READER_GUIDE : '', SHELL_TYPES.includes(options.type) ? options.unity : '', handoffGuide(options)];
+  return [header(options), field('Trách nhiệm', context.responsibility), field('Đầu ra', context.output), field('Yêu cầu riêng của session', context.instructions), field('Task của khối', task), roster ? 'Đội hiện có:\n' + roster : '', phaseGuide(options), fileGuide(options), options.files ? WORK_GUIDE : '', options.files && SHELL_TYPES.includes(options.type) ? READER_GUIDE : '', SHELL_TYPES.includes(options.type) ? options.unity : '', options.penpot ? penpotGuide(options.type) : '', handoffGuide(options)];
 }
 function turnLines(options) {
   if (!options.label) return [];
