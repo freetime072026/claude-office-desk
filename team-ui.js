@@ -173,15 +173,21 @@
 
   // ---- Tiến độ lượt chạy.
   const STALL_MS = 5 * 60 * 1000;
+  // Một tool đang chạy (Bash build/test dài): Bash của CLI tối đa 10 phút, quá 11 phút mới coi là có thể treo.
+  const TOOL_STALL_MS = 11 * 60 * 1000;
   function elapsed(ms) { const seconds = Math.max(0, Math.floor(ms / 1000)), minutes = Math.floor(seconds / 60); return minutes ? `${minutes}m${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`; }
   function progressText(message) {
     const progress = message.progress; if (!progress?.startedAt) return '';
     const steps = progress.steps ? ` · ${progress.steps} bước` : '';
     if (!message.streaming) return progress.finishedAt ? `✓ Xong sau ${elapsed(Date.parse(progress.finishedAt) - Date.parse(progress.startedAt))}${steps}` : '';
     if (progress.waiting) return `⏸ ${elapsed(Date.now() - Date.parse(progress.startedAt))} · chờ bạn duyệt ${progress.waiting}${steps}`;
-    // Không có bước mới quá STALL_MS (không tính lúc chờ bạn duyệt): có thể đang treo, ví dụ một lệnh chờ mãi.
+    // Tool đang chạy: hiện thời gian chạy của lệnh; chỉ cảnh báo treo khi vượt TOOL_STALL_MS.
+    // Không có tool chạy mà không có bước mới quá STALL_MS (không tính lúc chờ bạn duyệt): có thể đang treo.
+    const running = progress.runningSince ? Date.now() - Date.parse(progress.runningSince) : 0;
     const idle = progress.updatedAt ? Date.now() - Date.parse(progress.updatedAt) : 0;
-    const stalled = idle > STALL_MS ? ` · ⚠ ${elapsed(idle)} không có tiến độ, có thể treo · bấm Dừng nếu cần` : '';
+    const stalled = progress.runningSince
+      ? (running > TOOL_STALL_MS ? ` · ⚠ lệnh chạy ${elapsed(running)}, có thể treo · bấm Dừng nếu cần` : running > 60 * 1000 ? ` · lệnh đang chạy ${elapsed(running)}` : '')
+      : idle > STALL_MS ? ` · ⚠ ${elapsed(idle)} không có tiến độ, có thể treo · bấm Dừng nếu cần` : '';
     const doing = progress.lastTool ? progress.lastTool + (progress.target ? ' ' + progress.target : '') : message.text ? 'đang viết trả lời' : 'đang suy nghĩ';
     return `● ${elapsed(Date.now() - Date.parse(progress.startedAt))} · ${doing}${steps}${stalled}`;
   }

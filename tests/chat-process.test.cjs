@@ -87,3 +87,14 @@ test('US-08: a role run gets its own --mcp-config with only its servers, removed
   await new Promise(resolve => setTimeout(resolve, 100)); assert.equal(fs.existsSync(file), false);
   fs.rmSync(path.join(__dirname, 'mcp'), { recursive: true, force: true });
 });
+
+test('progress keeps the running tool until its result arrives, so a long Bash is not reported as stalled', () => {
+  const { consume } = require('../chat.cjs');
+  const message = { text: '', time: new Date().toISOString() };
+  consume(message, { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm run qa -- --runs 10' } }] } });
+  assert.equal(message.progress.runningId, 't1'); assert(message.progress.runningSince);
+  consume(message, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'other', content: 'x' }] } });
+  assert.equal(message.progress.runningId, 't1');
+  consume(message, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'PASS' }] } });
+  assert.equal(message.progress.runningId, undefined); assert.equal(message.progress.runningSince, undefined);
+});

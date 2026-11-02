@@ -35,11 +35,14 @@ function addStep(message, block, sub) {
 function finishStep(message, result) {
   const step = (message.steps || []).findLast(item => item.id && item.id === result.tool_use_id); if (!step || step.end) return;
   step.end = new Date().toISOString(); step.ok = !result.is_error; step.result = oneLine(resultText(result.content), RESULT_CLIP);
-  progressOf(message).updatedAt = step.end;
+  const progress = progressOf(message); progress.updatedAt = step.end;
+  if (progress.runningId === result.tool_use_id) { delete progress.runningId; delete progress.runningSince; }
 }
 function trackTool(message, block, seen, sub = false) {
   if (block.id && seen.has(block.id)) return; if (block.id) seen.add(block.id);
   const progress = progressOf(message); progress.steps++; progress.lastTool = block.name; progress.target = targetOf(block.input); progress.updatedAt = new Date().toISOString();
+  // Tool đang chạy (chưa có tool_result): UI không coi lệnh dài (build, test trình duyệt) là treo khi lệnh còn trong thời gian cho phép.
+  if (block.id) { progress.runningId = block.id; progress.runningSince = progress.updatedAt; }
   addStep(message, block, sub); trackFile(message, block);
 }
 // Tệp tạo/sửa qua tool (file-changes.cjs gộp với git status). Event assistant tới trước khi tool chạy nên Write vào
