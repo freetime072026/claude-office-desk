@@ -75,6 +75,7 @@ test('Release: one per session after QA, writes only RELEASE.md/ISSUES.md, runs 
   for (const edge of ['Dev>Release:done', 'Release>@end:pass', 'Release>Dev:issue']) assert(soloEdges.includes(edge), edge);
   const brief = rolePrompt(team, { ...thread, folder: 'E:\\game' }, 'Release', { files }).brief;
   assert.match(brief, /RELEASE\.md/); assert.match(brief, /không sửa code/); assert.match(brief, /"status":"issue"/);
+  assert.match(brief, /1\) Commit:.*không push/); assert.match(brief, /không add thư mục \.office-desk\//); assert.match(brief, /không build\/QA kiểm lại/);
 });
 
 test('art rework: Dev rejects approved art (ui-mismatch) → Art Director review again while QA waits; AD pass resumes Dev with the guidance', async () => {

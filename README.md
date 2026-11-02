@@ -94,7 +94,7 @@ Giới hạn: Art Director chỉ nhìn ảnh tĩnh (lỗi chuyển động cần
 
 ## Role Release
 
-Thêm bằng **＋ Role → + Release** (một khối mỗi session, đứng cuối luồng). Release chạy sau khi Lead review đạt: kiểm `git status` (còn thay đổi chưa commit trong mã nguồn thì không build bản gửi), chạy lệnh build/đóng gói **có sẵn** của project (ghi trong PROJECT.md/README), kiểm từng tệp đầu ra (tồn tại, dung lượng so với giới hạn, định dạng) và ghi `.office-desk/<session>/RELEASE.md` (phiên bản, commit, lệnh, bảng tệp × dung lượng × giới hạn × kết quả, checklist trước khi gửi). Release không sửa code, không tự nộp lên store/network; app chỉ cho ghi RELEASE.md và ISSUES.md, có shell để chạy lệnh build.
+Thêm bằng **＋ Role → + Release** (một khối mỗi session, đứng cuối luồng). Release chạy sau khi Lead review đạt. Không khối nào trước đó commit, nên Release **commit phần thay đổi của vòng** (tệp trong CHANGES.md và tệp mới chúng cần; không add `.office-desk/`, tệp bí mật, `dist/`/`release/`; không push, không đổi nhánh) làm mốc bản gửi, rồi chạy **một lần** lệnh đóng gói **có sẵn** của project (ghi trong PROJECT.md/README) và kiểm đầu ra (đủ tệp, dung lượng so với giới hạn, định dạng) — không build/QA kiểm lại phần Dev và QA đã kiểm và ghi `.office-desk/<session>/RELEASE.md` (phiên bản, commit, lệnh, bảng tệp × dung lượng × giới hạn × kết quả, checklist trước khi gửi). Release không sửa code, không tự nộp lên store/network; app chỉ cho ghi RELEASE.md và ISSUES.md, có shell để chạy lệnh build.
 
 - `pass` → **Hoàn tất**.
 - `issue` (build lỗi, vượt dung lượng, thiếu tệp) → ghi Issue `[Release] …` và chuyển **Lead triage** giao sửa; sau đó Dev → QA → Lead review → Release chạy lại. Tính vào số vòng QA fail như Issue của QA.
