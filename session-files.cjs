@@ -11,6 +11,7 @@
 //   .office-desk/<session>/ISSUES.md        QA ghi; Lead đọc khi triage
 //   .office-desk/<session>/PERF.md          QA ghi ở pha performance
 //   .office-desk/<session>/CHANGES.md       app ghi từ handoff của Dev
+//   .office-desk/<session>/RELEASE.md       Release ghi: phiên bản, lệnh build, tệp đầu ra, dung lượng, checklist gửi
 const fs = require('node:fs'); const path = require('node:path');
 const DIR = '.office-desk';
 const SUMMARY_LIMIT = 1500;
@@ -26,9 +27,10 @@ const TEMPLATES = {
   tasks: '# TASKS\n<!-- App ghi từ khối tasks của Lead. Không sửa tay khi đang chạy. -->\n',
   issues: '# ISSUES\n<!-- QA ghi. Mẫu:\n## ISS-1 · mở · cao\nAC: AC-1.2\nBước tái hiện: …\nKỳ vọng: …\nThực tế: …\n-->\n',
   perf: '# PERF\n<!-- QA ghi ở pha performance: ngân sách, cách đo, số đo, kết luận. -->\n',
-  changes: '# CHANGES\n<!-- App ghi sau mỗi lượt Dev: tệp tạo mới/sửa (app tự lấy từ tool và git), rồi tóm tắt handoff của Dev. -->\n'
+  changes: '# CHANGES\n<!-- App ghi sau mỗi lượt Dev: tệp tạo mới/sửa (app tự lấy từ tool và git), rồi tóm tắt handoff của Dev. -->\n',
+  release: '# RELEASE\n<!-- Release ghi mỗi lần build bản gửi. Mẫu:\n## <phiên bản> · <ngày> · đạt | lỗi\nCommit: … (sạch / có thay đổi chưa commit)\nLệnh: …\n| Tệp | Đích (network/store) | Dung lượng | Giới hạn | Kết quả |\nChecklist trước khi gửi: …\n-->\n'
 };
-const NAMES = { artPrompts: 'ART_PROMPTS.md', art: 'ART.md', gdd: 'GDD.md', uiux: 'UIUX.md', tasks: 'TASKS.md', issues: 'ISSUES.md', perf: 'PERF.md', changes: 'CHANGES.md' };
+const NAMES = { artPrompts: 'ART_PROMPTS.md', art: 'ART.md', gdd: 'GDD.md', uiux: 'UIUX.md', tasks: 'TASKS.md', issues: 'ISSUES.md', perf: 'PERF.md', changes: 'CHANGES.md', release: 'RELEASE.md' };
 function filesOf(thread) {
   if (!thread.folder) return null;
   const base = path.join(thread.folder, DIR), own = path.join(base, thread.id);

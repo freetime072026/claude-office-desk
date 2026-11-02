@@ -11,7 +11,7 @@ const tasks = list => fence('tasks', { tasks: list.map(([worker, files]) => ({ w
 const session = roles => { const team = initial(); const id = update(team, 'create', { request: 'Game' }); for (const type of roles) update(team, 'add-worker', { id, type }); return { team, id, thread: team.threads[0] }; };
 
 test('Anim is a Dev-type role after Art and before QA: Sonnet, edit mode, shell, 40 tool turns, works from .md files', () => {
-  assert.deepEqual(PIPELINE, ['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA']);
+  assert.deepEqual(PIPELINE, ['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release']);
   const { team, id, thread } = session(['QA', 'Anim', 'Art', 'Dev', 'Lead Dev']);
   assert.deepEqual(thread.flow, ['Lead Dev', 'Dev', 'Art', 'Anim', 'QA']);
   assert.equal(worker(thread, 'Anim').model, 'sonnet'); assert.equal(worker(thread, 'Anim').mode, 'edit');

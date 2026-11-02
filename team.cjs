@@ -1,7 +1,8 @@
 const { randomUUID } = require('node:crypto');
 const { defaults, roleKey, LEGACY_LEAD, isDevType } = require('./roles.cjs');
 const { MCP_NAME } = require('./modes.cjs');
-const { PIPELINE, LEAD, QA_ROUND_LIMIT, ownsSession, typeOf, sortFlow, started, openIssues, worker, forgetWorker, addWorker, removable } = require('./workers.cjs');
+const { PIPELINE, LEAD, QA_ROUND_LIMIT, ownsSession, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, removable } = require('./workers.cjs');
+const { inheritedRole } = require('./prompt.cjs');
 const flowgraph = require('./flowgraph.cjs');
 const { PRESETS, PURPOSES, purposeConfig, validEngine } = require('./presets.cjs');
 const HALTED = ['awaiting-decision', 'cancelled'];
@@ -92,8 +93,7 @@ function selectRoles(team, item, payload, log) {
   if (!Array.isArray(payload.roles) || payload.roles.some(role => !allowed.has(role))) throw Error('Role không hợp lệ');
   const next = sortFlow([...new Set(payload.roles)]);
   dropRoles(item, item.flow.filter(label => !next.includes(label)), busyOf(payload));
-  item.flow = next; restartLoop(item); item.roleConfig ||= {}; item.graph = flowgraph.defaultGraph(item); delete item.graphRun;
-  for (const key of new Set(item.flow.map(typeOf))) item.roleConfig[key] ||= { ...(team.roleTemplates?.[key] || defaults[key] || { responsibility: '', output: '' }), instructions: '' };
+  item.flow = next; restartLoop(item); item.roleConfig ||= {}; item.roleConfigByBlock = true; item.graph = flowgraph.defaultGraph(item); delete item.graphRun;
   if (payload.restart) { for (const issue of item.issues) issue.closed = false; log('Hệ thống', 'Cấu hình role thay đổi; quy trình bắt đầu lại.'); }
 }
 // Preset đội: chọn lại role theo preset (qua selectRoles nên giữ các gate xóa role) rồi gán mục đích cho mọi khối.
@@ -140,11 +140,23 @@ function migrateThread(thread) {
   if (active === review) { thread.leadPhase = 'review'; thread.qaPassedAt ||= new Date().toISOString(); } else thread.leadPhase ||= 'planning';
   return true;
 }
+// ≤ 0.21 lưu cấu hình theo loại role (roleConfig.Dev dùng chung cho Dev, Dev #2…). Chuyển sang theo nhãn khối: mỗi khối nhận bản
+// sao của loại mình; trách nhiệm/đầu ra trùng template/mặc định (app tự chép khi chọn role) bỏ đi để preset/template áp lại.
+function migrateRoleConfig(team, thread) {
+  if (thread.roleConfigByBlock || !Array.isArray(thread.flow)) return false;
+  const old = thread.roleConfig || {}, next = {};
+  for (const label of thread.flow) {
+    const type = labelType(thread, label), source = old[label] || old[type]; if (!source) continue;
+    const copied = field => [team.roleTemplates?.[type]?.[field], defaults[type]?.[field]].includes(source[field]);
+    next[label] = { ...(source.responsibility && !copied('responsibility') ? { responsibility: source.responsibility } : {}), ...(source.output && !copied('output') ? { output: source.output } : {}), instructions: source.instructions || '' };
+  }
+  thread.roleConfig = next; thread.roleConfigByBlock = true; return true;
+}
 function update(team, action, payload) {
   if (action === 'project') { const item = { id: randomUUID(), name: text(payload.name, 80) }; team.projects.push(item); return item.id; }
   if (action === 'role') { const name = text(payload.name, 40); if (team.roles.includes(name)) throw Error('Role đã tồn tại'); team.roles.push(name); return true; }
   if (payload.project && !team.projects.some(item => item.id === payload.project)) throw Error('Dự án không tồn tại');
-  if (action === 'create') { const request = payload.request ? text(payload.request) : ''; const item = { id: randomUUID(), model: 'claude-opus-5-5', title: request ? request.replace(/\s+/g, ' ').slice(0, 70) : 'Session mới', project: payload.project || '', pinned: false, stage: 0, status: 'waiting', flow: [], messages: request ? [{ role: 'Bạn', text: request, time: new Date().toISOString() }] : [], issues: [], folder: '', attachments: [] }; team.threads.push(item); return item.id; }
+  if (action === 'create') { const request = payload.request ? text(payload.request) : ''; const item = { id: randomUUID(), model: 'claude-opus-5-5', title: request ? request.replace(/\s+/g, ' ').slice(0, 70) : 'Session mới', project: payload.project || '', pinned: false, stage: 0, status: 'waiting', flow: [], messages: request ? [{ role: 'Bạn', text: request, time: new Date().toISOString() }] : [], issues: [], folder: '', attachments: [], roleConfigByBlock: true }; team.threads.push(item); return item.id; }
   const item = team.threads.find(thread => thread.id === payload.id); if (!item) throw Error('Session không tồn tại');
   const log = (role, content) => item.messages.push({ role, text: content, time: new Date().toISOString() });
   if (action === 'add-worker') return addRole(item, payload.type, log);
@@ -170,12 +182,15 @@ function update(team, action, payload) {
     team.roleMcp ||= {}; team.roleMcp[key] = [...new Set(payload.servers)];
     log('Cấu hình', `MCP server của ${key}: ${team.roleMcp[key].join(', ') || 'không có'}`); return true;
   }
+  // Cấu hình riêng của một khối (nhãn khối, không theo loại): Dev và Dev #2 sửa độc lập. Chỉ lưu trách nhiệm/đầu ra khác phần
+  // thừa hưởng (preset/template/mặc định) để khối chưa sửa vẫn theo preset khi preset đổi.
   if (action === 'role-config') {
-    const key = roleKey(text(payload.role, 40)); if (![...PIPELINE, ...item.flow].includes(key)) throw Error('Role không hợp lệ');
-    const config = { responsibility: text(payload.responsibility, 6000), output: text(payload.output, 6000), instructions: typeof payload.instructions === 'string' ? payload.instructions.slice(0, 12000) : '' };
-    item.roleConfig ||= {}; item.roleConfig[key] = config;
-    if (payload.saveDefault) { team.roleTemplates ||= {}; team.roleTemplates[key] = { responsibility: config.responsibility, output: config.output }; }
-    log('Cấu hình', 'Cập nhật trách nhiệm/đầu ra/yêu cầu riêng: ' + key); return true;
+    const label = text(payload.role, 60); if (!item.flow.includes(label)) throw Error('Role không hợp lệ');
+    const responsibility = text(payload.responsibility, 6000), output = text(payload.output, 6000), inherited = inheritedRole(team, item, label);
+    const config = { ...(responsibility !== inherited.responsibility ? { responsibility } : {}), ...(output !== inherited.output ? { output } : {}), instructions: typeof payload.instructions === 'string' ? payload.instructions.slice(0, 12000) : '' };
+    item.roleConfig ||= {}; item.roleConfig[label] = config;
+    if (payload.saveDefault) { const key = labelType(item, label); team.roleTemplates ||= {}; team.roleTemplates[key] = { responsibility, output }; }
+    log('Cấu hình', 'Cập nhật trách nhiệm/đầu ra/yêu cầu riêng của khối ' + label); return true;
   }
   if (action === 'edit-request') {
     const content = text(payload.text); const first = item.messages.find(message => message.role === 'Bạn');
@@ -202,4 +217,4 @@ function update(team, action, payload) {
   else throw Error('Thao tác không hợp lệ');
   return true;
 }
-module.exports = { initial, update, migrateThread, recoverInterrupted, isHalted };
+module.exports = { initial, update, migrateThread, migrateRoleConfig, recoverInterrupted, isHalted };

@@ -40,6 +40,8 @@ function roleScope(type, files, devFiles = [], folder = '') {
   if (type === 'Lead Dev') return { paths: [files.project], bash: true, label: 'Lead Dev chỉ ghi PROJECT.md' };
   if (type === 'QA') return { paths: [files.issues, files.perf], bash: true, label: 'QA chỉ ghi ISSUES.md và PERF.md' };
   if (type === 'UI/UX') return { paths: [files.uiux], bash: false, label: 'UI/UX chỉ ghi UIUX.md' };
+  // Release: chạy lệnh build/đóng gói của project (shell), không sửa code; chỉ ghi kết quả và Issue.
+  if (type === 'Release') return { paths: [files.release, files.issues], bash: true, label: 'Release chỉ ghi RELEASE.md và ISSUES.md' };
   // Art Director: shell để chụp màn hình/kiểm import qua Unity; không sửa ảnh, chỉ ghi tài liệu art và Issue.
   if (type === 'Art Director') return { paths: [files.style, files.assets, files.art, files.issues], bash: true, label: 'Art Director chỉ ghi STYLE.md, ASSETS.md, ART.md và ISSUES.md' };
   // Giữ dấu / cuối để mục thư mục vẫn là thư mục sau khi resolve.

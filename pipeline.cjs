@@ -1,9 +1,9 @@
 // Bộ chạy tự động theo sơ đồ luồng của session (flowgraph.cjs): mặc định GD → UI/UX → Lead → Dev/VFX song song → QA → review.
 // Chỉ chuyển bước theo khối ```handoff``` / ```tasks``` hợp lệ; không đoán từ văn bản tự do.
 // Mọi thay đổi trạng thái team đi qua team.cjs (update) để giữ gate QA, giới hạn vòng và log.
-const { LEAD, ACTIVE_TASK, labelType, worker, taskPlan, openIssues, ownedByAd } = require('./workers.cjs');
+const { LEAD, ACTIVE_TASK, labelType, worker, taskPlan, openIssues, ownedByAd, hasArtDirector } = require('./workers.cjs');
 const { isHalted } = require('./team.cjs');
-const { isDevType, ART_DIRECTOR } = require('./roles.cjs');
+const { isDevType, ART_DIRECTOR, RELEASE, ART_REJECT_REASONS } = require('./roles.cjs');
 const { foldersOf } = require('./usage.cjs');
 const graph = require('./flowgraph.cjs');
 const HANDOFF_STATUSES = Object.freeze(['done', 'blocked', 'issue', 'pass', 'reject']);
@@ -35,7 +35,9 @@ function parseHandoff(text) {
   const retested = Array.isArray(data.retested) ? data.retested.filter(item => item && typeof item.id === 'string').slice(0, 50).map(item => ({ id: item.id, evidence: clipText(item.evidence, SUMMARY_LIMIT) })) : [];
   // reassign: Dev/VFX bị chặn vì AC cần sửa tệp ngoài phạm vi hoặc cần khối khác, QA bị chặn vì thiếu công cụ Dev làm được;
   // bộ chạy chuyển sang Lead triage thay vì dừng.
-  return { status: data.status, summary: clipText(data.summary, SUMMARY_LIMIT), retested, ...(data.status === 'blocked' && data.reassign === true ? { reassign: true } : {}) };
+  // reject của Dev/VFX/Anim kèm reason: ảnh đã qua Art Director nhưng không ghép được (ART_REJECT_REASONS) → Art Director review lại.
+  const artReject = data.status === 'reject' && Object.hasOwn(ART_REJECT_REASONS, data.reason) ? { reason: data.reason, art: Array.isArray(data.art) ? data.art.filter(id => typeof id === 'string' && id.trim()).slice(0, 20).map(id => id.trim().slice(0, 80)) : [] } : {};
+  return { status: data.status, summary: clipText(data.summary, SUMMARY_LIMIT), retested, ...artReject, ...(data.status === 'blocked' && data.reassign === true ? { reassign: true } : {}) };
 }
 
 // Lệnh điều khiển trong chat: /role <khối> start|pause, /auto on|off, /chot.
@@ -183,6 +185,29 @@ function createAutoRun(deps) {
   function holdLeadReview(thread) {
     for (const item of graph.ensureGraph(thread).nodes) if (item.phase === 'review' && labelType(thread, item.label) === LEAD && graph.stateOf(thread, item.id).status === 'queued') graph.stateOf(thread, item.id).status = 'idle';
   }
+  // Dev/VFX/Anim không ghép được ảnh Art Director đã duyệt (lệch UI/UX, thừa chi tiết, thiếu layer): theo cạnh reject của sơ đồ về
+  // Art Director review lại. Task của khối giữ ở pending để chạy tiếp khi art xong; QA/Lead review đang chờ bỏ hàng chờ để không kiểm
+  // trên phần dở (khối chạy lại xong sẽ kích hoạt lại chúng).
+  function artRework(thread, node, label, task) {
+    const { reason, art, summary } = task.artReject, why = `${label} báo ảnh không dùng được (${ART_REJECT_REASONS[reason]})${art.length ? ': ' + art.join(', ') : ''}`;
+    if (!hasArtDirector(thread)) return block(thread, node, `${why}, nhưng session không có Art Director. ${summary}`);
+    if ((thread.artReworks || 0) >= AD_REJECT_LIMIT) return block(thread, node, `${why}; đã trả Art Director ${AD_REJECT_LIMIT} lần trong vòng này, dừng để bạn quyết định. ${summary}`);
+    if (!graph.outgoing(graph.ensureGraph(thread), node.id).some(edge => edge.when === 'reject')) return block(thread, node, `${why}, nhưng sơ đồ chưa có cạnh ${label} —reject→ Art Director · review.`);
+    thread.artReworks = (thread.artReworks || 0) + 1; task.artRouted = true; (thread.artRework ||= []).push({ worker: label, reason, art, summary });
+    for (const item of graph.ensureGraph(thread).nodes) if ((labelType(thread, item.label) === 'QA' || (item.phase === 'review' && labelType(thread, item.label) === LEAD)) && graph.stateOf(thread, item.id).status === 'queued') graph.stateOf(thread, item.id).status = 'idle';
+    note(thread, why + ' · chuyển Art Director review lại.');
+    graph.finish(thread, node.id, 'reject');
+  }
+  // Art đã sửa xong (hoặc Art Director xác nhận art đạt, lỗi ở cách ghép): task chờ art chạy lại với ghi chú, phiên CLI mới để đọc ảnh mới.
+  function resumeArtWaiters(thread, reason) {
+    for (const task of thread.dispatch || []) {
+      if (task.status !== 'pending' || !task.artRouted) continue;
+      delete task.artReject; delete task.artRouted; delete task.session;
+      task.task = clipText(task.task + '\n\n' + reason, TASK_LIMIT);
+      for (const item of graph.nodesFor(thread, task.worker)) graph.queue(thread, item.id);
+    }
+    delete thread.artRework; delete thread.artRedo;
+  }
   // Art Director pha planning: duyệt mockup UI/UX (reject → UI/UX sửa theo uiuxReview), viết ART.md và giao Art (main.cjs áp task).
   // Pha review: pass; reject kèm task Art làm lại (main.cjs đã áp); issue = lỗi visual do code/layout → Issue và Lead triage.
   function afterAd(thread, node, message, handoff, proposalApplied, planBlocked) {
@@ -200,12 +225,18 @@ function createAutoRun(deps) {
       }
       if (['done', 'pass'].includes(handoff.status)) { handedOff(thread, node.label, summary); return graph.finish(thread, node.id, 'done'); }
     } else {
+      // Review lại do Dev trả ảnh: art đạt (lỗi ở cách ghép) thì khối chờ chạy lại kèm hướng dẫn, không đi tiếp tới Lead review.
+      if (['done', 'pass'].includes(handoff.status) && thread.artRework?.length) {
+        handedOff(thread, node.label, 'Review lại: art đạt · ' + summary); resumeArtWaiters(thread, 'Art Director review lại, art giữ nguyên; hướng dẫn ghép: ' + summary);
+        Object.assign(graph.stateOf(thread, node.id), { status: 'done', outcome: 'pass' }); return;
+      }
       if (['done', 'pass'].includes(handoff.status)) { handedOff(thread, node.label, summary); return graph.finish(thread, node.id, 'pass'); }
-      if (handoff.status === 'issue') { update(thread, 'issue', { text: '[Visual · Art Director] ' + summary }); holdLeadReview(thread); return graph.finish(thread, node.id, 'issue'); }
+      if (handoff.status === 'issue') { delete thread.artRework; delete thread.artRedo; update(thread, 'issue', { text: '[Visual · Art Director] ' + summary }); holdLeadReview(thread); return graph.finish(thread, node.id, 'issue'); }
       if (handoff.status === 'reject') {
         if (!tasksGiven) return block(thread, node, `${node.label} trả ảnh về nhưng không kèm khối tasks giao Art: ${summary}`);
         if ((thread.adRejects || 0) >= AD_REJECT_LIMIT) return block(thread, node, `Ảnh vẫn chưa đạt sau ${AD_REJECT_LIMIT} lần Art làm lại; dừng để bạn quyết định. ${summary}`);
         thread.adRejects = (thread.adRejects || 0) + 1; handedOff(thread, node.label, 'Trả Art làm lại: ' + summary);
+        if (thread.artRework?.length) thread.artRedo = true; // khối chờ art chạy lại khi Art xong phần làm lại này
         holdLeadReview(thread); return graph.finish(thread, node.id, 'reject');
       }
     }
@@ -221,6 +252,12 @@ function createAutoRun(deps) {
     thread.qaPassedAt = now(); thread.qaFailRounds = 0; handedOff(thread, node.label, handoff.summary || 'QA pass');
     return graph.finish(thread, node.id, 'pass');
   }
+  // Release: pass → Hoàn tất; issue (build lỗi, vượt dung lượng…) → Issue và Lead triage giao sửa, rồi QA/review/Release chạy lại.
+  function afterRelease(thread, node, handoff) {
+    if (handoff.status === 'issue') { update(thread, 'issue', { text: '[Release] ' + (handoff.summary || 'Release lỗi') }); return graph.finish(thread, node.id, 'issue'); }
+    if (handoff.status === 'pass') { handedOff(thread, node.label, handoff.summary || 'Release đạt'); return graph.finish(thread, node.id, 'pass'); }
+    return block(thread, node, `Trạng thái handoff "${handoff.status}" không hợp lệ cho ${node.label}; Release trả pass hoặc issue.`);
+  }
   // Vòng mới: người dùng báo vấn đề rồi GD chốt khi luồng đã chạy. Xoá trạng thái vòng trước, giữ phiên CLI của các khối.
   // Không mở vòng mới khi còn task Dev đang chạy, để không có hai kế hoạch song song.
   async function newRoundFromGd(thread, node, handoff) {
@@ -228,7 +265,7 @@ function createAutoRun(deps) {
     if (busy.length) return note(thread, `GD đã chốt thay đổi nhưng ${busy.map(task => task.worker).join(', ')} còn đang làm; đợi xong rồi dùng /chot ở bước GD để chạy vòng mới.`);
     if (!thread.auto?.enabled && !(await enable(thread, 'GD chốt thay đổi mới.'))) return;
     graph.resetRun(thread); thread.leadPhase = 'planning'; thread.qaFailRounds = 0;
-    delete thread.qaPhase; delete thread.reviewRejects; delete thread.qaPassedAt; delete thread.planProblems; delete thread.reassign; delete thread.reassignRounds; delete thread.adPhase; delete thread.uiuxRejects; delete thread.adRejects; delete thread.uiuxReview; delete thread.adPlanProblems;
+    delete thread.qaPhase; delete thread.reviewRejects; delete thread.qaPassedAt; delete thread.planProblems; delete thread.reassign; delete thread.reassignRounds; delete thread.adPhase; delete thread.uiuxRejects; delete thread.adRejects; delete thread.uiuxReview; delete thread.adPlanProblems; delete thread.artRework; delete thread.artReworks; delete thread.artRedo;
     thread.dispatch = []; thread.round = (thread.round || 1) + 1; newRound(thread, thread.round, handoff.summary);
     focus(thread, node); handedOff(thread, node.label, handoff.summary || 'GD chốt thay đổi mới');
     const next = graph.finish(thread, node.id, 'done').map(id => graph.nodeLabel(graph.ensureGraph(thread).nodes.find(item => item.id === id)));
@@ -261,10 +298,15 @@ function createAutoRun(deps) {
     if (!['running', 'queued', 'blocked'].includes(graph.stateOf(thread, node.id).status) && !(gdDone && !started(thread))) return;
     try {
       if (isDevType(type)) {
+        const rework = (thread.dispatch || []).find(item => item.worker === label && item.status === 'pending' && item.artReject && !item.artRouted);
+        if (rework && !message.error) { artRework(thread, node, label, rework); return await advance(thread); }
         const task = (thread.dispatch || []).find(item => item.worker === label && item.status !== 'pending');
         if (task?.status === 'blocked' && handoff?.reassign && !message.error && hasLead(thread)) { reassign(thread, node, label, handoff); return await advance(thread); }
         if (task && ['blocked', 'failed'].includes(task.status)) return block(thread, node, `${label} ${task.status === 'failed' ? 'lỗi' : 'bị chặn'}${task.error ? ': ' + task.error : ''}. Xử lý rồi dùng /role ${label} start hoặc Thử lại task bị chặn.`);
         if (task?.status === 'finished') graph.finish(thread, node.id, 'done');
+        // Art/Anim làm lại xong mọi task Art Director giao: khối đang chờ art chạy tiếp (ảnh mới xem trong ART.md, CHANGES.md).
+        const artOpen = (thread.dispatch || []).some(item => ownedByAd(thread, item) && !['finished', 'cancelled'].includes(item.status));
+        if (task?.status === 'finished' && ownedByAd(thread, task) && thread.artRedo && !artOpen) resumeArtWaiters(thread, 'Art đã làm lại theo Art Director; xem mục ART-… trong ART.md và tệp mới trong CHANGES.md rồi ghép lại.');
         routeReassign(thread);
         return await advance(thread);
       }
@@ -276,6 +318,7 @@ function createAutoRun(deps) {
       else if (handoff.status === 'blocked' && handoff.reassign && type === 'QA' && hasLead(thread)) reassign(thread, node, label, handoff);
       else if (handoff.status === 'blocked') block(thread, node, `${label} cần người dùng: ${handoff.summary}`);
       else if (type === 'QA') afterQa(thread, node, handoff);
+      else if (type === RELEASE) afterRelease(thread, node, handoff);
       else if (['done', 'pass'].includes(handoff.status)) { if (type === 'UI/UX') delete thread.uiuxReview; handedOff(thread, label, handoff.summary); graph.finish(thread, node.id, handoff.status); }
       else block(thread, node, `Trạng thái handoff "${handoff.status}" không hợp lệ cho ${label}.`);
       return await advance(thread);

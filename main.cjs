@@ -21,7 +21,7 @@ const unity = require('./unity.cjs');
 const projectDocs = require('./project-docs.cjs');
 const fileChanges = require('./file-changes.cjs');
 const penpot = require('./penpot.cjs');
-const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor, ART_DIRECTOR } = require('./roles.cjs');
+const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor, ART_DIRECTOR, ART_CONSUMER_TYPES } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
 // policy = { scope, mode, cwd }: phạm vi ghi theo role được quyết định trước (decide), không hỏi người dùng.
@@ -149,7 +149,7 @@ app.whenReady().then(() => {
     catch { dialog.showErrorBox('Không đọc được cấu hình', 'Hãy sao lưu và kiểm tra workspace.json trong ' + root); app.quit(); return; }
   }
   metadata.team ||= teamStore.initial();
-  for (const thread of metadata.team.threads) { teamStore.migrateThread(thread); if (thread.flow?.length) require('./flowgraph.cjs').ensureGraph(thread); delete thread.dispatchPumping; delete thread.dispatchAgain; teamStore.recoverInterrupted(thread); }
+  for (const thread of metadata.team.threads) { teamStore.migrateThread(thread); teamStore.migrateRoleConfig(metadata.team, thread); if (thread.flow?.length) require('./flowgraph.cjs').ensureGraph(thread); delete thread.dispatchPumping; delete thread.dispatchAgain; teamStore.recoverInterrupted(thread); }
   settings = path.join(root, 'restricted-settings.json'); mcp = path.join(root, 'mcp-servers.json');
   // 0.10: bật Shell (Bash) cho mode có sửa tệp. Deny Read(...) chỉ chặn tool Read/Grep/Glob; lệnh shell (vd. type .env) vẫn đọc được,
   // nên chỉ mode Plan thực sự không đọc được các tệp này.
@@ -221,7 +221,7 @@ app.whenReady().then(() => {
     if (event) { requireTrusted(event); delete payload.auto; delete payload.resumeSession; }
     if (action === 'state') return snapshot();
     if (action === 'role-defaults') return roleDefaults;
-    if (action === 'role-presets') return Object.fromEntries(Object.entries(PRESETS).map(([key, preset]) => [key, { name: preset.name, roles: preset.roles, engines: Object.fromEntries(Object.entries(preset.engines || {}).map(([id, engine]) => [id, engine.name])) }]));
+    if (action === 'role-presets') return Object.fromEntries(Object.entries(PRESETS).map(([key, preset]) => [key, { name: preset.name, roles: preset.roles, config: Object.fromEntries(Object.entries(preset.config).map(([type, config]) => [type, { responsibility: config.responsibility, output: config.output }])), engines: Object.fromEntries(Object.entries(preset.engines || {}).map(([id, engine]) => [id, engine.name])) }]));
     if (action === 'copy-text') { if (typeof payload.text !== 'string' || payload.text.length > 2 * 1024 * 1024) throw Error('Nội dung copy quá dài'); clipboard.writeText(payload.text); return true; }
     if (action === 'file-read') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); return require('./files.cjs').readProjectFile(payload.path, foldersOf(thread)); }
     if (action === 'chat-stop') { const thread = metadata.team.threads.find(item => item.id === payload.id); for (const task of thread?.dispatch || []) if (task.worker === payload.role && ACTIVE_TASK.includes(task.status)) task.status = 'cancelled'; chats.get(runKey(payload.id, payload.role))?.cancel(); persist(); publish(); return true; }
@@ -328,6 +328,8 @@ app.whenReady().then(() => {
         const ownTask = assigned || (thread.dispatch || []).find(task => task.worker === payload.role && ['paused', 'cancelled'].includes(task.status));
         if (ownTask && thread.cliSessions?.[sessionKey]) ownTask.session = taskSession(thread.cliSessions[sessionKey], sessionKey, run.message.usage);
         if (assigned) { assigned.status = run.message.error ? 'failed' : 'finished'; if (!run.message.error) assigned.finishedAt = new Date().toISOString(); if (!run.message.error && handoff?.status === 'blocked') { assigned.status = 'blocked'; assigned.error = handoff.summary || payload.role + ' báo bị chặn'; } if (run.message.maxTurns) { assigned.status = 'blocked'; assigned.error = 'Chạm giới hạn số lượt tool; kiểm tra rồi Thử lại task bị chặn'; } }
+        // Dev/VFX/Anim trả ảnh đã duyệt về Art Director (handoff reject kèm reason): task giữ lại, chạy tiếp khi art được sửa (pipeline.cjs).
+        if (assigned?.status === 'finished' && handoff?.reason && ART_CONSUMER_TYPES.includes(worker.type)) { assigned.status = 'pending'; delete assigned.finishedAt; assigned.artReject = { reason: handoff.reason, art: handoff.art, summary: handoff.summary || '' }; }
         // CHANGES.md do app ghi từ handoff của Dev (không tin model tự ghi), để QA và Lead review đọc.
         const changed = devRun ? fileChanges.changesText(fileChanges.changedFiles({ folder: thread.folder, before: gitBefore, after: fileChanges.gitStatus(thread.folder, scope.paths), fileOps: run.message.fileOps })) : '';
         if (changed) run.message.changedFiles = changed;

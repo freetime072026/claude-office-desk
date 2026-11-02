@@ -276,13 +276,16 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     if (!role) return;
     const account = get('#worker-account'); if (force || document.activeElement !== account) { account.replaceChildren(...[{ id: '', name: 'Theo tài khoản đang chọn' }, ...knownProfiles].map(profile => make('option', { value: profile.id, textContent: profile.name }))); account.value = config.profileId || ''; }
     setField(get('#worker-task'), config.task || '', force);
-    const type = roleType(thread, role), base = team.roleTemplates?.[type] || defaultRoles[type] || {};
+    // Cấu hình riêng của khối (roleConfig[nhãn khối]); chưa sửa thì hiện phần thừa hưởng: preset của khối → template → mặc định.
+    const type = roleType(thread, role), own = thread.roleConfig?.[role] || {}, template = team.roleTemplates?.[type] || {}, fallback = defaultRoles[type] || {};
+    const preset = Object.entries(presets).find(([key]) => key.toLowerCase() === config.purpose)?.[1]?.config?.[type] || {};
     paintRoleMcp(thread, type);
     // Mục đích chỉ hiện cho loại role preset có cấu hình (hiện chỉ có PLA).
     get('#purpose-field').hidden = !presets.PLA?.roles.includes(type); setField(get('#worker-purpose'), config.purpose || 'game', force);
     get('#engine-field').hidden = config.purpose !== 'pla'; fillEngines(get('#worker-engine'), thread.preset || 'PLA'); setField(get('#worker-engine'), thread.engine || '', force);
     get('#art-gen-field').hidden = type !== 'Art'; setField(get('#art-generator'), team.artGenerator || 'chatgpt', force);
-    setField(get('#role-responsibility'), base.responsibility || '', force); setField(get('#role-output'), base.output || '', force); setField(get('#role-instructions'), thread.roleConfig?.[type]?.instructions || '', force);
+    const effective = field => own[field] || preset[field] || template[field] || fallback[field] || '';
+    setField(get('#role-responsibility'), effective('responsibility'), force); setField(get('#role-output'), effective('output'), force); setField(get('#role-instructions'), own.instructions || '', force);
   }
   // US-08: mỗi loại role chỉ nạp MCP server được tích ở đây (team.roleMcp, dùng chung mọi session); chat thường nạp tất cả.
   function paintRoleMcp(thread, type) {
@@ -295,7 +298,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     }));
   }
   // Tệp .md của session (session-files.cjs) mở bằng trình xem tệp; tệp chỉ có sau lượt chạy role đầu tiên.
-  const SESSION_FILES = [['GDD.md', 'GDD'], ['UIUX.md', 'UI/UX'], ['ART.md', 'Art'], ['TASKS.md', 'Tasks'], ['ISSUES.md', 'Issues'], ['PERF.md', 'Perf'], ['CHANGES.md', 'Changes']];
+  const SESSION_FILES = [['GDD.md', 'GDD'], ['UIUX.md', 'UI/UX'], ['ART.md', 'Art'], ['TASKS.md', 'Tasks'], ['ISSUES.md', 'Issues'], ['PERF.md', 'Perf'], ['CHANGES.md', 'Changes'], ['RELEASE.md', 'Release']];
   function paintSessionFiles(thread, role) {
     const files = role ? thread.workers?.[role]?.files || [] : [];
     get('#worker-files').hidden = !files.length; get('#worker-files').textContent = 'Tệp được sửa: ' + files.join(', ');
@@ -322,7 +325,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   get('#art-generator').onchange = async () => { if (await act('art-generator', { mode: get('#art-generator').value })) get('#panel-saved').textContent = '✓ Đã lưu công cụ sinh ảnh của Art'; };
   async function saveRoleTexts() {
     const thread = current(); if (!thread?.flow.includes(selectedWorker)) return;
-    try { await window.office.run('team', { action: 'role-config', id: selected, role: roleType(thread, selectedWorker), responsibility: get('#role-responsibility').value, output: get('#role-output').value, instructions: get('#role-instructions').value, saveDefault: true }); get('#panel-saved').textContent = '✓ Đã lưu'; } catch (error) { get('#panel-saved').textContent = error.message; }
+    try { await window.office.run('team', { action: 'role-config', id: selected, role: selectedWorker, responsibility: get('#role-responsibility').value, output: get('#role-output').value, instructions: get('#role-instructions').value }); get('#panel-saved').textContent = '✓ Đã lưu riêng cho ' + selectedWorker; } catch (error) { get('#panel-saved').textContent = error.message; }
   }
   for (const id of ['#role-responsibility', '#role-output', '#role-instructions']) get(id).onchange = saveRoleTexts;
 
@@ -436,8 +439,8 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   // ---- Thêm role.
   get('#role').onclick = async () => {
     if (!current()) { if (!(await ensureThread())) return; team = (await window.office.run('state')).team; paint(); }
-    // Lead Dev và Art Director chỉ có một khối mỗi session (workers.SINGLE_TYPES).
-    const thread = current(), taken = type => ['Lead Dev', 'Art Director'].includes(type) && thread.flow.some(label => roleType(thread, label) === type);
+    // Lead Dev, Art Director và Release chỉ có một khối mỗi session (workers.SINGLE_TYPES).
+    const thread = current(), taken = type => ['Lead Dev', 'Art Director', 'Release'].includes(type) && thread.flow.some(label => roleType(thread, label) === type);
     get('#add-role-choices').replaceChildren(...roleTypes.filter(type => !taken(type)).map(role => make('button', { type: 'button', textContent: '+ ' + role, onclick: async () => { const added = await act('add-worker', { type: role }); if (added) { get('#add-role-dialog').close(); showStatus('Đã thêm ' + added); chooseWorker(added); } } })));
     fillEngines(get('#preset-engine'), 'PLA'); get('#preset-engine').value = thread.engine || '';
     get('#add-role-presets').replaceChildren(...Object.entries(presets).map(([key, preset]) => make('button', { type: 'button', textContent: 'Đội ' + preset.name, title: preset.roles.join(' → '), onclick: async () => {

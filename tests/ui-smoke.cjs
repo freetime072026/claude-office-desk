@@ -123,7 +123,7 @@ app.whenReady().then(async () => {
       const state = await window.office.run('state');
       if (JSON.stringify(state.team.threads.at(-1).flow) !== '["QA"]') throw Error('Role choice was not saved');
       if (document.body.classList.contains('panel-hidden') || document.querySelector('#panel-block').value !== 'QA') throw Error('New role not shown in the panel');
-      const instruction = document.querySelector('textarea[aria-label="Nhiệm vụ session"]');
+      const instruction = document.querySelector('textarea[aria-label="Yêu cầu riêng của khối"]');
       if (!instruction) throw Error('Role instructions editor missing');
       instruction.value = 'Test only this session';
       instruction.dispatchEvent(new Event('change'));

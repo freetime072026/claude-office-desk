@@ -6,10 +6,10 @@ const FILES_PER_TASK = 8;
 const validFile = file => typeof file === 'string' && file.trim() && file.length <= 500 && !path.isAbsolute(file) && !file.split(/[\\/]/).includes('..');
 const resolvedFiles = (folder, files) => files.map(file => path.resolve(folder || '.', file) + (/[\\/]$/.test(file) ? path.sep : ''));
 // Thứ tự pipeline chuẩn (PLAN L-4). Role tùy chỉnh luôn đứng sau QA.
-const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA']);
+const PIPELINE = Object.freeze(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release']);
 const LEAD = 'Lead Dev';
-// Khối chỉ có một mỗi session: các pha của chúng là nút riêng trên sơ đồ (flowgraph.cjs).
-const SINGLE_TYPES = Object.freeze([LEAD, 'Art Director']);
+// Khối chỉ có một mỗi session: Lead/Art Director có pha là nút riêng trên sơ đồ (flowgraph.cjs); Release là bước cuối duy nhất.
+const SINGLE_TYPES = Object.freeze([LEAD, 'Art Director', 'Release']);
 const QA_ROUND_LIMIT = 3;
 // 'paused': task bị /role <tên> pause; vẫn tính là việc dở (không cho xóa role, không thay phân công mới).
 // 'pending': Lead đã giao nhưng nút Dev trên sơ đồ chưa tới lượt chạy (bộ chạy chuyển sang 'queued' khi tới lượt).
@@ -31,6 +31,7 @@ const authoredBy = (message, label) => message.role === label || String(message.
 function worker(thread, label) { thread.workers ||= {}; const type = typeOf(label); return thread.workers[label] ||= { type, mode: DEFAULT_MODES[type] || thread.mode || 'read', model: DEFAULT_MODELS[type] || FALLBACK_MODEL, profileId: '', task: '' }; }
 function forgetWorker(thread, label) {
   if (thread.workers) delete thread.workers[label];
+  if (thread.roleConfigByBlock && thread.roleConfig) delete thread.roleConfig[label]; // cấu hình riêng của khối đi theo khối
   for (const key of Object.keys(thread.cliSessions || {})) if (ownsSession(key, label)) delete thread.cliSessions[key];
   if (Array.isArray(thread.taskDrafts)) thread.taskDrafts = thread.taskDrafts.filter(task => task.worker !== label);
 }

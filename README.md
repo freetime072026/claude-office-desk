@@ -8,7 +8,7 @@ Tab **🗺 Sơ đồ luồng** (cạnh tab Hội thoại) cho xem và sửa th�
 - **Cạnh** = "khi nút nguồn kết thúc với kết quả X thì chạy nút đích". Kéo từ chấm ● bên phải nút sang nút khác để nối (mặc định "xong"); bấm vào cạnh hoặc nhãn để đổi điều kiện hoặc xoá. Điều kiện: **xong** (xong/pass/bỏ qua), **pass**, **issue**, **reject**, **luôn**.
 - **Luật chạy:** một khối chạy khi có cạnh khớp dẫn tới nó **và** không còn khối nào nối vào nó đang chờ/đang chạy. Ví dụ Lead nối vào 3 Dev, 3 Dev nối vào QA: Lead chỉ giao task cho 2 Dev thì 2 Dev chạy song song, Dev thứ 3 **bỏ qua**, QA bắt đầu khi cả hai Dev xong. Dev có nhiều nguồn thay thế nhau (lập kế hoạch, triage, review) chỉ cần nguồn vừa kích hoạt.
 - **Trạng thái** hiện ngay trên nút: chờ (vàng), đang chạy (viền xanh), xong, bỏ qua (mờ), bị chặn (đỏ).
-- **Sơ đồ mặc định** (session cũ tự dựng): GD → UI/UX → Lead lập kế hoạch → các Dev/VFX song song → QA → (role tùy chỉnh) → Lead review → Hoàn tất; QA `issue` → Lead triage → Dev; review `reject` → Dev. Lưu/Huỷ thay đổi/Đặt lại mặc định trên thanh công cụ. Chưa sửa sơ đồ thì thêm/xoá role sẽ dựng lại mặc định; đã lưu sơ đồ riêng thì Dev/VFX mới được nối giống các Dev đang có, khối loại khác thêm vào chưa nối.
+- **Sơ đồ mặc định** (session cũ tự dựng): GD → UI/UX → Lead lập kế hoạch → các Dev/VFX song song → QA → (role tùy chỉnh) → Lead review → (Release) → Hoàn tất; QA `issue` → Lead triage → Dev; review `reject` → Dev; Release `pass` → Hoàn tất, `issue` → Lead triage; có Art Director thì Dev/VFX/Anim `reject` → Art Director review. Lưu/Huỷ thay đổi/Đặt lại mặc định trên thanh công cụ. Chưa sửa sơ đồ thì thêm/xoá role sẽ dựng lại mặc định; đã lưu sơ đồ riêng thì Dev/VFX mới được nối giống các Dev đang có, khối loại khác thêm vào chưa nối.
 - Giữ nguyên: Lead pha triage/review, QA hai pha (chức năng → performance), review chỉ lặp 1 lần, giới hạn vòng QA và quyết định của bạn, GD chốt vấn đề mới mở vòng mới. Task Lead giao ở trạng thái "chờ tới lượt theo sơ đồ" cho tới khi nút Dev tới lượt.
 
 ## Tự phát hiện project Unity
@@ -82,10 +82,33 @@ Thêm bằng **＋ Role → + Art Director** (một khối mỗi session, như L
   - `reject` kèm khối `tasks` → Art làm lại; QA và Art Director review chạy lại sau đó (tối đa 2 lần mỗi vòng).
   - `issue` (lỗi visual do code/layout của Dev) → ghi Issue `[Visual · Art Director]` và chuyển Lead triage.
   - QA hoặc Art Director báo issue/reject thì Lead review đang chờ bị bỏ khỏi hàng chờ, không chạy trên phần đang sửa.
+- **Ảnh đã duyệt nhưng không ghép được** (Dev, VFX, Anim): handoff `{"status":"reject","reason":…,"art":["ART-…"]}` với `reason` là `ui-mismatch` (ghép không khớp UIUX.md), `over-detail` (thừa chi tiết so với ART.md/cỡ hiển thị) hoặc `missing-layers` (chưa tách đủ layer để ghép/animate). App giữ task của khối ở trạng thái chờ, bỏ hàng chờ của QA/Lead review và theo cạnh `reject` chuyển **Art Director review lại** (prompt kèm lý do của từng khối):
+  - lỗi art → `reject` kèm `tasks` giao Art làm lại; Art xong thì khối chờ chạy lại với ghi chú "Art đã làm lại", rồi QA và Art Director review như thường;
+  - art đúng, lỗi ở cách ghép → `pass`, summary là hướng dẫn ghép; khối chờ chạy lại kèm hướng dẫn (không đi tiếp tới Lead review);
+  - lỗi code/layout khác → `issue` về Lead triage.
+  Tối đa 2 lần mỗi vòng; session không có Art Director hoặc sơ đồ thiếu cạnh `reject` thì dừng chờ bạn. Để ít phải trả về, ART.md ghi thêm mức chi tiết theo cỡ hiển thị và layer cần tách (tên tệp từng layer), pha review kiểm "dùng được để ghép".
 
 Art Director chỉ được ghi STYLE.md, ASSETS.md, ART.md, ISSUES.md (không sửa ảnh, không viết code), có shell để chụp màn hình/kiểm import. Art đọc STYLE.md, ASSETS.md và mục ART-… của task; UI/UX ghi vị trí, kích thước từng item để Art Director duyệt. Muốn audit toàn game: chọn khối Art Director và nhắn yêu cầu (ví dụ "audit UI màn hình chính"), rồi gửi Lead/Art Director giao sửa. Bảng tệp session có thêm nút Style, Assets, Art.
 
 Giới hạn: Art Director chỉ nhìn ảnh tĩnh (lỗi chuyển động cần QA đo hoặc bạn xem); "đúng style" đáng tin khi STYLE.md có tiêu chí đo được và ảnh tham chiếu chuẩn; mỗi ảnh chụp tốn khoảng một đến vài nghìn token.
+
+## Role Release
+
+Thêm bằng **＋ Role → + Release** (một khối mỗi session, đứng cuối luồng). Release chạy sau khi Lead review đạt: kiểm `git status` (còn thay đổi chưa commit trong mã nguồn thì không build bản gửi), chạy lệnh build/đóng gói **có sẵn** của project (ghi trong PROJECT.md/README), kiểm từng tệp đầu ra (tồn tại, dung lượng so với giới hạn, định dạng) và ghi `.office-desk/<session>/RELEASE.md` (phiên bản, commit, lệnh, bảng tệp × dung lượng × giới hạn × kết quả, checklist trước khi gửi). Release không sửa code, không tự nộp lên store/network; app chỉ cho ghi RELEASE.md và ISSUES.md, có shell để chạy lệnh build.
+
+- `pass` → **Hoàn tất**.
+- `issue` (build lỗi, vượt dung lượng, thiếu tệp) → ghi Issue `[Release] …` và chuyển **Lead triage** giao sửa; sau đó Dev → QA → Lead review → Release chạy lại. Tính vào số vòng QA fail như Issue của QA.
+- `blocked` (thiếu khoá ký, tài khoản, thông tin store) → dừng chờ bạn.
+
+Bảng tệp session có nút **Release**. Model mặc định Sonnet, 30 lượt tool mỗi lượt chat.
+
+## Preset Playable Ads (PLA)
+
+**＋ Role → Đội Playable Ads (PLA)** chọn sẵn GD → UI/UX → Art Director → Lead Dev → Dev → Art → Anim → Sound → QA → Release, kèm engine (Phaser, Cocos, PixiJS…; để trống thì Lead chọn). Mọi khối có mục đích PLA: trách nhiệm/đầu ra viết riêng cho playable (GD là PLA Producer; Art Director giữ ảnh tối giản, tách layer theo nhu cầu ghép/animation, ngân sách dung lượng; Release đóng gói bản cho từng network và kiểm dung lượng, một tệp, không request ngoài) và chỉ nhận việc của PLA.
+
+## Cấu hình riêng từng khối
+
+Mục **Trách nhiệm & yêu cầu riêng** của một khối (trách nhiệm, đầu ra, yêu cầu riêng) lưu theo **khối**, không theo loại role: sửa Dev #2 không đổi Dev, sửa khối ở session này không đổi session khác hay template. Khối chưa sửa hiện và dùng phần thừa hưởng: preset của khối (PLA…) → template của team → mặc định của role; app chỉ lưu phần khác phần thừa hưởng nên khối chưa sửa vẫn theo preset khi preset đổi. Xoá khối thì cấu hình của khối đi theo. Session cũ (cấu hình theo loại) được chuyển khi mở app: mỗi khối nhận bản sao cấu hình của loại mình, phần app tự chép từ template bị bỏ để preset/template áp lại. MCP server vẫn bật theo loại role (dùng chung mọi khối cùng loại).
 
 ## Ảnh tham chiếu trong chat
 
@@ -106,8 +129,9 @@ Trạng thái chung nằm trong tệp, không nằm trong lịch sử chat. App 
 | `.office-desk/<session>/ISSUES.md` | QA | Lead Dev |
 | `.office-desk/<session>/PERF.md` | QA (pha performance) | Lead Dev |
 | `.office-desk/<session>/CHANGES.md` | App, từ handoff của Dev | QA, Lead review |
+| `.office-desk/<session>/RELEASE.md` | Release | Người dùng, Lead |
 
-**Quy tắc app thực thi** (không chỉ dặn trong prompt): GD chỉ ghi GDD.md và không chạy shell; UI/UX chỉ ghi UIUX.md và không chạy shell (Dev không đọc UIUX.md, chỉ nhận phần màn hình Lead chép vào task); Lead Dev chỉ ghi PROJECT.md; QA chỉ ghi ISSUES.md/PERF.md; Dev chỉ sửa các tệp Lead giao trong `files` của khối tasks. Ghi ngoài phạm vi bị app từ chối kèm lý do; ghi trong phạm vi không hỏi. Role có phạm vi luôn chạy CLI ở permission mode `default` để mọi lần ghi đi qua app. **Lead Dev, Dev, VFX, QA luôn được chạy lệnh shell** (build, test, script kiểm tra) ở mọi mode: hỏi từng lần, Bypass thì không hỏi, lượt tự động đã duyệt thì tự cho phép. GD và UI/UX không bao giờ chạy shell. Khối Dev/VFX/QA mới mặc định mode Đọc & sửa; model mặc định Sonnet. Mô tả trách nhiệm/đầu ra mặc định của từng role viết ngắn kèm tiêu chí xong; session cũ giữ mô tả đã chép lúc chọn role.
+**Quy tắc app thực thi** (không chỉ dặn trong prompt): GD chỉ ghi GDD.md và không chạy shell; UI/UX chỉ ghi UIUX.md và không chạy shell (Dev không đọc UIUX.md, chỉ nhận phần màn hình Lead chép vào task); Lead Dev chỉ ghi PROJECT.md; QA chỉ ghi ISSUES.md/PERF.md; Release chỉ ghi RELEASE.md/ISSUES.md; Dev chỉ sửa các tệp Lead giao trong `files` của khối tasks. Ghi ngoài phạm vi bị app từ chối kèm lý do; ghi trong phạm vi không hỏi. Role có phạm vi luôn chạy CLI ở permission mode `default` để mọi lần ghi đi qua app. **Lead Dev, Dev, VFX, QA luôn được chạy lệnh shell** (build, test, script kiểm tra) ở mọi mode: hỏi từng lần, Bypass thì không hỏi, lượt tự động đã duyệt thì tự cho phép. GD và UI/UX không bao giờ chạy shell. Khối Dev/VFX/QA mới mặc định mode Đọc & sửa; model mặc định Sonnet. Mô tả trách nhiệm/đầu ra mặc định của từng role viết ngắn kèm tiêu chí xong; session cũ giữ mô tả đã chép lúc chọn role.
 
 **Báo vấn đề mới giữa chừng.** Chat vấn đề rồi chạy GD: khi GD chốt (`done`) trong lúc luồng đã đi qua GD hoặc đã hoàn tất, app mở **vòng mới** từ bước sau GD (UI/UX → Lead planning → Dev → QA → review), xoá trạng thái vòng trước (pha QA, số lần review, task Dev đã xong). Còn task Dev đang chạy thì app chờ và báo dùng `/chot` sau. GD còn câu hỏi (`blocked`) thì không mở vòng mới.
 

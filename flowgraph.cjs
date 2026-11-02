@@ -7,7 +7,7 @@
 // - Nút được kích hoạt sẽ chờ (queued) và chỉ chạy khi không còn nút nối vào nó đang chờ/đang chạy: QA chờ đủ mọi Dev,
 //   còn Dev có nhiều nguồn thay thế nhau (planning/triage/review) thì chỉ cần nguồn vừa kích hoạt.
 const { LEAD, labelType } = require('./workers.cjs');
-const { isDevType, ART_DIRECTOR, AD_PHASES } = require('./roles.cjs');
+const { isDevType, ART_DIRECTOR, AD_PHASES, RELEASE, ART_CONSUMER_TYPES } = require('./roles.cjs');
 const END = '@end';
 const LEAD_PHASES = Object.freeze(['planning', 'triage', 'review']);
 // Khối có pha: mỗi pha là một nút riêng, id = "<nhãn>@<pha>".
@@ -30,8 +30,8 @@ function defaultGraph(thread) {
   const type = label => labelType(thread, label), flow = thread.flow || [];
   const pre = flow.filter(label => ['GD', 'UI/UX'].includes(type(label)));
   const lead = flow.find(label => type(label) === LEAD), devs = flow.filter(label => isDevType(type(label)));
-  const qas = flow.filter(label => type(label) === 'QA'), ad = flow.find(label => type(label) === ART_DIRECTOR);
-  const custom = flow.filter(label => !pre.includes(label) && label !== lead && label !== ad && !devs.includes(label) && !qas.includes(label));
+  const qas = flow.filter(label => type(label) === 'QA'), ad = flow.find(label => type(label) === ART_DIRECTOR), release = flow.find(label => type(label) === RELEASE);
+  const custom = flow.filter(label => !pre.includes(label) && label !== lead && label !== ad && label !== release && !devs.includes(label) && !qas.includes(label));
   const nodes = [], edges = [], at = (column, row, rows) => ({ x: 40 + column * 200, y: 180 + (row - (rows - 1) / 2) * 100 });
   let column = 0;
   const add = (id, label, phase, position) => { nodes.push({ id, label, ...(phase ? { phase } : {}), ...position }); return id; };
@@ -51,24 +51,33 @@ function defaultGraph(thread) {
   qas.forEach((label, row) => add(label, label, '', at(column, row, checkers.length)));
   if (adReview) add(adReview, ad, 'review', at(column, qas.length, checkers.length));
   if (checkers.length) { column++; linkAll(tail, checkers); tail = checkers; }
+  // Triage đặt phía trên nút lập kế hoạch (cùng cột) để cạnh triage → Dev đi xuôi, không đè lên các Dev.
+  const addTriage = () => { const top = Math.min(...nodes.filter(node => devs.includes(node.id)).map(node => node.y)); return add(leadId('triage'), lead, 'triage', { x: 40 + (devColumn - 1) * 200, y: top - 120 }); };
+  const triageOf = () => nodes.find(node => node.id === leadId('triage'))?.id || (lead && devs.length ? (id => { linkAll([id], devs); return id; })(addTriage()) : '');
   // Vòng sửa lỗi: QA issue → Lead triage → Dev (không có Lead thì QA issue → Dev).
   if (qas.length && devs.length) {
-    // Triage đặt phía trên nút lập kế hoạch (cùng cột) để cạnh triage → Dev đi xuôi, không đè lên các Dev.
-    if (lead) { const top = Math.min(...nodes.filter(node => devs.includes(node.id)).map(node => node.y)); const triage = add(leadId('triage'), lead, 'triage', { x: 40 + (devColumn - 1) * 200, y: top - 120 }); linkAll(qas, [triage], 'issue'); linkAll([triage], devs); }
+    if (lead) { const triage = addTriage(); linkAll(qas, [triage], 'issue'); linkAll([triage], devs); }
     else linkAll(qas, devs, 'issue');
   }
   // Art Director review: ảnh/animation sai → reject kèm task Art/Anim làm lại; lỗi visual do code/layout → issue về Lead triage (hoặc Dev).
+  // Dev/VFX/Anim ghép không được ảnh đã duyệt (lệch UI/UX, thừa chi tiết, thiếu layer) → reject về Art Director review lại.
   if (adReview) {
     linkAll([adReview], devs.filter(label => ['Art', 'Anim'].includes(type(label))), 'reject');
-    const triage = nodes.find(node => node.id === leadId('triage'))?.id;
-    if (triage) link(adReview, triage, 'issue'); else if (lead) { const top = Math.min(...nodes.filter(node => devs.includes(node.id)).map(node => node.y)); const id = add(leadId('triage'), lead, 'triage', { x: 40 + (devColumn - 1) * 200, y: top - 120 }); link(adReview, id, 'issue'); linkAll([id], devs); }
-    else linkAll([adReview], devs, 'issue');
+    const triage = triageOf();
+    if (triage) link(adReview, triage, 'issue'); else linkAll([adReview], devs, 'issue');
+    linkAll(devs.filter(label => ART_CONSUMER_TYPES.includes(type(label))), [adReview], 'reject');
   }
   const forward = checkers.length ? 'pass' : 'done';
   for (const label of custom) { add(label, label, '', at(column++, 0, 1)); linkAll(tail, [label], tail === checkers ? forward : 'done'); tail = [label]; }
   const finalWhen = tail === checkers ? forward : 'done';
   if (lead) { const review = add(leadId('review'), lead, 'review', at(column++, 0, 1)); linkAll(tail, [review], finalWhen); linkAll([review], devs, 'reject'); tail = [review]; }
-  add(END, '', '', at(column, 0, 1)); linkAll(tail, [END], lead ? 'pass' : finalWhen);
+  // Release sau Lead review (hoặc bước cuối): pass → Hoàn tất; issue → Lead triage giao sửa (không có Lead thì về Dev).
+  let endWhen = lead ? 'pass' : finalWhen;
+  if (release) {
+    add(release, release, '', at(column++, 0, 1)); linkAll(tail, [release], endWhen); tail = [release]; endWhen = 'pass';
+    const triage = triageOf(); if (triage) link(release, triage, 'issue'); else linkAll([release], devs, 'issue');
+  }
+  add(END, '', '', at(column, 0, 1)); linkAll(tail, [END], endWhen);
   // Dời cả sơ đồ để nút cao nhất cách mép trên 40px (nhiều Dev xếp chồng có thể đẩy lên trên).
   const shift = 40 - Math.min(...nodes.map(node => node.y)); for (const node of nodes) node.y += shift;
   return { nodes, edges };
