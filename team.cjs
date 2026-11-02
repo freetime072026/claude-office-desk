@@ -128,6 +128,12 @@ function recoverInterrupted(thread) {
   for (const task of thread.dispatch || []) if (['starting', 'running'].includes(task.status)) { task.status = 'blocked'; task.error = INTERRUPTED; }
   for (const message of thread.messages || []) if (message.streaming) { message.streaming = false; message.error = true; message.text = (message.text ? message.text + '\n\n' : '') + '[Bị ngắt: ' + INTERRUPTED + ']'; delete message.deltaSeen; }
 }
+// Quyền shell của khối (permissions.SHELL_OPTIONS); đổi lựa chọn thì bỏ lần duyệt shell đã nhớ trong session.
+function setShell(item, role, config, shell) {
+  if (!require('./permissions.cjs').SHELL_OPTIONS.includes(shell)) throw Error('Quyền shell không hợp lệ');
+  if ((config.shell || 'once') !== shell && item.shellApproved) delete item.shellApproved[role];
+  if (shell === 'once') delete config.shell; else config.shell = shell;
+}
 function migrateThread(thread) {
   if (!Array.isArray(thread.flow) || !thread.flow.some(label => LEGACY_LEAD.includes(label))) return false;
   const [planning, review] = LEGACY_LEAD, active = thread.flow[thread.stage], workers = thread.workers ||= {};
@@ -168,7 +174,7 @@ function update(team, action, payload) {
   if (action === 'archive') { item.archived = payload.archived !== false; if (item.archived) { item.pinned = false; if (item.auto) item.auto.enabled = false; } return true; }
   if (action === 'delete') { if (!item.archived) throw Error('Chỉ xoá hẳn session đã lưu trữ'); team.threads.splice(team.threads.indexOf(item), 1); return true; }
   if (action === 'apply-task-plan') { if (!Array.isArray(item.taskDrafts) || !item.taskDrafts.length) throw Error('Chưa có phân công hợp lệ từ Lead'); for (const task of item.taskDrafts) if (!item.flow.includes(task.worker)) throw Error('Khối Dev đã thay đổi'); for (const task of item.taskDrafts) { const config = worker(item, task.worker); config.task = task.task; config.files = task.files || []; } log('Phân công đã duyệt', item.taskDrafts.map(task => task.worker + (task.dependsOn?.length ? ' (sau ' + task.dependsOn.join(', ') + ')' : '')).join(', ') + '. Nội dung task nằm trong khối tasks của Lead và ô task của từng Dev.'); item.taskDrafts = []; return true; }
-  if (action === 'worker-config') { if (!item.flow.includes(payload.role)) throw Error('Role không tồn tại'); if (!require('./modes.cjs').validMode(payload.mode) || !['claude-opus-5-5', 'sonnet', 'opus', 'haiku'].includes(payload.model)) throw Error('Mode/model không hợp lệ'); const config = worker(item, payload.role); config.mode = payload.mode; config.model = payload.model; config.profileId = typeof payload.profileId === 'string' ? payload.profileId : ''; config.task = typeof payload.task === 'string' ? payload.task.slice(0, 12000) : ''; if (payload.purpose !== undefined) setPurpose(config, payload.purpose); return true; }
+  if (action === 'worker-config') { if (!item.flow.includes(payload.role)) throw Error('Role không tồn tại'); if (!require('./modes.cjs').validMode(payload.mode) || !['claude-opus-5-5', 'sonnet', 'opus', 'haiku'].includes(payload.model)) throw Error('Mode/model không hợp lệ'); const config = worker(item, payload.role); config.mode = payload.mode; config.model = payload.model; config.profileId = typeof payload.profileId === 'string' ? payload.profileId : ''; config.task = typeof payload.task === 'string' ? payload.task.slice(0, 12000) : ''; if (payload.shell !== undefined) setShell(item, payload.role, config, payload.shell); if (payload.purpose !== undefined) setPurpose(config, payload.purpose); return true; }
   if (action === 'chat-options') { if (!require('./modes.cjs').validMode(payload.mode) || !['claude-opus-5-5', 'sonnet', 'opus', 'haiku'].includes(payload.model)) throw Error('Mode/model không hợp lệ'); item.mode = payload.mode; item.model = payload.model; return true; }
   if (action === 'template') { const key = roleKey(text(payload.role, 40)); team.roleTemplates ||= {}; team.roleTemplates[key] = { responsibility: text(payload.responsibility, 6000), output: text(payload.output, 6000) }; return true; }
   if (action === 'remove-role') { removeRole(item, payload, log); return true; }

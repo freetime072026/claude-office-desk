@@ -72,10 +72,18 @@ function decide({ scope, mode, tool, input = {}, cwd = '' }) {
   }
   return { action: 'ask' };
 }
+// Tuỳ chọn shell của khối (worker.shell): 'allow' mở shell cả cho khối vốn không có (GD, UI/UX) và không hỏi, 'deny' tắt shell
+// (kèm subagent đọc code), 'once' (mặc định) theo role và chỉ hỏi một lần mỗi session (main.cjs nhớ lần duyệt).
+const SHELL_OPTIONS = Object.freeze(['once', 'allow', 'deny']);
+function withShell(scope, shell) {
+  if (!scope || !['allow', 'deny'].includes(shell)) return scope;
+  return { ...scope, bash: shell === 'allow', web: scope.web ?? !scope.bash, shell };
+}
 function bashVerdict(scope, mode) {
+  if (scope?.shell === 'allow') return { action: 'allow' };
   if (scope && !scope.bash) return { action: 'deny', message: `${scope.label}; không chạy lệnh shell.` };
   // Role có quyền shell theo phạm vi (Lead, Dev, VFX, QA) luôn chạy được lệnh: Plan và Đọc & sửa hỏi từng lần, Bypass không hỏi.
   if (scope?.bash) return { action: mode === 'bypass' ? 'allow' : 'ask' };
   return { action: mode === 'bypass' ? 'allow' : mode === 'read' ? 'deny' : 'ask', ...(mode === 'read' ? { message: 'Mode Plan không chạy lệnh shell.' } : {}) };
 }
-module.exports = { describeTool, roleScope, decide, inScope, scopesOverlap, withCurlTimeout };
+module.exports = { SHELL_OPTIONS, withShell, describeTool, roleScope, decide, inScope, scopesOverlap, withCurlTimeout };

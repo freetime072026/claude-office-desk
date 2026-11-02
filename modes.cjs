@@ -44,7 +44,8 @@ function cliTools(mode, scope) {
   const tools = [SCOPED_TOOLS];
   // Role có shell có thêm Agent để gọi subagent đọc code (subagent.cjs).
   if (scope.bash) tools.push('Bash', 'Agent');
-  else if (mode !== 'bypass') tools.push(...WEB_TOOLS);
+  // Khối vốn không có shell giữ web khi được bật shell (permissions.withShell ghi scope.web).
+  if ((scope.web ?? !scope.bash) && mode !== 'bypass') tools.push(...WEB_TOOLS);
   return tools.join(',');
 }
 // Tên MCP server trong mcp-servers.json và trong cấu hình MCP theo role (team.roleMcp).

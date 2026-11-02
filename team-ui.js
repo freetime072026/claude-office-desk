@@ -268,10 +268,10 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     paintBlockPicker(thread);
     const running = role ? runningOf(thread, role) : thread?.messages.findLast(message => message.role === 'Claude' && message.streaming);
     get('#panel-state').textContent = !thread ? 'Chưa có session' : running ? progressText(running) : role ? blockLabel(thread, role, thread.flow.indexOf(role)) : 'Không role · chạy Claude Code thường';
-    for (const id of ['#account-field', '#task-field', '#role-texts', '#art-gen-field', '#purpose-field', '#engine-field']) get(id).hidden = !role;
+    for (const id of ['#account-field', '#shell-field', '#task-field', '#role-texts', '#art-gen-field', '#purpose-field', '#engine-field']) get(id).hidden = !role;
     paintSessionFiles(thread, role);
     for (const field of document.querySelectorAll('#panel select, #panel textarea')) field.disabled = !thread || thread.archived;
-    setField(get('#chat-mode'), config.mode || thread?.mode || 'read', force); setField(get('#chat-model'), config.model || thread?.model || 'claude-opus-5-5', force);
+    setField(get('#chat-mode'), config.mode || thread?.mode || 'read', force); setField(get('#worker-shell'), config.shell || 'once', force); setField(get('#chat-model'), config.model || thread?.model || 'claude-opus-5-5', force);
     if (force) get('#panel-saved').textContent = '';
     if (!role) return;
     const account = get('#worker-account'); if (force || document.activeElement !== account) { account.replaceChildren(...[{ id: '', name: 'Theo tài khoản đang chọn' }, ...knownProfiles].map(profile => make('option', { value: profile.id, textContent: profile.name }))); account.value = config.profileId || ''; }
@@ -311,10 +311,10 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   async function saveWorker() {
     const thread = current(); if (!thread) return; const saved = get('#panel-saved');
     if (!thread.flow.includes(selectedWorker)) { if (await act('chat-options', { mode: get('#chat-mode').value, model: get('#chat-model').value })) saved.textContent = '✓ Đã lưu'; return; }
-    const result = await act('worker-config', { role: selectedWorker, mode: get('#chat-mode').value, model: get('#chat-model').value, profileId: get('#worker-account').value, task: get('#worker-task').value, ...(get('#purpose-field').hidden ? {} : { purpose: get('#worker-purpose').value }) });
+    const result = await act('worker-config', { role: selectedWorker, mode: get('#chat-mode').value, model: get('#chat-model').value, profileId: get('#worker-account').value, shell: get('#worker-shell').value, task: get('#worker-task').value, ...(get('#purpose-field').hidden ? {} : { purpose: get('#worker-purpose').value }) });
     if (result?.loginStarted) { await window.office.run('navigate', { page: 'index.html' }); return; } if (result) saved.textContent = '✓ Đã lưu cấu hình riêng của khối';
   }
-  for (const id of ['#chat-mode', '#chat-model', '#worker-account', '#worker-task', '#worker-purpose']) get(id).onchange = saveWorker;
+  for (const id of ['#chat-mode', '#chat-model', '#worker-account', '#worker-shell', '#worker-task', '#worker-purpose']) get(id).onchange = saveWorker;
   // Engine của preset: '' = Lead chọn theo project. Dùng ở dialog Thêm role và panel khối PLA.
   function fillEngines(select, key) {
     const engines = Object.entries(presets[key]?.engines || {}), id = key + ':' + engines.length; if (select.dataset.key === id) return; select.dataset.key = id;

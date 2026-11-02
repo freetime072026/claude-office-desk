@@ -31,6 +31,7 @@ const authoredBy = (message, label) => message.role === label || String(message.
 function worker(thread, label) { thread.workers ||= {}; const type = typeOf(label); return thread.workers[label] ||= { type, mode: DEFAULT_MODES[type] || thread.mode || 'read', model: DEFAULT_MODELS[type] || FALLBACK_MODEL, profileId: '', task: '' }; }
 function forgetWorker(thread, label) {
   if (thread.workers) delete thread.workers[label];
+  if (thread.shellApproved) delete thread.shellApproved[label]; // lần duyệt shell nhớ trong session đi theo khối
   if (thread.roleConfigByBlock && thread.roleConfig) delete thread.roleConfig[label]; // cấu hình riêng của khối đi theo khối
   for (const key of Object.keys(thread.cliSessions || {})) if (ownsSession(key, label)) delete thread.cliSessions[key];
   if (Array.isArray(thread.taskDrafts)) thread.taskDrafts = thread.taskDrafts.filter(task => task.worker !== label);

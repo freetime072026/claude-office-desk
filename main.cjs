@@ -14,7 +14,7 @@ const chats = new Map();
 const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK, mergePlan } = require('./workers.cjs');
 const { rolePrompt, FILE_ROLES } = require('./prompt.cjs');
 const { needsConfirm, needsTurnConfirm, ALWAYS_ASK } = require('./modes.cjs');
-const { describeTool, decide, roleScope, scopesOverlap } = require('./permissions.cjs');
+const { describeTool, decide, roleScope, scopesOverlap, withShell } = require('./permissions.cjs');
 const sessionFiles = require('./session-files.cjs');
 const attachments = require('./attachments.cjs');
 const unity = require('./unity.cjs');
@@ -25,7 +25,8 @@ const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor, ART_DIRE
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
 // policy = { scope, mode, cwd }: phạm vi ghi theo role được quyết định trước (decide), không hỏi người dùng.
-function permissionAsker(label, folders, autoApproved, policy) {
+// shellSession: nhớ lần duyệt shell của khối trong session (thread.shellApproved) để mỗi khối chỉ bị hỏi Bash một lần.
+function permissionAsker(label, folders, autoApproved, policy, shellSession = null) {
   const always = new Set();
   return async ({ tool, input }) => {
     const verdict = decide({ ...policy, tool, input });
@@ -35,10 +36,13 @@ function permissionAsker(label, folders, autoApproved, policy) {
     if (verdict.action === 'deny') return { allow: false, message: verdict.message };
     const askable = !ALWAYS_ASK.includes(tool);
     if (askable && (autoApproved || always.has(tool))) return allowed;
+    const shell = tool === 'Bash' && shellSession;
+    if (shell && shellSession.approved()) return allowed;
     if (!window || window.isDestroyed()) return { allow: false, message: 'Ứng dụng đã đóng.' };
-    const answer = await dialog.showMessageBox(window, { type: 'question', title: 'Duyệt thao tác', message: `${label} muốn dùng ${tool}`, detail: describeTool(tool, verdict.updatedInput || input) + '\n\nThư mục session:\n' + folders.join('\n'), buttons: ['Từ chối', 'Cho phép'], defaultId: 0, cancelId: 0, noLink: true, ...(askable ? { checkboxLabel: `Luôn cho phép ${tool} tới hết lượt này` } : {}) });
+    const answer = await dialog.showMessageBox(window, { type: 'question', title: 'Duyệt thao tác', message: `${label} muốn dùng ${tool}`, detail: describeTool(tool, verdict.updatedInput || input) + '\n\nThư mục session:\n' + folders.join('\n') + (shell ? `\n\nCho phép cả session: ${label} chạy shell không hỏi lại trong session này (đổi ở mục Shell của khối).` : ''), buttons: ['Từ chối', shell ? 'Cho phép cả session' : 'Cho phép'], defaultId: 0, cancelId: 0, noLink: true, ...(askable && !shell ? { checkboxLabel: `Luôn cho phép ${tool} tới hết lượt này` } : {}) });
     if (answer.response !== 1) return { allow: false, message: `Người dùng từ chối ${tool}. Không thử lại cùng thao tác; hỏi người dùng hoặc đổi cách làm.` };
     if (askable && answer.checkboxChecked) always.add(tool);
+    if (shell) shellSession.approve();
     return allowed;
   };
 }
@@ -271,7 +275,7 @@ app.whenReady().then(() => {
       const autoApproved = Boolean(payload.auto && thread.auto?.enabled && thread.auto.approvedAt && thread.auto.scope === pipeline.approvalScope(thread));
       // Role trong flow làm việc với tệp .md của session (session-files.cjs) và bị giới hạn phạm vi ghi (permissions.roleScope).
       const files = payload.role ? sessionFiles.ensureFiles(thread) : null;
-      const scope = payload.role ? roleScope(worker.type, files, worker.files || [], thread.folder) : null;
+      const scope = payload.role ? withShell(roleScope(worker.type, files, worker.files || [], thread.folder), worker.shell) : null;
       const writes = worker.mode !== 'read' || Boolean(scope);
       // Đọc & sửa/Auto không hỏi trước cả lượt nữa: từng thao tác ghi/sửa/shell/web được duyệt riêng (askPermission bên dưới).
       if (writes) { if (editOverlap(thread, scope?.paths)) throw retryable('Có Dev đang sửa cùng thư mục. Đợi lượt đó xong để tránh ghi đè; các lượt chỉ đọc vẫn chạy song song.'); if (needsTurnConfirm(worker.mode, foldersOf(thread)) && !autoApproved) { const answer = await dialog.showMessageBox(window, { type: 'warning', message: 'Bypass trên ổ hệ thống hoặc thư mục mạng: bỏ duyệt thao tác tệp và lệnh shell trong lượt này?', detail: foldersOf(thread).join('\n'), buttons: ['Hủy', 'Cho phép lần này'], defaultId: 0, cancelId: 0 }); if (answer.response !== 1) return false; } }
@@ -317,7 +321,7 @@ app.whenReady().then(() => {
       const devRun = Boolean(files && payload.role && isDevType(worker.type) && scope?.paths?.length), gitBefore = devRun ? fileChanges.gitStatus(thread.folder, scope.paths) : null;
       const model = payload.role ? modelFor(worker.type, worker.model, thread.leadPhase) : worker.model;
       const runThread = { ...thread, mode: worker.mode, model, cliSessions: thread.cliSessions ||= {}, sessionTotals: thread.sessionTotals ||= {} };
-      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: images.length ? [attachments.folderOf(root, thread.id)] : [], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
+      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: images.length ? [attachments.folderOf(root, thread.id)] : [], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }, { approved: () => Boolean(thread.shellApproved?.[payload.role || 'Claude']), approve: () => { (thread.shellApproved ||= {})[payload.role || 'Claude'] = new Date().toISOString(); persist(); } }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
       run.message.profileId = profileId; run.message.model = model; run.penpot = penpotRun;
       run.child.once('close', () => {
         chats.delete(activeKey);
