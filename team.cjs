@@ -3,6 +3,7 @@ const { defaults, roleKey, LEGACY_LEAD, isDevType } = require('./roles.cjs');
 const { MCP_NAME } = require('./modes.cjs');
 const { PIPELINE, LEAD, QA_ROUND_LIMIT, ownsSession, typeOf, sortFlow, started, openIssues, worker, forgetWorker, addWorker, removable } = require('./workers.cjs');
 const flowgraph = require('./flowgraph.cjs');
+const { PRESETS, PURPOSES, purposeConfig, validEngine } = require('./presets.cjs');
 const HALTED = ['awaiting-decision', 'cancelled'];
 const ART_GENERATORS = Object.freeze(['chatgpt', 'tool']);
 const initial = () => ({ projects: [], roles: [], threads: [] });
@@ -52,6 +53,8 @@ function decide(item, choice, log) {
 function addRole(item, type, log) {
   if (!Object.hasOwn(defaults, type)) throw Error('Loại role không hợp lệ');
   const label = addWorker(item, type);
+  // Session theo preset: khối mới cùng loại cũng chỉ phục vụ preset đó (đổi lại ở panel khối nếu cần).
+  const purpose = item.preset?.toLowerCase(); if (purposeConfig(type, purpose)) worker(item, label).purpose = purpose;
   flowgraph.addNode(item, label); // sơ đồ mặc định dựng lại; sơ đồ đã sửa: Dev/VFX mới nối song song như các Dev khác
   log('Hệ thống', 'Đã thêm ' + label + (item.flow.indexOf(label) < item.stage ? '; bỏ qua ở vòng này' : '')); return label;
 }
@@ -93,6 +96,27 @@ function selectRoles(team, item, payload, log) {
   for (const key of new Set(item.flow.map(typeOf))) item.roleConfig[key] ||= { ...(team.roleTemplates?.[key] || defaults[key] || { responsibility: '', output: '' }), instructions: '' };
   if (payload.restart) { for (const issue of item.issues) issue.closed = false; log('Hệ thống', 'Cấu hình role thay đổi; quy trình bắt đầu lại.'); }
 }
+// Preset đội: chọn lại role theo preset (qua selectRoles nên giữ các gate xóa role) rồi gán mục đích cho mọi khối.
+function setPurpose(config, purpose) {
+  if (!PURPOSES.includes(purpose) || (purpose !== 'game' && !purposeConfig(config.type, purpose))) throw Error('Mục đích không hợp lệ');
+  if (purpose === 'game') delete config.purpose; else config.purpose = purpose;
+}
+function applyPreset(team, item, payload, log) {
+  if (!Object.hasOwn(PRESETS, payload.preset)) throw Error('Preset không hợp lệ');
+  const preset = PRESETS[payload.preset], purpose = payload.preset.toLowerCase(), engine = payload.engine || '';
+  if (!validEngine(payload.preset, engine)) throw Error('Engine không hợp lệ');
+  selectRoles(team, item, { ...payload, roles: preset.roles }, log);
+  for (const label of item.flow) if (purposeConfig(typeOf(label), purpose)) worker(item, label).purpose = purpose;
+  item.preset = payload.preset; setEngine(item, engine);
+  log('Hệ thống', `Áp dụng preset ${preset.name}: ${item.flow.join(', ')}. Các khối chỉ nhận việc của ${payload.preset}. ${engineText(item)}.`);
+}
+// Engine của session theo preset ('' = Lead chọn theo project); đổi engine không bắt đầu lại quy trình.
+function setEngine(item, engine) { if (engine) item.engine = engine; else delete item.engine; }
+const engineText = item => 'Engine: ' + (item.engine ? PRESETS[item.preset || 'PLA'].engines[item.engine].name : 'Lead chọn theo project');
+function changeEngine(item, engine, log) {
+  if (typeof engine !== 'string' || !validEngine(item.preset || 'PLA', engine)) throw Error('Engine không hợp lệ');
+  setEngine(item, engine); log('Cấu hình', engineText(item));
+}
 function moveSessions(thread, from, to) {
   for (const key of Object.keys(thread.cliSessions || {})) if (ownsSession(key, from)) thread.cliSessions[key.slice(0, -from.length) + to] ||= thread.cliSessions[key];
 }
@@ -132,7 +156,7 @@ function update(team, action, payload) {
   if (action === 'archive') { item.archived = payload.archived !== false; if (item.archived) { item.pinned = false; if (item.auto) item.auto.enabled = false; } return true; }
   if (action === 'delete') { if (!item.archived) throw Error('Chỉ xoá hẳn session đã lưu trữ'); team.threads.splice(team.threads.indexOf(item), 1); return true; }
   if (action === 'apply-task-plan') { if (!Array.isArray(item.taskDrafts) || !item.taskDrafts.length) throw Error('Chưa có phân công hợp lệ từ Lead'); for (const task of item.taskDrafts) if (!item.flow.includes(task.worker)) throw Error('Khối Dev đã thay đổi'); for (const task of item.taskDrafts) { const config = worker(item, task.worker); config.task = task.task; config.files = task.files || []; } log('Phân công đã duyệt', item.taskDrafts.map(task => task.worker + (task.dependsOn?.length ? ' (sau ' + task.dependsOn.join(', ') + ')' : '')).join(', ') + '. Nội dung task nằm trong khối tasks của Lead và ô task của từng Dev.'); item.taskDrafts = []; return true; }
-  if (action === 'worker-config') { if (!item.flow.includes(payload.role)) throw Error('Role không tồn tại'); if (!require('./modes.cjs').validMode(payload.mode) || !['claude-opus-5-5', 'sonnet', 'opus', 'haiku'].includes(payload.model)) throw Error('Mode/model không hợp lệ'); const config = worker(item, payload.role); config.mode = payload.mode; config.model = payload.model; config.profileId = typeof payload.profileId === 'string' ? payload.profileId : ''; config.task = typeof payload.task === 'string' ? payload.task.slice(0, 12000) : ''; return true; }
+  if (action === 'worker-config') { if (!item.flow.includes(payload.role)) throw Error('Role không tồn tại'); if (!require('./modes.cjs').validMode(payload.mode) || !['claude-opus-5-5', 'sonnet', 'opus', 'haiku'].includes(payload.model)) throw Error('Mode/model không hợp lệ'); const config = worker(item, payload.role); config.mode = payload.mode; config.model = payload.model; config.profileId = typeof payload.profileId === 'string' ? payload.profileId : ''; config.task = typeof payload.task === 'string' ? payload.task.slice(0, 12000) : ''; if (payload.purpose !== undefined) setPurpose(config, payload.purpose); return true; }
   if (action === 'chat-options') { if (!require('./modes.cjs').validMode(payload.mode) || !['claude-opus-5-5', 'sonnet', 'opus', 'haiku'].includes(payload.model)) throw Error('Mode/model không hợp lệ'); item.mode = payload.mode; item.model = payload.model; return true; }
   if (action === 'template') { const key = roleKey(text(payload.role, 40)); team.roleTemplates ||= {}; team.roleTemplates[key] = { responsibility: text(payload.responsibility, 6000), output: text(payload.output, 6000) }; return true; }
   if (action === 'remove-role') { removeRole(item, payload, log); return true; }
@@ -161,6 +185,8 @@ function update(team, action, payload) {
     log('Hệ thống', 'Yêu cầu đã sửa; cần kiểm tra lại kết quả cũ.'); return true;
   }
   if (action === 'select-roles') selectRoles(team, item, payload, log);
+  else if (action === 'apply-preset') applyPreset(team, item, payload, log);
+  else if (action === 'preset-engine') changeEngine(item, payload.engine, log);
   else if (action === 'assign-role') { const name = roleKey(text(payload.name, 40)); if (!item.flow.includes(name)) flowgraph.addNode(item, addWorker(item, name)); }
   else if (action === 'pin') item.pinned = !item.pinned;
   else if (action === 'move') item.project = payload.project || '';

@@ -53,7 +53,8 @@ body.panel-hidden #panel{display:none}
 #role-texts{margin:0}#role-texts summary{padding:4px 0}#role-texts small{display:block;margin:8px 0 4px;font-size:11px;color:#73806e}#role-texts textarea{margin-bottom:6px}
 #panel-saved{font-size:11px;color:#4f7a5c;min-height:14px}#panel .hint{margin:auto 0 0;font-size:11px;color:#89826f;line-height:1.5}
 dialog{width:520px;max-width:90vw;border:1px solid #deded9;border-radius:15px;padding:25px;color:#242a34;background:#faf9f6}dialog::backdrop{background:#242a3455}dialog form{display:grid;gap:12px}dialog textarea{min-height:150px;resize:vertical}dialog form>div{display:flex;gap:10px;justify-content:flex-end}
-#add-role-choices{display:grid;gap:6px;margin-bottom:12px}
+#add-role-choices,#add-role-presets{display:grid;gap:6px;margin-bottom:12px}
+#preset-engine-field{display:grid;gap:4px;margin:6px 0}
 @media(max-width:1100px){nav{width:220px}main>header{padding:14px 16px 10px}#composer{margin:10px 16px 14px}#flow-row{padding-left:16px;padding-right:16px}#activity{padding:10px 16px}#panel{position:fixed;right:0;top:0;bottom:0;z-index:15;box-shadow:-10px 0 30px #26322d22}}
 #worker-files{font-size:11px;color:#5d6560;overflow-wrap:anywhere}#session-files small{display:block;font-size:11px;color:#5d6560;margin-bottom:4px}#session-files .file-links{display:flex;flex-wrap:wrap;gap:4px}#session-files .file-links button{padding:3px 8px;font-size:11px}
 

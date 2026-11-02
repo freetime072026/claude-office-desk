@@ -2,6 +2,7 @@
 const path = require('node:path');
 const { defaults, SHELL_TYPES, ART_DIRECTOR } = require('./roles.cjs');
 const { GUIDE: READER_GUIDE } = require('./subagent.cjs');
+const { purposeConfig } = require('./presets.cjs');
 const { guide: penpotGuide } = require('./penpot.cjs');
 const { LEAD, QA_ROUND_LIMIT, labelType, authoredBy, hasArtDirector } = require('./workers.cjs');
 // US-04 / AC-04.3: lịch sử gọn cho role còn nhận lịch sử chat (GD, chat thường, role tùy chỉnh).
@@ -96,6 +97,9 @@ function fit(lines, budget) { const kept = [...lines]; let used = size(kept); wh
 // Thứ tự cấu hình dùng chung (PLAN L-7): thread.roleConfig → team.roleTemplates → defaults.
 function roleContext(team, thread, label) {
   const key = labelType(thread, label), own = thread.roleConfig?.[key] || {}, shared = team?.roleTemplates?.[key] || {}, base = defaults[key] || {};
+  // Khối có mục đích preset (PLA…): trách nhiệm/đầu ra của preset, kèm giới hạn chỉ làm việc của preset.
+  const preset = purposeConfig(key, thread.workers?.[label]?.purpose, thread.engine);
+  if (preset) return { key, responsibility: preset.responsibility, output: preset.output, instructions: [preset.guard, own.instructions].filter(Boolean).join('\n') };
   return { key, responsibility: own.responsibility || shared.responsibility || base.responsibility || '', output: own.output || shared.output || base.output || '', instructions: own.instructions || '' };
 }
 function header({ label, lead, phase, round, type, adPhase }) { return `Vai trò ${label}` + (lead ? ` — pha ${phase}, vòng ${round}/${QA_ROUND_LIMIT}` : type === ART_DIRECTOR ? ` — pha ${adPhase}` : '') + '.'; }

@@ -8,6 +8,7 @@ const { profileDir, cleanEnv, sessionArgs, commandFor } = require('./core.cjs');
 const teamStore = require('./team.cjs');
 const { normalizeUsage, foldersOf, extraFolderArgs } = require('./usage.cjs');
 const { defaults: roleDefaults } = require('./roles.cjs');
+const { PRESETS } = require('./presets.cjs');
 const chatEngine = require('./chat.cjs');
 const chats = new Map();
 const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK, mergePlan } = require('./workers.cjs');
@@ -220,6 +221,7 @@ app.whenReady().then(() => {
     if (event) { requireTrusted(event); delete payload.auto; delete payload.resumeSession; }
     if (action === 'state') return snapshot();
     if (action === 'role-defaults') return roleDefaults;
+    if (action === 'role-presets') return Object.fromEntries(Object.entries(PRESETS).map(([key, preset]) => [key, { name: preset.name, roles: preset.roles, engines: Object.fromEntries(Object.entries(preset.engines || {}).map(([id, engine]) => [id, engine.name])) }]));
     if (action === 'copy-text') { if (typeof payload.text !== 'string' || payload.text.length > 2 * 1024 * 1024) throw Error('Nội dung copy quá dài'); clipboard.writeText(payload.text); return true; }
     if (action === 'file-read') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); return require('./files.cjs').readProjectFile(payload.path, foldersOf(thread)); }
     if (action === 'chat-stop') { const thread = metadata.team.threads.find(item => item.id === payload.id); for (const task of thread?.dispatch || []) if (task.worker === payload.role && ACTIVE_TASK.includes(task.status)) task.status = 'cancelled'; chats.get(runKey(payload.id, payload.role))?.cancel(); persist(); publish(); return true; }
@@ -372,7 +374,7 @@ app.whenReady().then(() => {
     }
     if (action === 'select-profile') { profile(payload.id); metadata.activeProfileId = payload.id; persist(); publish(); return await ensureAuth(payload.id); }
     if (action === 'navigate') { if (!['index.html', 'dashboard.html'].includes(payload.page)) throw Error('Trang không hợp lệ'); await window.loadFile(path.join(__dirname, payload.page)); return; }
-    if (action === 'team') { if (['remove-role', 'select-roles'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? busyLabels(thread) : []; }
+    if (action === 'team') { if (['remove-role', 'select-roles', 'apply-preset'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? busyLabels(thread) : []; }
       if (['archive', 'delete'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? threadBusy(thread) : []; }
       if (payload.action === 'delete') { const thread = metadata.team.threads.find(item => item.id === payload.id); const result = teamStore.update(metadata.team, 'delete', payload); if (thread) fs.rmSync(path.join(root, 'attachments', thread.id), { recursive: true, force: true }); persist(); publish(); return result; } if (payload.action === 'worker-config' && payload.profileId) profile(payload.profileId); teamStore.update(structuredClone(metadata.team), payload.action, payload); const previousProfile = payload.action === 'worker-config' ? metadata.team.threads.find(thread => thread.id === payload.id)?.workers?.[payload.role]?.profileId : ''; const result = teamStore.update(metadata.team, payload.action, payload); persist(); publish(); if (payload.action === 'decision') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread?.auto?.enabled) background(thread, () => autoRun.decide(thread, payload.choice)); } if (payload.action === 'worker-config' && payload.profileId && payload.profileId !== previousProfile) return await ensureAuth(payload.profileId); return result; }
     if (action === 'add') {
