@@ -60,7 +60,7 @@ test('Spine choice made with the PLA preset reaches every PLA block after the en
   const { team, id, thread } = session(); update(team, 'apply-preset', { id, preset: 'PLA', engine: 'phaser', spine: 'tween' });
   assert.equal(thread.spine, 'tween'); assert.match(thread.messages.at(-1).text, /Spine: Dựng lại bằng tween/);
   const anim = roleContext(team, thread, 'Anim').instructions; assert.match(anim, /Engine: Phaser[\s\S]*không dùng runtime Spine/);
-  update(team, 'preset-spine', { id, spine: 'runtime' }); assert.match(roleContext(team, thread, 'Dev').instructions, /@esotericsoftware\/spine-phaser/);
+  update(team, 'preset-spine', { id, spine: 'runtime' }); assert.match(roleContext(team, thread, 'Dev').instructions, /npm run spine:setup/);
   update(team, 'preset-spine', { id, spine: '' }); assert.equal(thread.spine, undefined); assert.doesNotMatch(roleContext(team, thread, 'Dev').instructions, /Spine đầu vào/);
   assert.throws(() => update(team, 'preset-spine', { id, spine: 'dragonbones' }), /Spine không hợp lệ/);
   assert.throws(() => update(team, 'apply-preset', { id, preset: 'PLA', spine: 'x' }), /Spine không hợp lệ/);
