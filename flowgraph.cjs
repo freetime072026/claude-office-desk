@@ -28,7 +28,7 @@ function matches(when, outcome) {
 // ---- Sơ đồ mặc định từ danh sách khối (cũng dùng cho session cũ): trước Lead nối tiếp, Dev/VFX song song, QA chờ đủ Dev.
 function defaultGraph(thread) {
   const type = label => labelType(thread, label), flow = thread.flow || [];
-  const pre = flow.filter(label => ['GD', 'UI/UX'].includes(type(label)));
+  const pre = flow.filter(label => ['PO', 'GD', 'UI/UX'].includes(type(label)));
   const lead = flow.find(label => type(label) === LEAD), devs = flow.filter(label => isDevType(type(label)));
   const qas = flow.filter(label => type(label) === 'QA'), ad = flow.find(label => type(label) === ART_DIRECTOR), release = flow.find(label => type(label) === RELEASE);
   const custom = flow.filter(label => !pre.includes(label) && label !== lead && label !== ad && label !== release && !devs.includes(label) && !qas.includes(label));

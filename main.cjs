@@ -20,6 +20,8 @@ const attachments = require('./attachments.cjs');
 const unity = require('./unity.cjs');
 const projectDocs = require('./project-docs.cjs');
 const fileChanges = require('./file-changes.cjs');
+const po = require('./po.cjs');
+const flowgraphLib = require('./flowgraph.cjs');
 const penpot = require('./penpot.cjs');
 const skills = require('./skills.cjs');
 const skillImport = require('./skill-import.cjs');
@@ -209,10 +211,29 @@ app.whenReady().then(() => {
     update: (thread, action, payload) => teamStore.update(metadata.team, action, { ...payload, id: thread.id }),
     send: (thread, label, text) => handleDesk(null, 'chat-send', { id: thread.id, role: label, text, auto: true }),
     pump: pumpThread, isRunning, approve: approveAuto, recordTasks,
+    nextMilestone: thread => { const applied = teamStore.update(metadata.team, 'po-next', { id: thread.id, busy: busyLabels(thread) }); if (applied) writePoPlan(thread); return applied; },
     newRound: (thread, round, summary) => { try { sessionFiles.appendRound(thread, round, summary); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } },
     log: (thread, role, text) => thread.messages.push({ role, text, time: new Date().toISOString() }),
     changed: () => { persist(); publish(); }
   });
+  // ---- Kế hoạch đội của PO (po.cjs, team.cjs). Xem trước: sơ đồ mặc định của đội ở từng mốc (chỉ để hiện trong thẻ duyệt).
+  function proposePoPlan(thread, textValue) {
+    const problems = [], plan = po.parsePlan(textValue, problems);
+    if (!plan) { if (/\`\`\`team/.test(textValue) || !thread.poPlan) { thread.poProblems = problems.join('; '); thread.messages.push({ role: 'Điều phối', text: `PO chưa xuất kế hoạch đội hợp lệ (${thread.poProblems}). Lượt PO sau sẽ nhận lý do này.`, time: new Date().toISOString() }); } return; }
+    const steps = po.timeline(plan, thread.flow);
+    const previews = steps.map(step => { const graph = flowgraphLib.defaultGraph({ ...thread, flow: step.flow, workers: {} }); return { nodes: graph.nodes.map(({ id, label, phase, x, y }) => ({ id, label, ...(phase ? { phase } : {}), x, y })), edges: graph.edges.map(({ from, to, when }) => ({ from, to, when })) }; });
+    teamStore.update(metadata.team, 'po-propose', { id: thread.id, plan, steps, previews });
+  }
+  function writePoPlan(thread) { try { if (thread.poPlan?.status === 'approved') sessionFiles.writePlan(thread, po.planMarkdown(thread.poPlan.plan, thread.poPlan.current)); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được PO.md: ' + error.message, time: new Date().toISOString() }); } }
+  // Duyệt kế hoạch: áp mốc 1, ghi PO.md, đánh dấu PO xong rồi chạy tự động từ GD.
+  async function startPoPlan(thread) {
+    writePoPlan(thread);
+    const nodes = flowgraphLib.ensureGraph(thread).nodes, owner = nodes.find(node => node.label === thread.flow.find(label => getWorker(thread, label).type === po.PO));
+    flowgraphLib.resetRun(thread); if (owner) flowgraphLib.stateOf(thread, owner.id).status = 'done';
+    const gd = thread.flow.find(label => getWorker(thread, label).type === 'GD'); persist(); publish();
+    if (!thread.auto?.enabled && !(await autoRun.enable(thread, 'Duyệt kế hoạch đội của PO.'))) return;
+    if (gd) await autoRun.runStage(thread, gd);
+  }
   // /role <khối> start|pause. Trả về câu trả lời hiển thị trong chat; việc chạy được khởi động sau khi trả lời.
   function roleCommand(thread, label, verb) {
     const config = getWorker(thread, label), tasks = (thread.dispatch || []).filter(task => task.worker === label);
@@ -400,6 +421,7 @@ app.whenReady().then(() => {
         if (changed) run.message.changedFiles = changed;
         if (files && isDevType(worker.type) && (handoff || changed)) { try { sessionFiles.appendChange(thread, payload.role, handoff?.status || (run.message.error ? 'lỗi' : 'không có handoff'), handoff?.summary || '', changed); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } }
         let proposalApplied = false, planBlocked = '';
+        if (worker.type === po.PO && !run.message.error) proposePoPlan(thread, run.message.text);
         // Lead (pha planning/triage) và Art Director (khi có khối tasks) giao việc; lý do kế hoạch bị từ chối được lưu và chèn vào
         // prompt lượt kế tiếp của người giao (prompt.cjs), xoá khi kế hoạch hợp lệ.
         const planner = run.message.error ? '' : worker.type === LEAD && thread.leadPhase !== 'review' ? LEAD : worker.type === ART_DIRECTOR && /```tasks/.test(run.message.text) ? ART_DIRECTOR : '';
@@ -442,9 +464,9 @@ app.whenReady().then(() => {
     if (action === 'select-profile') { profile(payload.id); metadata.activeProfileId = payload.id; persist(); publish(); return await ensureAuth(payload.id); }
     if (action === 'navigate') { if (!['index.html', 'dashboard.html'].includes(payload.page)) throw Error('Trang không hợp lệ'); await window.loadFile(path.join(__dirname, payload.page)); return; }
     if (action === 'team' && payload.action === 'tweak') return requestTweak(payload);
-    if (action === 'team') { if (['remove-role', 'select-roles', 'apply-preset'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? busyLabels(thread) : []; }
+    if (action === 'team') { if (['remove-role', 'select-roles', 'apply-preset', 'po-approve'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? busyLabels(thread) : []; }
       if (['archive', 'delete'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? threadBusy(thread) : []; }
-      if (payload.action === 'delete') { const thread = metadata.team.threads.find(item => item.id === payload.id); const result = teamStore.update(metadata.team, 'delete', payload); if (thread) fs.rmSync(path.join(root, 'attachments', thread.id), { recursive: true, force: true }); persist(); publish(); return result; } if (payload.action === 'worker-config' && payload.profileId) profile(payload.profileId); teamStore.update(structuredClone(metadata.team), payload.action, payload); const previousProfile = payload.action === 'worker-config' ? metadata.team.threads.find(thread => thread.id === payload.id)?.workers?.[payload.role]?.profileId : ''; const result = teamStore.update(metadata.team, payload.action, payload); persist(); publish(); if (payload.action === 'decision') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread?.auto?.enabled) background(thread, () => autoRun.decide(thread, payload.choice)); } if (payload.action === 'worker-config' && payload.profileId && payload.profileId !== previousProfile) return await ensureAuth(payload.profileId); return result; }
+      if (payload.action === 'delete') { const thread = metadata.team.threads.find(item => item.id === payload.id); const result = teamStore.update(metadata.team, 'delete', payload); if (thread) fs.rmSync(path.join(root, 'attachments', thread.id), { recursive: true, force: true }); persist(); publish(); return result; } if (payload.action === 'worker-config' && payload.profileId) profile(payload.profileId); teamStore.update(structuredClone(metadata.team), payload.action, payload); const previousProfile = payload.action === 'worker-config' ? metadata.team.threads.find(thread => thread.id === payload.id)?.workers?.[payload.role]?.profileId : ''; const result = teamStore.update(metadata.team, payload.action, payload); persist(); publish(); if (payload.action === 'po-approve') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread) background(thread, () => startPoPlan(thread)); } if (payload.action === 'decision') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread?.auto?.enabled) background(thread, () => autoRun.decide(thread, payload.choice)); } if (payload.action === 'worker-config' && payload.profileId && payload.profileId !== previousProfile) return await ensureAuth(payload.profileId); return result; }
     if (action === 'add') {
       if (typeof payload.name !== 'string' || !payload.name.trim() || payload.name.length > 60) throw Error('Tên cần 1–60 ký tự');
       if (metadata.profiles.length >= 20) throw Error('Tối đa 20 hồ sơ');

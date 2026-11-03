@@ -199,6 +199,7 @@
     const task = thread.dispatch?.find(item => item.worker === role); let text;
     if (runningOf(thread, role)) text = '● Đang thực hiện';
     else if (thread.workers?.[role]?.paused) text = '⏸ Tạm dừng';
+    else if (thread.workers?.[role]?.idle) text = '◌ Tạm nghỉ ở mốc này (kế hoạch PO)';
     else if (task) text = taskNames[task.status] || task.status;
     else if (index < thread.stage || thread.status === 'done') text = ['Dev', 'VFX', 'Art', 'Anim', 'Sound'].includes(thread.workers?.[role]?.type) && thread.flow[thread.stage] === 'QA' ? '✓ Đã làm · chờ QA' : '✓ Đã bàn giao';
     else text = index === thread.stage ? names[thread.status] : 'Chưa đến bước';
@@ -485,6 +486,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     for (const id of ['#pin', '#move', '#edit-request', '#retry-blocked', '#archive', '#role', '#folders']) if (thread?.archived) get(id).disabled = true;
     paintSessionUsage(thread);
     get('#issues').replaceChildren(); get('#attachments').replaceChildren(); paintFolders(thread);
+    window.poPlanView?.paint(thread, act);
     get('#decision-banner').hidden = thread?.status !== 'awaiting-decision';
     get('#decision-text').textContent = `QA fail ${thread?.qaFailRounds || 0}/${qaRoundLimit} vòng. Chọn cách xử lý:`;
     window.graphView?.paint(thread);

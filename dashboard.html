@@ -27,6 +27,7 @@
     </div>
   </header>
   <div id="archived-banner" hidden>🗄 Session đã lưu trữ: chỉ xem, không chạy được. <button id="restore" type="button">Khôi phục</button></div>
+  <section id="po-plan" aria-label="Kế hoạch đội của PO" hidden></section><p id="po-status" hidden></p>
   <div id="decision-banner" role="alert" hidden><p id="decision-text"></p><button type="button" data-choice="continue">Tiếp tục thêm 1 vòng</button><button type="button" data-choice="accept">Chấp nhận với lỗi đã biết</button><button type="button" data-choice="stop">Dừng</button></div>
   <div id="dispatch-summary" role="status" aria-label="Các khối của session" hidden></div>
   <div id="view-tabs" role="tablist"><button type="button" id="tab-chat" role="tab" aria-selected="true">💬 Hội thoại</button><button type="button" id="tab-graph" role="tab" aria-selected="false">🗺 Sơ đồ luồng</button></div>
@@ -108,4 +109,4 @@
 <dialog id="file-viewer"><h3 id="file-title"></h3><button type="button" id="file-copy">Copy nội dung</button><button type="button" id="file-close">Đóng</button><pre id="file-text"></pre></dialog>
 <dialog id="image-viewer"><h3 id="image-title"></h3><button type="button" id="image-close">Đóng</button><img id="image-view" alt=""></dialog>
 <dialog id="usage-viewer"><h3>Usage chính thức của hồ sơ CLI</h3><p>Nếu CLI hiện onboarding, hoàn tất tại đây rồi nhập /usage. Không tự gửi prompt AI.</p><button type="button" id="usage-close">Đóng</button><div id="usage-terminal"></div></dialog>
-<script src="chat-format.js"></script><script src="node_modules/@xterm/xterm/lib/xterm.js"></script><script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script><script src="team-ui.js"></script><script src="graph-ui.js"></script></body></html>
+<script src="chat-format.js"></script><script src="node_modules/@xterm/xterm/lib/xterm.js"></script><script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script><script src="po-ui.js"></script><script src="team-ui.js"></script><script src="graph-ui.js"></script></body></html>

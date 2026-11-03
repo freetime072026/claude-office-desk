@@ -5,6 +5,7 @@ const { CHAT_KEY } = require('./skills.cjs');
 const { PIPELINE, LEAD, QA_ROUND_LIMIT, ownsSession, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, removable } = require('./workers.cjs');
 const { inheritedRole } = require('./prompt.cjs');
 const flowgraph = require('./flowgraph.cjs');
+const po = require('./po.cjs');
 const { PRESETS, PURPOSES, purposeConfig, validEngine, validSpine } = require('./presets.cjs');
 const releaseConfig = require('./release-config.cjs');
 const HALTED = ['awaiting-decision', 'cancelled'];
@@ -166,6 +167,47 @@ function migrateThread(thread) {
 }
 // ≤ 0.21 lưu cấu hình theo loại role (roleConfig.Dev dùng chung cho Dev, Dev #2…). Chuyển sang theo nhãn khối: mỗi khối nhận bản
 // sao của loại mình; trách nhiệm/đầu ra trùng template/mặc định (app tự chép khi chọn role) bỏ đi để preset/template áp lại.
+// ---- Kế hoạch đội của PO (po.cjs). Đề xuất → người dùng duyệt một lần cả kế hoạch → app áp từng mốc.
+// Áp mốc k: xoá khối không còn cần (khối đang có việc vẫn xoá vì đã được duyệt trước; khối đang chạy thì tạm nghỉ và báo),
+// thêm khối mới cần, tạm nghỉ khối không dùng ở mốc này, ghi trách nhiệm riêng của từng khối và phần việc giao GD.
+function applyMilestone(team, item, k, log, busy = []) {
+  const plan = item.poPlan.plan, milestone = plan.milestones[k], change = po.changesAt(plan, k, item.flow), notes = [];
+  for (const label of change.remove) {
+    try { notes.push(`xoá ${label} (${dropRole(item, label, busy, true)})`); } catch (error) { worker(item, label).idle = true; notes.push(`chưa xoá được ${label}: ${error.message}; tạm nghỉ`); }
+  }
+  for (const label of change.add) { const added = addWorker(item, typeOf(label)); notes.push('thêm ' + added); }
+  for (const label of item.flow) { if (typeOf(label) === po.PO) continue; const config = worker(item, label); if (milestone.blocks.includes(label)) delete config.idle; else config.idle = true; }
+  migrateRoleConfig(team, item); item.roleConfig ||= {};
+  for (const label of item.flow) { const body = po.responsibilityFor(plan, label); if (body) item.roleConfig[label] = { ...item.roleConfig[label], instructions: body }; }
+  const gd = item.flow.find(label => typeOf(label) === 'GD'); if (gd) worker(item, gd).task = milestone.gd;
+  item.poPlan.current = k; flowgraph.syncGraph(item);
+  const idle = item.flow.filter(label => worker(item, label).idle);
+  log('Hệ thống', `Kế hoạch PO · mốc ${k + 1}/${plan.milestones.length}: ${milestone.title}. ${notes.length ? notes.join(', ') + '. ' : ''}${idle.length ? 'Tạm nghỉ: ' + idle.join(', ') + '. ' : ''}GD nhận phần việc của mốc.`);
+}
+// Đề xuất mới (main.cjs gọi sau lượt PO có khối team hợp lệ). Chưa đổi đội cho tới khi duyệt.
+function proposePlan(item, payload, log) {
+  if (!payload.plan?.milestones?.length) throw Error('Kế hoạch PO không hợp lệ');
+  item.poPlan = { ...(item.poPlan?.status === 'approved' ? { previous: { plan: item.poPlan.plan, current: item.poPlan.current } } : {}), status: 'proposed', plan: payload.plan, steps: payload.steps || [], previews: payload.previews || [], proposedAt: new Date().toISOString() };
+  delete item.poProblems; log('Hệ thống', `PO đề xuất kế hoạch đội ${payload.plan.milestones.length} mốc; chờ bạn duyệt.`);
+}
+function approvePlan(team, item, payload, log) {
+  if (item.poPlan?.status !== 'proposed') throw Error('Không có kế hoạch PO chờ duyệt');
+  if (busyOf(payload).some(label => typeOf(label) !== po.PO)) throw Error('Còn khối đang chạy; đợi xong rồi duyệt kế hoạch');
+  item.poPlan.status = 'approved'; item.poPlan.approvedAt = new Date().toISOString(); delete item.poPlan.previous;
+  log('Hệ thống', 'Đã duyệt kế hoạch đội của PO (gồm thay đổi khối ở các mốc sau; app tự áp khi tới mốc, không hỏi lại).');
+  applyMilestone(team, item, 0, log, busyOf(payload)); return true;
+}
+function rejectPlan(item, payload, log) {
+  if (item.poPlan?.status !== 'proposed') throw Error('Không có kế hoạch PO chờ duyệt');
+  const reason = typeof payload.reason === 'string' ? payload.reason.trim().slice(0, 2000) : ''; item.poProblems = reason || 'người dùng từ chối kế hoạch';
+  if (item.poPlan.previous) item.poPlan = { status: 'approved', plan: item.poPlan.previous.plan, current: item.poPlan.previous.current }; else delete item.poPlan;
+  log('Hệ thống', 'Từ chối kế hoạch đội của PO' + (reason ? ': ' + reason : '') + '. Lượt PO sau sẽ nhận lý do này.'); return true;
+}
+// Mốc kế tiếp (pipeline gọi khi luồng tới Hoàn tất): áp và báo true; hết mốc thì false.
+function nextMilestone(team, item, payload, log) {
+  const plan = item.poPlan; if (plan?.status !== 'approved' || (plan.current ?? 0) + 1 >= plan.plan.milestones.length) return false;
+  applyMilestone(team, item, plan.current + 1, log, busyOf(payload)); return true;
+}
 function migrateRoleConfig(team, thread) {
   if (thread.roleConfigByBlock || !Array.isArray(thread.flow)) return false;
   const old = thread.roleConfig || {}, next = {};
@@ -204,6 +246,10 @@ function update(team, action, payload) {
   if (action === 'chat-options') { if (!require('./modes.cjs').validMode(payload.mode) || !['claude-opus-5-5', 'sonnet', 'opus', 'haiku'].includes(payload.model)) throw Error('Mode/model không hợp lệ'); item.mode = payload.mode; item.model = payload.model; return true; }
   if (action === 'template') { const key = roleKey(text(payload.role, 40)); team.roleTemplates ||= {}; team.roleTemplates[key] = { responsibility: text(payload.responsibility, 6000), output: text(payload.output, 6000) }; return true; }
   if (action === 'remove-role') { removeRole(item, payload, log); return true; }
+  if (action === 'po-propose') { proposePlan(item, payload, log); return true; }
+  if (action === 'po-approve') return approvePlan(team, item, payload, log);
+  if (action === 'po-reject') return rejectPlan(item, payload, log);
+  if (action === 'po-next') return nextMilestone(team, item, payload, log);
   // Công cụ sinh ảnh của Art (dùng chung mọi session): 'chatgpt' = Art viết prompt chi tiết, người dùng tạo ảnh bằng ChatGPT;
   // 'tool' = Art tự gọi script/pipeline của project hoặc MCP sinh ảnh.
   if (action === 'art-generator') { if (!ART_GENERATORS.includes(payload.mode)) throw Error('Công cụ sinh ảnh không hợp lệ'); team.artGenerator = payload.mode; log('Cấu hình', 'Art sinh ảnh bằng: ' + (payload.mode === 'chatgpt' ? 'ChatGPT (thủ công)' : 'script/MCP của project')); return true; }

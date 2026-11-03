@@ -2,6 +2,7 @@
 const defaults = {
   'UI/UX': { responsibility: 'Thiết kế luồng màn hình và trạng thái theo AC. Không đổi gameplay, không viết code.', output: 'Mỗi màn hình có luồng vào/ra, các trạng thái (bình thường, trống, lỗi, đang tải) và thông số layout cho Dev. Xong khi mỗi AC liên quan UI có màn hình và trạng thái tương ứng.' },
   'Art Director': { responsibility: 'Giữ style và chất lượng hình ảnh của game. Duyệt mockup UI/UX (vị trí, kích thước, phân cấp thị giác), viết đặc tả chi tiết từng ảnh, giao Art làm mới hoặc làm lại với yêu cầu rõ ràng, review ảnh và UI trong game (lệch style, lỗi visual, tối ưu texture). Quản lý tài nguyên dùng chung và theo feature. Không viết code gameplay.', output: 'STYLE.md (style guide, ngân sách texture), ASSETS.md (tài nguyên common và quy ước thư mục theo feature), ART.md (đặc tả từng ảnh ART-…), task Art chi tiết; review ghi đạt/không đạt kèm ảnh chụp và tiêu chí lệch. Xong khi mọi ảnh của vòng đạt STYLE.md và ART.md.' },
+  PO: { responsibility: 'Nhận yêu cầu project, chia thành các mốc theo thứ tự làm, chọn đội cần cho từng mốc (thêm, tạm nghỉ, xoá khối) và viết phần việc giao GD mỗi mốc. Không thiết kế chi tiết, không viết code.', output: 'Khối team: các mốc, khối hoạt động mỗi mốc kèm lý do, phần giao GD, trách nhiệm riêng của từng khối trong session. Xong khi người dùng duyệt kế hoạch đội.' },
   GD: { responsibility: 'Làm rõ yêu cầu với người dùng tới khi không còn câu hỏi mở. Chốt phạm vi và chia việc cho UI/UX, Dev, VFX, QA. Không viết code, không chọn giải pháp kỹ thuật.', output: 'US/AC có ID và kiểm được (có số, có điều kiện; tránh "mượt", "đẹp"), mục VFX, ngân sách performance, câu hỏi mở. Xong khi mọi AC đều kiểm được và không còn câu hỏi mở.' },
   'Lead Dev': { responsibility: 'Chỉ nhận phần kỹ thuật. Chọn phương án, chia task tự hoàn thành và kiểm được, tệp của các task không chồng nhau. Triage Issue thành kế hoạch sửa; review sau khi QA xác nhận. Không tự sửa code của Dev.', output: 'PROJECT.md ngắn và đúng hiện trạng; mỗi task có phương án, AC liên quan, tệp được sửa, phụ thuộc; review ghi đạt/không đạt theo file:line. Xong khi mọi AC đã có task phụ trách.' },
   Dev: { responsibility: 'Làm đúng task, đúng tệp được giao. Không refactor ngoài task, không đổi AC, không tự xác nhận QA pass. Cần sửa tệp ngoài phạm vi thì báo trong handoff để Lead giao lại.', output: 'Code chạy được, có test cho logic chính nếu project có test; handoff liệt kê tệp, lý do và cách kiểm. Xong khi build/compile không lỗi và đã tự kiểm theo AC của task.' },
@@ -17,7 +18,7 @@ const LEGACY_LEAD = Object.freeze(['Lead Planning', 'Lead Review']);
 const roleKey = role => LEGACY_LEAD.includes(role) ? 'Lead Dev' : role;
 // US-02: model mặc định khi tạo khối mới. Chỉ Lead lập kế hoạch cần Opus; GD, Dev, QA, UI/UX dùng Sonnet (GD đổi sang Opus ở UI khi cần).
 // Số đo 8 session: GD + Lead trên Opus chiếm 44% chi phí, phần lớn là output của Opus.
-const DEFAULT_MODELS = Object.freeze({ 'Lead Dev': 'claude-opus-5-5' });
+const DEFAULT_MODELS = Object.freeze({ 'Lead Dev': 'claude-opus-5-5', PO: 'claude-opus-5-5' });
 const FALLBACK_MODEL = 'sonnet';
 // Art Director: chỉ một khối mỗi session, hai pha (planning: duyệt UI/UX, đặc tả ảnh, giao Art; review: kiểm ảnh/UI trong game).
 const ART_DIRECTOR = 'Art Director';
@@ -34,7 +35,7 @@ const DEFAULT_MODES = Object.freeze({ Dev: 'edit', VFX: 'edit', Art: 'edit', Ani
 const SHELL_TYPES = Object.freeze(['Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', ART_DIRECTOR, RELEASE]);
 // US-06: giới hạn số lượt tool trong một lượt chat (--max-turns).
 // Dev/VFX 40: lượt dài làm ngữ cảnh phình, chi phí tăng nhanh hơn số lượt (session BaseTD: 60 lượt, ~150k token mỗi lần gọi).
-const MAX_TURNS = Object.freeze({ GD: 30, 'Lead Dev': 30, Dev: 40, VFX: 40, Art: 40, Anim: 40, Sound: 40, QA: 40, [ART_DIRECTOR]: 40, [RELEASE]: 30 });
+const MAX_TURNS = Object.freeze({ PO: 20, GD: 30, 'Lead Dev': 30, Dev: 40, VFX: 40, Art: 40, Anim: 40, Sound: 40, QA: 40, [ART_DIRECTOR]: 40, [RELEASE]: 30 });
 // Loại khối làm việc như Dev: nhận task từ Lead (khối tasks), sửa trong phạm vi tệp, chạy song song trong vòng Dev.
 // Art: sprite, icon, ảnh UI (sinh bằng script/pipeline art hoặc MCP sinh ảnh bật riêng cho role). Anim: clip, Animator, rig 2D. Sound: SFX, nhạc, import setting âm thanh.
 const DEV_TYPES = Object.freeze(['Dev', 'VFX', 'Art', 'Anim', 'Sound']);

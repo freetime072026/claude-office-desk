@@ -11,7 +11,7 @@ const reply = status => ({ text: fence('handoff', { status, summary: status }) }
 const session = roles => { const team = initial(); const id = update(team, 'create', { request: 'Game' }); for (const type of roles) update(team, 'add-worker', { id, type }); return { team, id, thread: team.threads[0] }; };
 
 test('VFX is a selectable role placed after Dev and before QA, with Sonnet by default', () => {
-  assert.deepEqual(PIPELINE, ['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release']);
+  assert.deepEqual(PIPELINE, ['PO', 'GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release']);
   const { team, id, thread } = session(['QA', 'VFX', 'Dev', 'Lead Dev', 'GD']);
   assert.deepEqual(thread.flow, ['GD', 'Lead Dev', 'Dev', 'VFX', 'QA']);
   assert.equal(worker(thread, 'VFX').model, 'sonnet'); assert.equal(update(team, 'add-worker', { id, type: 'VFX' }), 'VFX #2');

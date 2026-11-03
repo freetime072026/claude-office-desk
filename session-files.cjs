@@ -5,6 +5,7 @@
 //   .office-desk/ASSETS.md                  tài nguyên common và quy ước thư mục theo feature; Art Director ghi
 //   .office-desk/<session>/ART_PROMPTS.md   prompt sinh ảnh Art viết để người dùng dán vào ChatGPT; ảnh lưu vào <session>/inbox/
 //   .office-desk/<session>/ART.md           đặc tả từng ảnh (ART-…); Art Director ghi, Art đọc mục của task
+//   .office-desk/<session>/PO.md            app ghi từ kế hoạch đội PO đã duyệt: các mốc, khối từng mốc, phần giao GD
 //   .office-desk/<session>/GDD.md           GD ghi; Lead (phần Dev) và QA đọc
 //   .office-desk/<session>/UIUX.md          UI/UX ghi; Lead trích màn hình vào task Dev, QA đọc khi kiểm UI
 //   .office-desk/<session>/TASKS.md         app ghi từ khối tasks hợp lệ của Lead
@@ -24,13 +25,14 @@ const TEMPLATES = {
   artPrompts: '# ART PROMPTS\n<!-- Art ghi. Đầu tệp: Style prompt chung (dán đầu mọi prompt để ảnh cùng style). Mỗi ảnh một mục:\n## ART-1 · chờ ảnh · Tên\nLưu ảnh vào: .office-desk/<session>/inbox/ART-1.png\nẢnh tham chiếu upload kèm: …\nPrompt (dán vào ChatGPT):\n…\nSau khi nhận: kích thước cuối, pivot, đường dẫn đích\n-->\n',
   project: '# PROJECT\n<!-- Lead cập nhật: thư mục, module, quy ước, tệp quan trọng. Ngắn gọn để Dev đọc thay vì dò cả project. -->\n',
   uiux: '# UIUX\n<!-- UI/UX ghi. Mỗi màn hình một mục có ID để Lead trích vào task Dev:\n## SCR-1 · Tên màn hình\nAC: AC-1.2\nLuồng vào/ra: …\nTrạng thái: bình thường, trống, lỗi, đang tải\nLayout và component: …\n-->\n',
+  po: '# PO\n<!-- App ghi khi kế hoạch đội của PO được duyệt. -->\n',
   tasks: '# TASKS\n<!-- App ghi từ khối tasks của Lead. Không sửa tay khi đang chạy. -->\n',
   issues: '# ISSUES\n<!-- QA ghi. Mẫu:\n## ISS-1 · mở · cao\nAC: AC-1.2\nBước tái hiện: …\nKỳ vọng: …\nThực tế: …\n-->\n',
   perf: '# PERF\n<!-- QA ghi ở pha performance: ngân sách, cách đo, số đo, kết luận. -->\n',
   changes: '# CHANGES\n<!-- App ghi sau mỗi lượt Dev: tệp tạo mới/sửa (app tự lấy từ tool và git), rồi tóm tắt handoff của Dev. -->\n',
   release: '# RELEASE\n<!-- Release ghi mỗi lần build bản gửi. Mẫu:\n## <phiên bản> · <ngày> · đạt | lỗi\nCommit: … (sạch / có thay đổi chưa commit)\nLệnh: …\n| Tệp | Đích (network/store) | Dung lượng | Giới hạn | Kết quả |\nChecklist trước khi gửi: …\n-->\n'
 };
-const NAMES = { artPrompts: 'ART_PROMPTS.md', art: 'ART.md', gdd: 'GDD.md', uiux: 'UIUX.md', tasks: 'TASKS.md', issues: 'ISSUES.md', perf: 'PERF.md', changes: 'CHANGES.md', release: 'RELEASE.md' };
+const NAMES = { po: 'PO.md', artPrompts: 'ART_PROMPTS.md', art: 'ART.md', gdd: 'GDD.md', uiux: 'UIUX.md', tasks: 'TASKS.md', issues: 'ISSUES.md', perf: 'PERF.md', changes: 'CHANGES.md', release: 'RELEASE.md' };
 function filesOf(thread) {
   if (!thread.folder) return null;
   const base = path.join(thread.folder, DIR), own = path.join(base, thread.id);
@@ -55,4 +57,6 @@ function writeTasks(thread, tasks, reason) {
   const previous = fs.readFileSync(files.tasks, 'utf8').replace(TEMPLATES.tasks, '');
   fs.writeFileSync(files.tasks, TEMPLATES.tasks + block + (previous.trim() ? '\n---\n' + previous : ''));
 }
-module.exports = { DIR, filesOf, ensureFiles, appendChange, appendRound, writeTasks, TEMPLATES };
+// PO.md: kế hoạch đội đã duyệt, đánh dấu mốc đang chạy (po.planMarkdown).
+function writePlan(thread, markdown) { const files = ensureFiles(thread); if (files) fs.writeFileSync(files.po, markdown); }
+module.exports = { DIR, filesOf, ensureFiles, writePlan, appendChange, appendRound, writeTasks, TEMPLATES };

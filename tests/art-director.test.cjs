@@ -30,7 +30,7 @@ function harness() {
 }
 
 test('Art Director: one per session, after UI/UX and before Lead, writes only STYLE/ASSETS/ART/ISSUES and may run shell', () => {
-  assert.deepEqual(PIPELINE.slice(0, 4), ['GD', 'UI/UX', 'Art Director', 'Lead Dev']);
+  assert.deepEqual(PIPELINE.slice(1, 5), ['GD', 'UI/UX', 'Art Director', 'Lead Dev']);
   const { team, id, thread } = session(['Lead Dev', 'Art Director', 'UI/UX']);
   assert.deepEqual(thread.flow, ['UI/UX', 'Art Director', 'Lead Dev']); assert.equal(worker(thread, 'Art Director').mode, 'edit');
   assert.throws(() => update(team, 'add-worker', { id, type: 'Art Director' }), /Session đã có Art Director/);

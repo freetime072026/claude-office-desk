@@ -6,6 +6,7 @@ const { isHalted } = require('./team.cjs');
 const { isDevType, ART_DIRECTOR, RELEASE, ART_REJECT_REASONS } = require('./roles.cjs');
 const { foldersOf } = require('./usage.cjs');
 const graph = require('./flowgraph.cjs');
+const PO_TYPE = 'PO';
 const HANDOFF_STATUSES = Object.freeze(['done', 'blocked', 'issue', 'pass', 'reject']);
 const ROLE_VERBS = Object.freeze(['start', 'pause']);
 const SUMMARY_LIMIT = 4000;
@@ -82,7 +83,12 @@ const openTask = (thread, label) => (thread.dispatch || []).find(task => task.wo
 // chat-send, pump(thread), log(thread, role, text), changed(), approve(thread) → Promise<boolean>, isRunning(thread, label),
 // recordTasks(thread, tasks, reason), newRound(thread, round, summary).
 function createAutoRun(deps) {
-  const { update, send, pump, log, changed, approve, isRunning, recordTasks = () => {}, newRound = () => {} } = deps;
+  const { update, send, pump, log, changed, approve, isRunning, recordTasks = () => {}, newRound = () => {}, nextMilestone = () => false } = deps;
+  // Xoá trạng thái của vòng trước (dùng khi GD mở vòng mới và khi kế hoạch PO sang mốc mới); giữ phiên CLI của các khối.
+  function resetRound(thread) {
+    graph.resetRun(thread); thread.leadPhase = 'planning'; thread.qaFailRounds = 0; delete thread.tweak;
+    delete thread.qaPhase; delete thread.reviewRejects; delete thread.qaPassedAt; delete thread.planProblems; delete thread.reassign; delete thread.reassignRounds; delete thread.adPhase; delete thread.uiuxRejects; delete thread.adRejects; delete thread.uiuxReview; delete thread.adPlanProblems; delete thread.artRework; delete thread.artReworks; delete thread.artRedo;
+  }
   const active = thread => Boolean(thread.auto?.enabled) && !isHalted(thread) && thread.status !== 'done';
   const note = (thread, text) => { log(thread, 'Tự động', text); changed(); };
   const handedOff = (thread, label, summary) => log(thread, label + ' · bàn giao tự động', summary || label + ' hoàn tất');
@@ -106,7 +112,14 @@ function createAutoRun(deps) {
   // Chạy một nút đã sẵn sàng. Dev/VFX không có task thì bỏ qua (kết quả skipped) để các nút sau không phải chờ.
   async function startNode(thread, node) {
     const state = graph.stateOf(thread, node.id);
-    if (node.id === graph.END) { state.status = 'done'; thread.status = 'done'; delete thread.tweak; note(thread, 'Hoàn tất theo sơ đồ.'); return; }
+    if (node.id === graph.END) {
+      // Kế hoạch PO đã duyệt còn mốc sau: app áp mốc (thêm/xoá/tạm nghỉ khối, giao GD) rồi chạy tiếp từ GD, không dừng ở Hoàn tất.
+      if (!thread.tweak && nextMilestone(thread)) return startMilestone(thread);
+      state.status = 'done'; thread.status = 'done'; delete thread.tweak; note(thread, 'Hoàn tất theo sơ đồ.'); return;
+    }
+    // Khối tạm nghỉ theo kế hoạch PO ở mốc này: bỏ qua để các bước sau không phải chờ.
+    // Kết quả pass để mọi cạnh xong/pass đi tiếp (QA nghỉ không chặn review/Hoàn tất); hiển thị là bỏ qua.
+    if (worker(thread, node.label).idle) { graph.finish(thread, node.id, 'pass'); graph.stateOf(thread, node.id).status = 'skipped'; log(thread, 'Tự động', `${graph.nodeLabel(node)} tạm nghỉ ở mốc này theo kế hoạch PO · bỏ qua.`); return; }
     // Vòng chỉnh sửa: Release không tự đóng gói (bạn gom nhiều chỉnh sửa rồi bấm Build); Art Director chỉ review khi vòng có đổi art.
     if (thread.tweak && labelType(thread, node.label) === RELEASE) {
       Object.assign(state, { status: 'skipped', outcome: 'skipped' }); graph.queue(thread, graph.END);
@@ -274,12 +287,21 @@ function createAutoRun(deps) {
     const busy = (thread.dispatch || []).filter(task => ['queued', 'starting', 'running'].includes(task.status));
     if (busy.length) return note(thread, `GD đã chốt thay đổi nhưng ${busy.map(task => task.worker).join(', ')} còn đang làm; đợi xong rồi dùng /chot ở bước GD để chạy vòng mới.`);
     if (!thread.auto?.enabled && !(await enable(thread, 'GD chốt thay đổi mới.'))) return;
-    graph.resetRun(thread); thread.leadPhase = 'planning'; thread.qaFailRounds = 0; delete thread.tweak;
-    delete thread.qaPhase; delete thread.reviewRejects; delete thread.qaPassedAt; delete thread.planProblems; delete thread.reassign; delete thread.reassignRounds; delete thread.adPhase; delete thread.uiuxRejects; delete thread.adRejects; delete thread.uiuxReview; delete thread.adPlanProblems; delete thread.artRework; delete thread.artReworks; delete thread.artRedo;
+    resetRound(thread);
     thread.dispatch = []; thread.round = (thread.round || 1) + 1; newRound(thread, thread.round, handoff.summary);
     focus(thread, node); handedOff(thread, node.label, handoff.summary || 'GD chốt thay đổi mới');
     const next = graph.finish(thread, node.id, 'done').map(id => graph.nodeLabel(graph.ensureGraph(thread).nodes.find(item => item.id === id)));
     note(thread, 'GD chốt thay đổi mới · mở vòng mới: ' + next.join(', ') + '.');
+    return advance(thread);
+  }
+  async function startMilestone(thread) {
+    resetRound(thread); thread.dispatch = []; thread.round = (thread.round || 1) + 1;
+    const plan = thread.poPlan, milestone = plan.plan.milestones[plan.current];
+    newRound(thread, thread.round, `Mốc ${plan.current + 1}: ${milestone.title}`);
+    const nodes = graph.ensureGraph(thread).nodes, gd = nodes.find(item => labelType(thread, item.label) === 'GD'), owner = nodes.find(item => labelType(thread, item.label) === PO_TYPE);
+    if (owner) graph.stateOf(thread, owner.id).status = 'done'; // PO đã lên kế hoạch; mốc mới bắt đầu từ GD
+    thread.status = 'working'; note(thread, `Sang mốc ${plan.current + 1}/${plan.plan.milestones.length} của kế hoạch PO: ${milestone.title}.`);
+    if (gd) graph.queue(thread, gd.id); else for (const item of graph.entries(graph.ensureGraph(thread))) graph.queue(thread, item.id);
     return advance(thread);
   }
   // Gọi sau mỗi lượt chat của một khối (main.cjs, sự kiện close).
