@@ -60,3 +60,13 @@ test('skills are enabled per role type for every session, validated by name', ()
   update(team, 'role-skills', { id, role: skills.CHAT_KEY, skills: ['deploy'] });
   assert.deepEqual(team.roleSkills[skills.CHAT_KEY], ['deploy']); assert.match(team.threads[0].messages.at(-1).text, /Skill của chat thường: deploy/);
 });
+
+test('a typed /<name> runs the project skill of that name with the user note; anything else is not a project command', () => {
+  const folder = temp(), app = temp(); skill(path.join(folder, '.claude', 'skills'), 'build_preview', '---\nname: build_preview\ndescription: Build preview\n---\nsteps');
+  skill(app, 'only_app', '---\nname: only_app\ndescription: App skill\n---\n');
+  const found = skills.projectCommand('/build_preview', folder);
+  assert.equal(found.skill.name, 'build_preview'); assert.match(found.prompt, /Lệnh \/build_preview của dự án: dùng Read đọc .*SKILL\.md/); assert.doesNotMatch(found.prompt, /Ghi chú/);
+  assert.match(skills.projectCommand('/build_preview  chỉ applovin\nnhanh', folder).prompt, /Ghi chú của người dùng: chỉ applovin\nnhanh$/);
+  for (const content of ['/build_previews', '/only_app', 'build_preview', '/build preview', '/skills']) assert.equal(skills.projectCommand(content, folder), null, content);
+  assert.equal(skills.projectCommand('/build_preview', ''), null);
+});

@@ -256,7 +256,7 @@ app.whenReady().then(() => {
       // Lệnh slash xử lý cục bộ nên vẫn dùng được khi khối đang trả lời (ví dụ /role Dev pause).
       if (!content.startsWith('/')) { if (chats.has(activeKey)) throw retryable('Khối này đang trả lời. Khối khác vẫn có thể chạy.'); if (chats.size >= 8) throw retryable('Tối đa 8 phiên chat'); }
       const localReply = text => { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); thread.messages.push({ role: 'Hệ thống', text, time: new Date().toISOString() }); persist(); publish(); return true; };
-      if (content === '/help') return localReply('/role <khối> start|pause: chạy/tạm dừng một khối (vd. /role Lead Dev pause). /chot: chốt GD và chạy tự động các bước sau. /compact [điều cần giữ]: compact phiên của khối đang chọn. /auto on|off: bật/tắt chạy tự động. /model: chọn model bên dưới. /status: cấu hình session. /mcp, /mcp open: xem/sửa MCP server. /mcp penpot: thêm Penpot MCP cho UI/UX, Art Director, Art. /skills, /skills open: xem/thêm skill. /skills add <link GitHub> [--force]: tải skill sau khi kiểm tra an toàn. /skills update [tên], /skills remove <tên>. /usage: quota đã nhận từ CLI. Lệnh tương tác khác dùng trong Terminal.');
+      if (content === '/help') return localReply('/role <khối> start|pause: chạy/tạm dừng một khối (vd. /role Lead Dev pause). /chot: chốt GD và chạy tự động các bước sau. /compact [điều cần giữ]: compact phiên của khối đang chọn. /auto on|off: bật/tắt chạy tự động. /model: chọn model bên dưới. /status: cấu hình session. /mcp, /mcp open: xem/sửa MCP server. /mcp penpot: thêm Penpot MCP cho UI/UX, Art Director, Art. /skills, /skills open: xem/thêm skill. /skills add <link GitHub> [--force]: tải skill sau khi kiểm tra an toàn. /skills update [tên], /skills remove <tên>. /usage: quota đã nhận từ CLI. /<tên skill của dự án> [ghi chú]: khối đang chọn chạy skill trong .claude/skills của thư mục dự án (vd. /build_preview). Lệnh tương tác khác dùng trong Terminal.');
       if (content.startsWith('/model')) return localReply('Model của khối hiện tại: ' + (worker.model || 'claude-opus-5-5') + '. Đổi bằng danh sách Model dưới ô chat.');
       if (content === '/mcp') { let names; try { names = mcpServerNames(); } catch (error) { return localReply(error.message); } const own = payload.role ? names.filter(name => (metadata.team.roleMcp?.[worker.type] || []).includes(name)) : names; return localReply((names.length ? 'MCP server đã khai báo: ' + names.join(', ') + '\n' + (payload.role ? `${payload.role} nạp: ${own.join(', ') || 'không có'} (chọn trong mục Trách nhiệm & yêu cầu riêng; áp dụng cho mọi khối ${worker.type})` : 'Chat thường nạp tất cả.') : 'Chưa khai báo MCP server.') + '\nCấu hình: ' + mcp + '\nDùng /mcp open để mở và sửa (dạng {"mcpServers":{"ten":{"command":"...","args":[]}}}). Áp dụng từ lượt sau; Plan chỉ đọc không gọi tool MCP.'); }
       // Thêm Penpot MCP (penpot.cjs) vào mcp-servers.json, bật cho UI/UX, Art Director, Art và hướng dẫn chạy server + plugin.
@@ -289,7 +289,10 @@ app.whenReady().then(() => {
       if (content === '/usage') { const usage = readUsage(metadata.activeProfileId || metadata.profiles[0]?.id); return localReply(usage ? JSON.stringify(usage, null, 2) : 'CLI chưa gửi snapshot quota. Đăng nhập không tạo usage. Dùng Xem usage chính thức trong menu tài khoản để xem trực tiếp tại CLI.'); }
       // /compact [ghi chú]: compact phiên CLI của khối đang chọn (như Claude Desktop); gửi nguyên văn, không chạy bộ tự động.
       const compactOnly = /^\/compact(\s|$)/.test(content);
-      if (content.startsWith('/') && !compactOnly) return localReply('Lệnh này chưa hỗ trợ trong chat. Dùng terminal Claude Code để chạy lệnh tương tác.');
+      // /<tên> trùng skill của dự án (skills.projectCommand): gửi khối đang chọn như một tin thường, nội dung là lời dặn chạy skill.
+      const projectSkill = compactOnly ? null : skills.projectCommand(content, thread.folder);
+      if (projectSkill && chats.size >= 8) throw retryable('Tối đa 8 phiên chat');
+      if (content.startsWith('/') && !compactOnly && !projectSkill) return localReply('Lệnh này chưa hỗ trợ trong chat. Dùng terminal Claude Code để chạy lệnh tương tác.');
       // Đường dẫn trong tin nhắn đổi phạm vi thư mục: ghi rõ vào hội thoại để không đổi ngầm.
       let folderNote = '';
       if (event) {
@@ -345,7 +348,7 @@ app.whenReady().then(() => {
       const runSkills = skills.pick(skills.list(skillsDir(), thread.folder), metadata.team.roleSkills?.[skillKey] || []);
       // Release của project playable-scripts: cấu hình build của khối được ghi vào build.json trước lượt (release-config.cjs).
       const releaseGuide = payload.role && worker.type === 'Release' && !compactOnly ? releaseConfig.prepare(thread.folder, worker.release) : '';
-      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide });
+      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { content: projectSkill ? projectSkill.prompt : content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide });
       // Brief vai trò đi qua system prompt. CLI giữ system prompt của lần gọi đầu khi resume, nên brief đổi (task/pha mới) trong
       // phiên đang tiếp tục được gửi một lần trong tin; thread.briefSent nhớ bản phiên đã có.
       const briefHash = built?.brief ? createHash('sha1').update(built.brief).digest('hex') : '', briefKnown = !resumed || thread.briefSent?.[sessionKey] === briefHash;
