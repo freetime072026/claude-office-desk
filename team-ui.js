@@ -554,7 +554,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   get('#message').addEventListener('keydown', event => { if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.defaultPrevented) return; event.preventDefault(); if (get('#message').value.trim()) get('#composer').requestSubmit(); });
   const manualText = async action => { closeMenus(); if (await act(action, { text: get('#message').value })) get('#message').value = ''; };
   get('#begin').onclick = () => { closeMenus(); act('start'); };
-  get('#handoff').onclick = () => manualText('handoff'); get('#issue').onclick = () => manualText('issue'); get('#review-reject').onclick = () => manualText('review-reject');
+  get('#handoff').onclick = () => manualText('handoff'); get('#issue').onclick = () => manualText('issue'); get('#tweak').onclick = () => manualText('tweak'); get('#review-reject').onclick = () => manualText('review-reject');
   get('#stop').onclick = () => window.office.run('chat-stop', { id: selected, role: selectedWorker }).catch(showError);
   async function sendChat(role) {
     if (get('#message').value.trim() === '/usage') { get('#message').value = ''; await openUsage(); return; }

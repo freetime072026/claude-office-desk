@@ -22,6 +22,8 @@ const RUNNING_TASK = Object.freeze(['queued', 'starting', 'running']);
 const TASK_LIMIT = 11000;
 const clipText = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
 const now = () => new Date().toISOString();
+// Khối làm hình: vòng chỉnh sửa có task của các khối này thì Art Director review lại.
+const ART_TYPES = Object.freeze(['Art', 'Anim', 'VFX']);
 // Phạm vi đã được duyệt khi bật tự động: mode từng khối + thư mục. Đổi mode/thư mục thì lượt tự động phải hỏi lại (main.cjs).
 function approvalScope(thread) {
   const folders = foldersOf(thread).map(folder => folder.toLowerCase()).sort();
@@ -104,7 +106,15 @@ function createAutoRun(deps) {
   // Chạy một nút đã sẵn sàng. Dev/VFX không có task thì bỏ qua (kết quả skipped) để các nút sau không phải chờ.
   async function startNode(thread, node) {
     const state = graph.stateOf(thread, node.id);
-    if (node.id === graph.END) { state.status = 'done'; thread.status = 'done'; note(thread, 'Hoàn tất theo sơ đồ.'); return; }
+    if (node.id === graph.END) { state.status = 'done'; thread.status = 'done'; delete thread.tweak; note(thread, 'Hoàn tất theo sơ đồ.'); return; }
+    // Vòng chỉnh sửa: Release không tự đóng gói (bạn gom nhiều chỉnh sửa rồi bấm Build); Art Director chỉ review khi vòng có đổi art.
+    if (thread.tweak && labelType(thread, node.label) === RELEASE) {
+      Object.assign(state, { status: 'skipped', outcome: 'skipped' }); graph.queue(thread, graph.END);
+      log(thread, 'Tự động', 'Chỉnh sửa xong · Release không tự chạy; bấm Build preview/production ở khối Release khi muốn đóng gói.'); return;
+    }
+    if (thread.tweak && node.phase === 'review' && labelType(thread, node.label) === ART_DIRECTOR && !(thread.dispatch || []).some(task => ART_TYPES.includes(labelType(thread, task.worker)))) {
+      log(thread, 'Tự động', `${graph.nodeLabel(node)}: vòng chỉnh sửa không đổi art · bỏ qua.`); graph.finish(thread, node.id, 'pass'); return;
+    }
     if (worker(thread, node.label).paused) { if (!state.pausedNoted) { state.pausedNoted = true; focus(thread, node, ''); note(thread, `${node.label} đang tạm dừng; dùng /role ${node.label} start để tiếp tục.`); } return; }
     delete state.pausedNoted;
     if (isRunning(thread, node.label)) return;
@@ -248,7 +258,7 @@ function createAutoRun(deps) {
     if (handoff.status !== 'pass') return block(thread, node, 'QA cần người dùng: ' + (handoff.summary || handoff.status));
     for (const item of handoff.retested) if (openIssues(thread).some(issue => issue.id === item.id)) update(thread, 'retest', { issue: item.id, text: item.evidence || handoff.summary || 'QA retest đạt' });
     if (openIssues(thread).length) return block(thread, node, `QA pass nhưng còn ${openIssues(thread).length} Issue chưa ghi retest; dừng tự động.`);
-    if (thread.qaPhase !== 'performance') { thread.qaPhase = 'performance'; graph.stateOf(thread, node.id).status = 'queued'; return note(thread, 'Hết Issue chức năng · QA chuyển sang kiểm performance.'); }
+    if (thread.qaPhase !== 'performance' && !thread.tweak) { thread.qaPhase = 'performance'; graph.stateOf(thread, node.id).status = 'queued'; return note(thread, 'Hết Issue chức năng · QA chuyển sang kiểm performance.'); }
     thread.qaPassedAt = now(); thread.qaFailRounds = 0; handedOff(thread, node.label, handoff.summary || 'QA pass');
     return graph.finish(thread, node.id, 'pass');
   }
@@ -264,7 +274,7 @@ function createAutoRun(deps) {
     const busy = (thread.dispatch || []).filter(task => ['queued', 'starting', 'running'].includes(task.status));
     if (busy.length) return note(thread, `GD đã chốt thay đổi nhưng ${busy.map(task => task.worker).join(', ')} còn đang làm; đợi xong rồi dùng /chot ở bước GD để chạy vòng mới.`);
     if (!thread.auto?.enabled && !(await enable(thread, 'GD chốt thay đổi mới.'))) return;
-    graph.resetRun(thread); thread.leadPhase = 'planning'; thread.qaFailRounds = 0;
+    graph.resetRun(thread); thread.leadPhase = 'planning'; thread.qaFailRounds = 0; delete thread.tweak;
     delete thread.qaPhase; delete thread.reviewRejects; delete thread.qaPassedAt; delete thread.planProblems; delete thread.reassign; delete thread.reassignRounds; delete thread.adPhase; delete thread.uiuxRejects; delete thread.adRejects; delete thread.uiuxReview; delete thread.adPlanProblems; delete thread.artRework; delete thread.artReworks; delete thread.artRedo;
     thread.dispatch = []; thread.round = (thread.round || 1) + 1; newRound(thread, thread.round, handoff.summary);
     focus(thread, node); handedOff(thread, node.label, handoff.summary || 'GD chốt thay đổi mới');
@@ -358,12 +368,24 @@ function createAutoRun(deps) {
     }
     return runStage(thread);
   }
+  // Vòng chỉnh sửa (team.cjs requestTweak đã ghi Issue [Chỉnh sửa] và chuyển Lead triage): chạy lại từ nút Lead triage →
+  // khối được giao → QA/Art Director → Lead review; không qua GD, UI/UX, Art Director lập kế hoạch và Release.
+  async function tweak(thread, summary = '') {
+    if (!thread.auto?.enabled && !(await enable(thread, 'Yêu cầu chỉnh sửa.'))) return false;
+    const triage = graph.ensureGraph(thread).nodes.find(node => node.phase === 'triage' && labelType(thread, node.label) === LEAD);
+    if (!triage) { note(thread, 'Sơ đồ không có nút Lead triage; chạy khối phụ trách bằng tay để làm Issue [Chỉnh sửa].'); return false; }
+    graph.resetRun(thread); thread.dispatch = []; thread.leadPhase = 'triage';
+    for (const key of ['qaPhase', 'reviewRejects', 'planProblems', 'reassign', 'reassignRounds', 'artRework', 'artRedo', 'artReworks', 'adRejects']) delete thread[key];
+    thread.round = (thread.round || 1) + 1; newRound(thread, thread.round, 'Chỉnh sửa: ' + summary);
+    graph.queue(thread, triage.id); note(thread, 'Vòng chỉnh sửa: Lead triage giao khối phụ trách, rồi QA và Lead review; Release không tự chạy.');
+    return advance(thread);
+  }
   async function setAuto(thread, on) {
     if (!on) return disable(thread);
     if (!thread.flow.length) throw Error('Session chưa có role');
     if (!thread.auto?.enabled && !(await enable(thread, 'Người dùng bật tự động.'))) return false;
     return runStage(thread);
   }
-  return { after, runStage, chot, setAuto, enable, decide };
+  return { after, runStage, chot, setAuto, enable, decide, tweak };
 }
 module.exports = { parseHandoff, parseCommand, createAutoRun, fallbackTasks, freshDevTasks, approvalScope, HANDOFF_STATUSES };

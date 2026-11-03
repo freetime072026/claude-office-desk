@@ -13,7 +13,7 @@ const initial = () => ({ projects: [], roles: [], threads: [] });
 const isHalted = thread => HALTED.includes(thread.status);
 const indexOfType = (item, type) => item.flow.findIndex(label => typeOf(label) === type);
 function text(value, limit = 12000) { if (typeof value !== 'string' || !value.trim() || value.length > limit) throw Error('Nội dung trống hoặc quá dài'); return value.trim(); }
-function restartLoop(item) { item.stage = 0; item.status = 'waiting'; item.leadPhase = 'planning'; item.qaFailRounds = 0; delete item.qaPassedAt; delete item.qaPhase; delete item.reviewRejects; }
+function restartLoop(item) { delete item.tweak; item.stage = 0; item.status = 'waiting'; item.leadPhase = 'planning'; item.qaFailRounds = 0; delete item.qaPassedAt; delete item.qaPhase; delete item.reviewRejects; }
 function advance(item) { if (item.stage >= item.flow.length - 1) item.status = 'done'; else { item.stage++; item.status = 'waiting'; } }
 function toLead(item, phase) { const lead = indexOfType(item, LEAD); if (lead < 0) return false; item.stage = lead; item.leadPhase = phase; item.status = 'waiting'; return true; }
 function toDev(item, log) { const dev = item.flow.findIndex(label => isDevType(typeOf(label))); item.status = 'waiting'; if (dev < 0) log('Hệ thống', 'Không có Dev để sửa'); else item.stage = dev; }
@@ -37,6 +37,14 @@ function reportIssue(item, content, log) {
   item.qaFailRounds = (item.qaFailRounds || 0) + 1; delete item.qaPassedAt;
   if (item.qaFailRounds < QA_ROUND_LIMIT) return toTriage(item, log);
   item.status = 'awaiting-decision'; log('Hệ thống', `QA fail vòng ${item.qaFailRounds}/${QA_ROUND_LIMIT}; chờ người dùng quyết định`);
+}
+// Chỉnh sửa sau khi đã có bản hoàn thiện (đổi art, size, anim…): ghi như Issue loại tweak để Lead triage giao đúng khối và QA
+// retest, nhưng không tính là QA fail. thread.tweak đánh dấu vòng chỉnh sửa (pipeline.cjs bỏ pha performance và Release).
+function requestTweak(item, content, log) {
+  if (isHalted(item)) throw Error('Session đang chờ quyết định hoặc đã dừng');
+  item.issues.push({ id: randomUUID(), text: '[Chỉnh sửa] ' + content, closed: false, kind: 'tweak' }); log('Chỉnh sửa', content);
+  item.tweak = true; delete item.qaPassedAt;
+  toTriage(item, log);
 }
 function reviewReject(item, content, log) {
   const label = item.flow[item.stage];
@@ -242,6 +250,7 @@ function update(team, action, payload) {
   else if (action === 'start') { if (item.status !== 'waiting') throw Error('Bước không ở trạng thái chờ'); item.status = 'working'; log('Hệ thống', 'Bắt đầu thủ công: ' + item.flow[item.stage]); }
   else if (action === 'handoff') handoff(item, text(payload.text), log, payload.auto === true);
   else if (action === 'issue') reportIssue(item, text(payload.text), log);
+  else if (action === 'tweak') requestTweak(item, text(payload.text), log);
   else if (action === 'review-reject') reviewReject(item, text(payload.text), log);
   else if (action === 'decision') decide(item, payload.choice, log);
   else if (action === 'retest') { if (typeOf(item.flow[item.stage]) !== 'QA' || item.status !== 'working') throw Error('Chỉ retest khi QA đang kiểm thử'); const issue = item.issues.find(issue => issue.id === payload.issue); if (!issue) throw Error('Không tìm thấy Issue'); const evidence = typeof payload.text === 'string' && payload.text.trim() ? text(payload.text) : 'Người dùng xác nhận đã retest'; issue.closed = true; log('QA · retest thủ công', evidence); }

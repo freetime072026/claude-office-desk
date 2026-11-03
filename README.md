@@ -123,6 +123,14 @@ Thêm bằng **＋ Role → + Release** (một khối mỗi session, đứng cu�
 
 Bảng tệp session có nút **Release**. Model mặc định Sonnet, 30 lượt tool mỗi lượt chat.
 
+## Chỉnh sửa sau bản hoàn thiện
+
+Đã có bản chạy được mà cần đổi art, size, vị trí, thay anim hay sửa anim lệch so với file gốc: ghi yêu cầu vào ô chat (có thể đính ảnh chụp/ảnh tham chiếu) rồi **Thủ công → Chỉnh sửa → Lead**.
+- Yêu cầu thành Issue `[Chỉnh sửa]`, **không tính là vòng QA fail**. Ảnh đang đính được chép vào `.office-desk/<session>/tweaks/` trong dự án để mọi khối Read được; đường dẫn ghi trong Issue.
+- Vòng chỉnh sửa chạy từ **Lead triage** (giao task nhỏ cho đúng khối: ảnh → Art, anim → Anim, hiệu ứng → VFX, âm thanh → Sound, code/vị trí/scale → Dev) → khối được giao → **QA** chỉ kiểm phần đổi (không có pha performance) → **Lead review**. Không qua GD, UI/UX, Art Director lập kế hoạch; Art Director chỉ review khi vòng có task Art/Anim/VFX.
+- **Release không tự chạy**: gom nhiều chỉnh sửa rồi bấm Build preview/production (nhớ tăng `version` trong `build.json` khi gửi bản mới).
+- Lỗi thật (chạy sai, crash) vẫn dùng **Issue → Lead**; thay đổi lớn (gameplay, luồng màn hình) nói với GD để mở vòng mới.
+
 ## Preset Playable Ads (PLA)
 
 **＋ Role → Đội Playable Ads (PLA)** chọn sẵn GD → UI/UX → Art Director → Lead Dev → Dev → VFX → Art → Anim → Sound → QA → Release, kèm engine (Phaser, Cocos, PixiJS…; để trống thì Lead chọn). Mọi khối có mục đích PLA: trách nhiệm/đầu ra viết riêng cho playable (GD là PLA Producer; Art Director giữ ảnh tối giản, tách layer theo nhu cầu ghép/animation, ngân sách dung lượng; Release đóng gói bản cho từng network và kiểm dung lượng, một tệp, không request ngoài trừ endpoint tracking project ghi trong CLAUDE.md/PROJECT.md) và chỉ nhận việc của PLA.

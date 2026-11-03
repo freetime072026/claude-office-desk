@@ -231,6 +231,24 @@ app.whenReady().then(() => {
   }
   // Chạy việc nền sau lệnh chat; lỗi hiện trong hội thoại thay vì mất.
   const background = (thread, job) => setImmediate(() => Promise.resolve().then(job).catch(error => { thread.messages.push({ role: 'Tự động', text: error.message, time: new Date().toISOString() }); persist(); publish(); }));
+  // Chỉnh sửa (team.cjs requestTweak, pipeline.cjs tweak): ảnh đang soạn được chép vào thư mục session trong dự án để mọi khối
+  // Read được (ảnh của app nằm ngoài thư mục dự án), đường dẫn ghi vào Issue [Chỉnh sửa], rồi chạy vòng chỉnh sửa.
+  function requestTweak(payload) {
+    const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại');
+    if (!thread.folder) throw Error('Chọn thư mục dự án trước khi gửi chỉnh sửa');
+    const busy = busyLabels(thread); if (busy.length) throw Error(`${busy.join(', ')} đang chạy; đợi xong rồi gửi chỉnh sửa.`);
+    teamStore.update(structuredClone(metadata.team), 'tweak', payload);
+    const files = sessionFiles.ensureFiles(thread), folder = path.join(path.dirname(files.tasks), 'tweaks');
+    const saved = attachments.take(thread).map(item => {
+      fs.mkdirSync(folder, { recursive: true });
+      const target = path.join(folder, Date.now() + '-' + path.basename(item.path)); fs.copyFileSync(item.path, target);
+      return path.relative(thread.folder, target).replace(/\\/g, '/');
+    });
+    const text = payload.text.trim() + (saved.length ? '\nẢnh kèm (dùng Read để xem): ' + saved.join(', ') : '');
+    teamStore.update(metadata.team, 'tweak', { id: thread.id, text }); persist(); publish();
+    background(thread, () => autoRun.tweak(thread, payload.text.trim()));
+    return true;
+  }
   window = new BrowserWindow({ width: 1360, height: 900, minWidth: 920, minHeight: 620, backgroundColor: '#151820', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } });
   window.setMenuBarVisibility(false);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -423,6 +441,7 @@ app.whenReady().then(() => {
     }
     if (action === 'select-profile') { profile(payload.id); metadata.activeProfileId = payload.id; persist(); publish(); return await ensureAuth(payload.id); }
     if (action === 'navigate') { if (!['index.html', 'dashboard.html'].includes(payload.page)) throw Error('Trang không hợp lệ'); await window.loadFile(path.join(__dirname, payload.page)); return; }
+    if (action === 'team' && payload.action === 'tweak') return requestTweak(payload);
     if (action === 'team') { if (['remove-role', 'select-roles', 'apply-preset'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? busyLabels(thread) : []; }
       if (['archive', 'delete'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? threadBusy(thread) : []; }
       if (payload.action === 'delete') { const thread = metadata.team.threads.find(item => item.id === payload.id); const result = teamStore.update(metadata.team, 'delete', payload); if (thread) fs.rmSync(path.join(root, 'attachments', thread.id), { recursive: true, force: true }); persist(); publish(); return result; } if (payload.action === 'worker-config' && payload.profileId) profile(payload.profileId); teamStore.update(structuredClone(metadata.team), payload.action, payload); const previousProfile = payload.action === 'worker-config' ? metadata.team.threads.find(thread => thread.id === payload.id)?.workers?.[payload.role]?.profileId : ''; const result = teamStore.update(metadata.team, payload.action, payload); persist(); publish(); if (payload.action === 'decision') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread?.auto?.enabled) background(thread, () => autoRun.decide(thread, payload.choice)); } if (payload.action === 'worker-config' && payload.profileId && payload.profileId !== previousProfile) return await ensureAuth(payload.profileId); return result; }
