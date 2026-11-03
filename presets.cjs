@@ -17,6 +17,13 @@ const PRESETS = Object.freeze({
       playcanvas: { name: 'PlayCanvas', guide: 'Engine: PlayCanvas. Model GLB nén (Draco/meshopt), texture nén nếu network cho phép, xuất một tệp HTML bằng công cụ playable của PlayCanvas hoặc script của project. Bỏ qua hướng dẫn riêng của Unity (Editor script, .meta, AudioMixer).' },
       threejs: { name: 'Three.js', guide: 'Engine: Three.js với bundler của project inline asset thành một tệp HTML. Model GLB nén (Draco/meshopt), ít draw call, ánh sáng bake sẵn khi được. Bỏ qua hướng dẫn riêng của Unity (Editor script, .meta, AudioMixer).' }
     },
+    // Cách dùng Spine đầu vào (input/anim/), chọn khi áp dụng preset hoặc ở panel (thread.spine); chưa chọn thì Lead chọn.
+    // guide đi vào prompt mọi khối PLA, sau guide của engine.
+    spine: {
+      spritesheet: { name: 'Xuất sprite sheet (không plugin)', guide: 'Spine đầu vào (input/anim/): không dùng runtime Spine. Anim xuất từng animation cần dùng thành chuỗi PNG từ Spine Editor (12–15 fps, thu nhỏ theo cỡ hiển thị, cắt khung thừa), gộp thành sprite sheet/atlas của engine trong assets/anim/; Dev chạy bằng animation sprite của engine.' },
+      tween: { name: 'Dựng lại bằng tween (không plugin)', guide: 'Spine đầu vào (input/anim/): không dùng runtime Spine. Anim xuất các phần (thân, tay, đầu…) thành ảnh rời trong assets/anim/, ghi điểm neo, thứ tự lớp và timing theo animation Spine; Dev ghép bằng container/node và dựng chuyển động bằng tween.' },
+      runtime: { name: 'Giữ Spine (thêm runtime)', guide: 'Spine đầu vào (input/anim/) chạy bằng runtime Spine chính thức của engine (Phaser: @esotericsoftware/spine-phaser, export JSON + .atlas + .png, không dùng .skel; Cocos: sp.Skeleton có sẵn). Lead ghi version Spine Editor đã export và version runtime khớp vào PROJECT.md, giao Dev cài (ghim version) và nạp plugin; Anim đặt bản export vào assets/anim/. Runtime làm bundle nặng thêm: Release ghi dung lượng trước và sau khi thêm. Runtime Spine cần đội có license Spine Editor.' }
+    },
     config: {
       GD: { responsibility: 'Đóng vai PLA Producer: chốt brief playable với người dùng (game gốc, network đích, hook, core loop 15–30 giây, kết thúc thắng/thua, end card, CTA, số biến thể cần ra). Chọn hook theo mục tiêu UA. Không viết code, không chọn engine.', output: 'GDD gồm storyboard theo giây (0–3s hook, tutorial hand, gameplay, thắng/thua, end card), US/AC kiểm được (thời gian vào gameplay, số lần chạm tới CTA, hướng màn hình), bảng network đích kèm giới hạn dung lượng và cách gọi CTA, danh sách biến thể (đổi gì: hook, màu, độ khó, end card). Xong khi mọi AC kiểm được và không còn câu hỏi mở.' },
       'Art Director': { responsibility: 'Giữ style playable khớp game gốc và đọc rõ trên màn nhỏ trong vài giây. Duyệt mockup UI/UX (dọc và ngang, CTA nổi bật), viết đặc tả ảnh tối giản: chỉ chi tiết đọc được ở cỡ hiển thị, tách layer theo nhu cầu ghép và animation, gộp atlas, ngân sách dung lượng ảnh. Giao Art/Anim, review ảnh trong bản build; Dev/Anim báo ảnh không ghép được thì review lại và giao Art sửa. Không viết code.', output: 'STYLE.md (style rút gọn, ngân sách ảnh theo PROJECT.md), ART.md (mỗi ảnh: cỡ px, mức chi tiết, layer cần tách và tên tệp, atlas), task Art/Anim chi tiết; review ghi đạt/không đạt kèm ảnh chụp, tiêu chí lệch và dung lượng. Xong khi mọi ảnh của vòng đạt STYLE.md, ART.md và ngân sách.' },
@@ -35,12 +42,13 @@ const PRESETS = Object.freeze({
 const PURPOSES = Object.freeze(['game', ...Object.keys(PRESETS).map(key => key.toLowerCase())]);
 const presetOf = purpose => Object.entries(PRESETS).find(([key]) => key.toLowerCase() === purpose)?.[1];
 // Cấu hình của khối theo mục đích; null khi khối làm game hoặc preset không có role này.
-// engine (thread.engine) có trong preset thì guide của engine nối sau guard.
-function purposeConfig(type, purpose, engine) {
+// engine (thread.engine) và cách dùng Spine (thread.spine) có trong preset thì guide của chúng nối sau guard.
+function purposeConfig(type, purpose, engine, spine) {
   const preset = presetOf(purpose), config = preset?.config[type]; if (!config) return null;
-  const guide = Object.hasOwn(preset.engines || {}, engine || '') ? preset.engines[engine].guide : '';
-  return { ...config, guard: [preset.guard, guide].filter(Boolean).join('\n') };
+  const guide = (choices, key) => Object.hasOwn(choices || {}, key || '') ? choices[key].guide : '';
+  return { ...config, guard: [preset.guard, guide(preset.engines, engine), guide(preset.spine, spine)].filter(Boolean).join('\n') };
 }
 // '' = chưa chọn (Lead chọn theo project).
 const validEngine = (preset, engine) => engine === '' || Object.hasOwn(PRESETS[preset]?.engines || {}, engine);
-module.exports = { PRESETS, PURPOSES, purposeConfig, validEngine };
+const validSpine = (preset, spine) => spine === '' || Object.hasOwn(PRESETS[preset]?.spine || {}, spine);
+module.exports = { PRESETS, PURPOSES, purposeConfig, validEngine, validSpine };

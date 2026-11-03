@@ -55,3 +55,13 @@ test('a game block in a PLA session does not get the engine guide', () => {
   assert.equal(roleContext(team, thread, 'Dev').instructions, '');
   assert.deepEqual(Object.keys(PRESETS.PLA.engines), ['luna', 'cocos', 'phaser', 'pixi', 'playcanvas', 'threejs']);
 });
+
+test('Spine choice made with the PLA preset reaches every PLA block after the engine guide; it can change later or go back to Lead choosing', () => {
+  const { team, id, thread } = session(); update(team, 'apply-preset', { id, preset: 'PLA', engine: 'phaser', spine: 'tween' });
+  assert.equal(thread.spine, 'tween'); assert.match(thread.messages.at(-1).text, /Spine: Dựng lại bằng tween/);
+  const anim = roleContext(team, thread, 'Anim').instructions; assert.match(anim, /Engine: Phaser[\s\S]*không dùng runtime Spine/);
+  update(team, 'preset-spine', { id, spine: 'runtime' }); assert.match(roleContext(team, thread, 'Dev').instructions, /@esotericsoftware\/spine-phaser/);
+  update(team, 'preset-spine', { id, spine: '' }); assert.equal(thread.spine, undefined); assert.doesNotMatch(roleContext(team, thread, 'Dev').instructions, /Spine đầu vào/);
+  assert.throws(() => update(team, 'preset-spine', { id, spine: 'dragonbones' }), /Spine không hợp lệ/);
+  assert.throws(() => update(team, 'apply-preset', { id, preset: 'PLA', spine: 'x' }), /Spine không hợp lệ/);
+});

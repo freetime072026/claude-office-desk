@@ -5,7 +5,7 @@ const { CHAT_KEY } = require('./skills.cjs');
 const { PIPELINE, LEAD, QA_ROUND_LIMIT, ownsSession, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, removable } = require('./workers.cjs');
 const { inheritedRole } = require('./prompt.cjs');
 const flowgraph = require('./flowgraph.cjs');
-const { PRESETS, PURPOSES, purposeConfig, validEngine } = require('./presets.cjs');
+const { PRESETS, PURPOSES, purposeConfig, validEngine, validSpine } = require('./presets.cjs');
 const releaseConfig = require('./release-config.cjs');
 const HALTED = ['awaiting-decision', 'cancelled'];
 const ART_GENERATORS = Object.freeze(['chatgpt', 'tool']);
@@ -105,12 +105,13 @@ function setPurpose(config, purpose) {
 }
 function applyPreset(team, item, payload, log) {
   if (!Object.hasOwn(PRESETS, payload.preset)) throw Error('Preset không hợp lệ');
-  const preset = PRESETS[payload.preset], purpose = payload.preset.toLowerCase(), engine = payload.engine || '';
+  const preset = PRESETS[payload.preset], purpose = payload.preset.toLowerCase(), engine = payload.engine || '', spine = payload.spine || '';
   if (!validEngine(payload.preset, engine)) throw Error('Engine không hợp lệ');
+  if (!validSpine(payload.preset, spine)) throw Error('Cách dùng Spine không hợp lệ');
   selectRoles(team, item, { ...payload, roles: preset.roles }, log);
   for (const label of item.flow) if (purposeConfig(typeOf(label), purpose)) worker(item, label).purpose = purpose;
-  item.preset = payload.preset; setEngine(item, engine);
-  log('Hệ thống', `Áp dụng preset ${preset.name}: ${item.flow.join(', ')}. Các khối chỉ nhận việc của ${payload.preset}. ${engineText(item)}.`);
+  item.preset = payload.preset; setEngine(item, engine); setSpine(item, spine);
+  log('Hệ thống', `Áp dụng preset ${preset.name}: ${item.flow.join(', ')}. Các khối chỉ nhận việc của ${payload.preset}. ${engineText(item)}. ${spineText(item)}.`);
 }
 // Engine của session theo preset ('' = Lead chọn theo project); đổi engine không bắt đầu lại quy trình.
 function setEngine(item, engine) { if (engine) item.engine = engine; else delete item.engine; }
@@ -118,6 +119,13 @@ const engineText = item => 'Engine: ' + (item.engine ? PRESETS[item.preset || 'P
 function changeEngine(item, engine, log) {
   if (typeof engine !== 'string' || !validEngine(item.preset || 'PLA', engine)) throw Error('Engine không hợp lệ');
   setEngine(item, engine); log('Cấu hình', engineText(item));
+}
+// Cách dùng Spine đầu vào của session theo preset ('' = Lead chọn theo project), cùng kiểu engine.
+function setSpine(item, spine) { if (spine) item.spine = spine; else delete item.spine; }
+const spineText = item => 'Spine: ' + (item.spine ? PRESETS[item.preset || 'PLA'].spine[item.spine].name : 'Lead chọn theo project');
+function changeSpine(item, spine, log) {
+  if (typeof spine !== 'string' || !validSpine(item.preset || 'PLA', spine)) throw Error('Cách dùng Spine không hợp lệ');
+  setSpine(item, spine); log('Cấu hình', spineText(item));
 }
 function moveSessions(thread, from, to) {
   for (const key of Object.keys(thread.cliSessions || {})) if (ownsSession(key, from)) thread.cliSessions[key.slice(0, -from.length) + to] ||= thread.cliSessions[key];
@@ -226,6 +234,7 @@ function update(team, action, payload) {
   if (action === 'select-roles') selectRoles(team, item, payload, log);
   else if (action === 'apply-preset') applyPreset(team, item, payload, log);
   else if (action === 'preset-engine') changeEngine(item, payload.engine, log);
+  else if (action === 'preset-spine') changeSpine(item, payload.spine, log);
   else if (action === 'assign-role') { const name = roleKey(text(payload.name, 40)); if (!item.flow.includes(name)) flowgraph.addNode(item, addWorker(item, name)); }
   else if (action === 'pin') item.pinned = !item.pinned;
   else if (action === 'move') item.project = payload.project || '';

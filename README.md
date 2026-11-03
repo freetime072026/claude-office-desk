@@ -127,10 +127,13 @@ Bảng tệp session có nút **Release**. Model mặc định Sonnet, 30 lượ
 
 **＋ Role → Đội Playable Ads (PLA)** chọn sẵn GD → UI/UX → Art Director → Lead Dev → Dev → Art → Anim → Sound → QA → Release, kèm engine (Phaser, Cocos, PixiJS…; để trống thì Lead chọn). Mọi khối có mục đích PLA: trách nhiệm/đầu ra viết riêng cho playable (GD là PLA Producer; Art Director giữ ảnh tối giản, tách layer theo nhu cầu ghép/animation, ngân sách dung lượng; Release đóng gói bản cho từng network và kiểm dung lượng, một tệp, không request ngoài trừ endpoint tracking project ghi trong CLAUDE.md/PROJECT.md) và chỉ nhận việc của PLA.
 
+**Spine PLA** (chọn cùng Engine khi áp dụng đội, hoặc ở panel khối PLA): cách dùng Spine đầu vào trong `input/anim/` cho mọi khối PLA của session: **Xuất sprite sheet** hoặc **Dựng lại bằng tween** (không plugin), hoặc **Giữ Spine** (Dev cài runtime Spine của engine, ghim version khớp Spine Editor). Để trống thì Lead chọn. Hướng dẫn của lựa chọn đi vào brief của mọi khối PLA sau hướng dẫn engine.
+
 **Cấu hình build của khối Release** (release-config.cjs). Khi thư mục chính của session có `build.json` của `@smoud/playable-scripts` (có `networks` và `tracking`), panel khối Release có mục **Build gửi network**: network đích (tích chọn), chế độ **Production** (`tracking.env` = `production`) hoặc **Preview** (`tracking.env` = `test`, collector ghi vào bucket test; adapter network build như Production), tên app (`app`), `playable_id`, package name (`tracking.package_name`), Google Play URL và App Store URL.
 - Khối Release mới thêm hiện đúng giá trị trong `build.json` và build theo tệp, app không ghi gì.
 - Sửa một ô là lưu cả cấu hình thành của khối (lưu theo khối, như Trách nhiệm & yêu cầu riêng). Trước mỗi lượt Release, app ghi các giá trị đó vào `build.json` (giữ các khoá khác, thụt lề và kiểu xuống dòng), rồi brief của Release nhận cấu hình đang dùng và lời dặn commit `build.json` cùng bản gửi.
 - **Theo build.json** bỏ cấu hình riêng, khối quay về build theo tệp của project.
+- **Build preview** / **Build production** (khi dự án có skill `build_preview` / `build_production` trong `.claude/skills`, như template-pla): mở hộp chọn network cho riêng lần build đó, mặc định là network đích. Giữ nguyên thì gửi `/build_preview` (build theo `build.json`); bỏ hoặc thêm network thì gửi `/build_preview applovin google`… cho khối Release; `build.json` không đổi.
 - Giá trị được kiểm trước khi lưu: ít nhất một network, network nằm trong danh sách của playable-scripts 1.1.4, `playable_id`/package name chỉ gồm chữ, số, `. _ -`, link store phải là https.
 
 ## Cấu hình riêng từng khối

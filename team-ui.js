@@ -275,7 +275,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     paintBlockPicker(thread);
     const running = role ? runningOf(thread, role) : thread?.messages.findLast(message => message.role === 'Claude' && message.streaming);
     get('#panel-state').textContent = !thread ? 'Chưa có session' : running ? progressText(running) : role ? blockLabel(thread, role, thread.flow.indexOf(role)) : 'Không role · chạy Claude Code thường';
-    for (const id of ['#account-field', '#shell-field', '#task-field', '#role-texts', '#art-gen-field', '#purpose-field', '#engine-field']) get(id).hidden = !role;
+    for (const id of ['#account-field', '#shell-field', '#task-field', '#role-texts', '#art-gen-field', '#purpose-field', '#engine-field', '#spine-field']) get(id).hidden = !role;
     paintSessionFiles(thread, role);
     for (const field of document.querySelectorAll('#panel select, #panel textarea')) field.disabled = !thread || thread.archived;
     paintRelease(thread, role, force);
@@ -292,6 +292,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     // Mục đích chỉ hiện cho loại role preset có cấu hình (hiện chỉ có PLA).
     get('#purpose-field').hidden = !presets.PLA?.roles.includes(type); setField(get('#worker-purpose'), config.purpose || 'game', force);
     get('#engine-field').hidden = config.purpose !== 'pla'; fillEngines(get('#worker-engine'), thread.preset || 'PLA'); setField(get('#worker-engine'), thread.engine || '', force);
+    get('#spine-field').hidden = config.purpose !== 'pla'; fillEngines(get('#worker-spine'), thread.preset || 'PLA', 'spine'); setField(get('#worker-spine'), thread.spine || '', force);
     get('#art-gen-field').hidden = type !== 'Art'; setField(get('#art-generator'), team.artGenerator || 'chatgpt', force);
     const effective = field => own[field] || preset[field] || template[field] || fallback[field] || '';
     setField(get('#role-responsibility'), effective('responsibility'), force); setField(get('#role-output'), effective('output'), force); setField(get('#role-instructions'), own.instructions || '', force);
@@ -313,6 +314,13 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
       }));
     }
     for (const [id, field] of RELEASE_FIELDS) { setField(get(id), values[field] || '', force); get(id).disabled = thread.archived; }
+    // Nút Build chỉ dùng được khi dự án có skill cùng tên (template-pla có sẵn); thiếu skill thì nút báo lý do.
+    const projectSkills = (skillCatalog[thread.folder || ''] || []).filter(skill => skill.source === 'project').map(skill => skill.name);
+    for (const mode of BUILD_MODES) {
+      const button = get('#release-build-' + mode), ready = projectSkills.includes('build_' + mode);
+      button.disabled = thread.archived || !ready;
+      button.title = ready ? `Chọn network rồi gửi /build_${mode} cho ${role}` : `Dự án chưa có .claude/skills/build_${mode}/SKILL.md`;
+    }
   }
   async function saveRelease() {
     const thread = current(); if (!thread?.flow.includes(selectedWorker)) return;
@@ -321,6 +329,30 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   }
   for (const [id] of RELEASE_FIELDS) get(id).onchange = saveRelease;
   get('#release-reset').onclick = async () => { if (await act('release-config', { role: selectedWorker, config: null })) get('#panel-saved').textContent = '✓ ' + selectedWorker + ' build theo build.json của project'; };
+  // Nút Build preview/production: chọn network cho riêng lần build này rồi gửi /build_<chế độ> [network…] cho khối Release.
+  // Giữ đúng network đích thì gửi lệnh không kèm network, skill build theo build.json.
+  const BUILD_MODES = ['preview', 'production'];
+  let buildMode = '';
+  const releaseValues = thread => thread.workers?.[selectedWorker]?.release || releaseFiles[thread.folder || ''];
+  for (const mode of BUILD_MODES) get('#release-build-' + mode).onclick = () => {
+    const thread = current(), values = thread?.flow.includes(selectedWorker) && releaseValues(thread); if (!values) return;
+    buildMode = mode; get('#build-title').textContent = mode === 'preview' ? 'Build preview (tracking test)' : 'Build production (tracking production)';
+    get('#build-networks').replaceChildren(...releaseNetworks.map(name => {
+      const label = make('label', { className: 'mcp-choice' }); label.append(make('input', { type: 'checkbox', value: name, checked: values.networks.includes(name) }), ' ' + name); return label;
+    }));
+    get('#build-dialog').showModal();
+  };
+  get('#build-cancel').onclick = () => get('#build-dialog').close();
+  get('#build-run').onclick = async () => {
+    const thread = current(), values = thread && releaseValues(thread), picked = [...get('#build-networks').querySelectorAll('input:checked')].map(input => input.value);
+    if (!values) return; if (!picked.length) { showStatus('Chọn ít nhất một network'); return; }
+    const same = picked.length === values.networks.length && picked.every(name => values.networks.includes(name));
+    get('#build-dialog').close();
+    try {
+      const result = await window.office.run('chat-send', { id: selected, role: selectedWorker, text: ['/build_' + buildMode, ...(same ? [] : picked)].join(' ') });
+      if (result?.loginStarted) await window.office.run('navigate', { page: 'index.html' });
+    } catch (error) { showError(error); }
+  };
   // US-08: mỗi loại role chỉ nạp MCP server được tích ở đây (team.roleMcp, dùng chung mọi session); chat thường nạp tất cả.
   function paintRoleMcp(thread, type) {
     const box = get('#role-mcp'), enabled = team.roleMcp?.[type] || []; box.hidden = !mcpNames.length;
@@ -363,12 +395,13 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     if (result?.loginStarted) { await window.office.run('navigate', { page: 'index.html' }); return; } if (result) saved.textContent = '✓ Đã lưu cấu hình riêng của khối';
   }
   for (const id of ['#chat-mode', '#chat-model', '#worker-account', '#worker-shell', '#worker-task', '#worker-purpose']) get(id).onchange = saveWorker;
-  // Engine của preset: '' = Lead chọn theo project. Dùng ở dialog Thêm role và panel khối PLA.
-  function fillEngines(select, key) {
-    const engines = Object.entries(presets[key]?.engines || {}), id = key + ':' + engines.length; if (select.dataset.key === id) return; select.dataset.key = id;
+  // Lựa chọn của preset (engines hoặc spine): '' = Lead chọn theo project. Dùng ở dialog Thêm role và panel khối PLA.
+  function fillEngines(select, key, field = 'engines') {
+    const engines = Object.entries(presets[key]?.[field] || {}), id = key + ':' + field + ':' + engines.length; if (select.dataset.key === id) return; select.dataset.key = id;
     select.replaceChildren(make('option', { value: '', textContent: 'Lead chọn theo project' }), ...engines.map(([value, name]) => make('option', { value, textContent: name })));
   }
   get('#worker-engine').onchange = async () => { if (await act('preset-engine', { engine: get('#worker-engine').value })) get('#panel-saved').textContent = '✓ Đã lưu engine PLA của session'; };
+  get('#worker-spine').onchange = async () => { if (await act('preset-spine', { spine: get('#worker-spine').value })) get('#panel-saved').textContent = '✓ Đã lưu cách dùng Spine của session'; };
   // Công cụ sinh ảnh dùng chung cho mọi khối Art ở mọi session (team.artGenerator).
   get('#art-generator').onchange = async () => { if (await act('art-generator', { mode: get('#art-generator').value })) get('#panel-saved').textContent = '✓ Đã lưu công cụ sinh ảnh của Art'; };
   async function saveRoleTexts() {
@@ -491,10 +524,11 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     const thread = current(), taken = type => ['Lead Dev', 'Art Director', 'Release'].includes(type) && thread.flow.some(label => roleType(thread, label) === type);
     get('#add-role-choices').replaceChildren(...roleTypes.filter(type => !taken(type)).map(role => make('button', { type: 'button', textContent: '+ ' + role, onclick: async () => { const added = await act('add-worker', { type: role }); if (added) { get('#add-role-dialog').close(); showStatus('Đã thêm ' + added); chooseWorker(added); } } })));
     fillEngines(get('#preset-engine'), 'PLA'); get('#preset-engine').value = thread.engine || '';
+    fillEngines(get('#preset-spine'), 'PLA', 'spine'); get('#preset-spine').value = thread.spine || '';
     get('#add-role-presets').replaceChildren(...Object.entries(presets).map(([key, preset]) => make('button', { type: 'button', textContent: 'Đội ' + preset.name, title: preset.roles.join(' → '), onclick: async () => {
       const restart = thread.stage > 0 || thread.status !== 'waiting';
       if (thread.flow.length && !confirm(`Thay role của session bằng đội ${preset.name} (${preset.roles.join(', ')})?` + (restart ? '\nQuy trình sẽ bắt đầu lại.' : ''))) return;
-      if (await act('apply-preset', { preset: key, restart, engine: get('#preset-engine').value })) { get('#add-role-dialog').close(); showStatus('Đã áp dụng đội ' + preset.name); }
+      if (await act('apply-preset', { preset: key, restart, engine: get('#preset-engine').value, spine: get('#preset-spine').value })) { get('#add-role-dialog').close(); showStatus('Đã áp dụng đội ' + preset.name); }
     } })));
     get('#add-role-dialog').showModal();
   };

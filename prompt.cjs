@@ -103,7 +103,7 @@ function fit(lines, budget) { const kept = [...lines]; let used = size(kept); wh
 // Trách nhiệm/đầu ra khối thừa hưởng khi chưa sửa riêng: preset của khối (PLA…) → team.roleTemplates → defaults theo loại.
 function inheritedRole(team, thread, label) {
   const key = labelType(thread, label), shared = team?.roleTemplates?.[key] || {}, base = defaults[key] || {};
-  const preset = purposeConfig(key, thread.workers?.[label]?.purpose, thread.engine);
+  const preset = purposeConfig(key, thread.workers?.[label]?.purpose, thread.engine, thread.spine);
   return { key, preset, responsibility: preset?.responsibility || shared.responsibility || base.responsibility || '', output: preset?.output || shared.output || base.output || '' };
 }
 // Cấu hình lưu theo từng khối (thread.roleConfig[nhãn khối]): Dev và Dev #2 có yêu cầu riêng, sửa khối này không đổi khối kia.

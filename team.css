@@ -66,3 +66,5 @@ dialog{width:520px;max-width:90vw;border:1px solid #deded9;border-radius:15px;pa
 .panel-note{margin:4px 0 0;font-size:11px;color:#9a6b2f}
 #release-field>label,#release-field>button{margin-top:6px}#release-field summary{padding:4px 0}#release-field small{display:block;margin:6px 0 2px;font-size:11px;color:#73806e}#release-networks label.mcp-choice{display:flex}#release-field input{width:100%;font-size:12px}#release-reset{justify-self:start;padding:3px 8px;font-size:11px}
 #role-mcp .mcp-choices,#role-skills .mcp-choices,#release-networks{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px}.mcp-choice{display:flex;align-items:center;gap:4px;font-size:12px}
+#release-build{display:flex;gap:6px;margin-top:8px}#release-build button{padding:3px 8px;font-size:11px}
+#build-networks{display:flex;flex-wrap:wrap;gap:4px 12px;margin:10px 0}#build-dialog .build-actions{display:flex;gap:10px;justify-content:flex-end}
