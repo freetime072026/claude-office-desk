@@ -70,3 +70,9 @@ test('a typed /<name> runs the project skill of that name with the user note; an
   for (const content of ['/build_previews', '/only_app', 'build_preview', '/build preview', '/skills']) assert.equal(skills.projectCommand(content, folder), null, content);
   assert.equal(skills.projectCommand('/build_preview', ''), null);
 });
+
+test('projectSkill finds a skill of the project folder by name only', () => {
+  const folder = temp(); skill(path.join(folder, '.claude', 'skills'), 'build_production', '---\nname: build_production\ndescription: Build production\n---\n');
+  assert.equal(skills.projectSkill(folder, 'build_production').name, 'build_production');
+  assert.equal(skills.projectSkill(folder, 'build_preview'), null); assert.equal(skills.projectSkill('', 'build_production'), null);
+});

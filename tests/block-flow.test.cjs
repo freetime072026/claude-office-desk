@@ -135,7 +135,7 @@ test('Release in the run: Lead review pass → Release; issue → Lead triage wi
 });
 
 test('PLA preset has Art Director and Release with PLA texts', () => {
-  assert.deepEqual(PRESETS.PLA.roles, ['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'Art', 'Anim', 'Sound', 'QA', 'Release']);
+  assert.deepEqual(PRESETS.PLA.roles, ['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release']);
   for (const type of PRESETS.PLA.roles) assert(PRESETS.PLA.config[type]?.responsibility, type);
   const { team, id, thread } = session([]); update(team, 'apply-preset', { id, preset: 'PLA', engine: 'phaser' });
   assert.equal(thread.workers.Release.purpose, 'pla'); assert.match(roleContext(team, thread, 'Release').responsibility, /network/);

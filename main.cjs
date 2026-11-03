@@ -347,7 +347,9 @@ app.whenReady().then(() => {
       // Skill: chỉ danh sách tên + mô tả + đường dẫn SKILL.md trong brief; model tự Read khi cần (skills.cjs).
       const runSkills = skills.pick(skills.list(skillsDir(), thread.folder), metadata.team.roleSkills?.[skillKey] || []);
       // Release của project playable-scripts: cấu hình build của khối được ghi vào build.json trước lượt (release-config.cjs).
-      const releaseGuide = payload.role && worker.type === 'Release' && !compactOnly ? releaseConfig.prepare(thread.folder, worker.release) : '';
+      // Lượt Release thường (không phải lệnh /build_…) của dự án có skill build_production: đóng gói và kiểm theo skill đó.
+      const releaseSkill = payload.role && worker.type === 'Release' && !compactOnly && !projectSkill ? skills.projectSkill(thread.folder, 'build_production') : null;
+      const releaseGuide = payload.role && worker.type === 'Release' && !compactOnly ? [releaseConfig.prepare(thread.folder, worker.release), releaseSkill ? `Dự án có skill build_production (${releaseSkill.file}): sau khi commit code đã review cùng build.json lên nhánh hiện tại (không push), bước đóng gói và kiểm làm đúng theo skill này (Read SKILL.md: kiểm build.json, npm run verify -- production, xem ảnh chụp, đi hết CHECKLIST.md) thay cho chỉ chạy npm run build.` : ''].filter(Boolean).join('\n') : '';
       const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { content: projectSkill ? projectSkill.prompt : content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide });
       // Brief vai trò đi qua system prompt. CLI giữ system prompt của lần gọi đầu khi resume, nên brief đổi (task/pha mới) trong
       // phiên đang tiếp tục được gửi một lần trong tin; thread.briefSent nhớ bản phiên đã có.

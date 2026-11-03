@@ -34,9 +34,15 @@ test('purpose is per block: switching a Dev back to game restores the normal rol
 
 test('a plain session keeps blocks on game; roles outside the preset cannot be PLA', () => {
   const { team, id, thread } = session(); update(team, 'select-roles', { id, roles: ['Dev', 'VFX'] });
-  assert.equal(thread.workers?.Dev?.purpose, undefined); assert.equal(purposeConfig('VFX', 'pla'), null);
+  assert.equal(thread.workers?.Dev?.purpose, undefined); assert.equal(thread.workers?.VFX?.purpose, undefined);
   update(team, 'add-worker', { id, type: 'QA' }); assert.equal(thread.workers.QA.purpose, undefined);
-  assert.throws(() => update(team, 'worker-config', { id, role: 'VFX', mode: 'edit', model: 'sonnet', task: '', purpose: 'pla' }), /Mục đích không hợp lệ/);
+  // Every built-in type is in the PLA team now, so a custom role stands for "outside the preset".
+  update(team, 'assign-role', { id, name: 'Producer' }); assert.equal(purposeConfig('Producer', 'pla'), null);
+  assert.throws(() => update(team, 'worker-config', { id, role: 'Producer', mode: 'edit', model: 'sonnet', task: '', purpose: 'pla' }), /Mục đích không hợp lệ/);
+});
+
+test('PLA VFX gets playable effects work, not the Unity-oriented default', () => {
+  const vfx = purposeConfig('VFX', 'pla'); assert.match(vfx.responsibility, /particle và tween/); assert.doesNotMatch(vfx.responsibility, /YAML|GUID/);
 });
 
 test('engine chosen with the PLA preset reaches every PLA block; it can change later or go back to Lead choosing', () => {

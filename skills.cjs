@@ -53,11 +53,13 @@ function list(appDir, folder) {
 const pick = (skills, names) => skills.filter(skill => names.includes(skill.name));
 // Skill của app nằm ngoài thư mục session: thêm --add-dir để Read đọc được mà không phải duyệt.
 const extraDirs = skills => skills.slice(0, LIST_LIMIT).filter(skill => skill.source === 'app').map(skill => skill.dir);
+// Skill tên name trong .claude/skills của thư mục dự án; null khi dự án không có.
+const projectSkill = (folder, name) => folder ? scan(path.join(folder, PROJECT_DIR), 'project').find(item => item.name === name) || null : null;
 // "/<tên> [ghi chú]" trùng tên skill của dự án (.claude/skills): người dùng tự gõ lệnh nên skill chạy được dù chưa bật cho khối.
 // Trả về skill và nội dung gửi khối thay cho lệnh; null khi không có skill dự án trùng tên.
 function projectCommand(content, folder) {
-  const match = /^\/([A-Za-z0-9_-]{1,64})(?:\s+([\s\S]*))?$/.exec(content || ''); if (!match || !folder) return null;
-  const skill = scan(path.join(folder, PROJECT_DIR), 'project').find(item => item.name === match[1]); if (!skill) return null;
+  const match = /^\/([A-Za-z0-9_-]{1,64})(?:\s+([\s\S]*))?$/.exec(content || ''); if (!match) return null;
+  const skill = projectSkill(folder, match[1]); if (!skill) return null;
   const note = (match[2] || '').trim();
   return { skill, prompt: `Lệnh /${skill.name} của dự án: dùng Read đọc ${skill.file} rồi làm đúng từng bước trong đó. Trong lượt này, chỗ nào hướng dẫn của skill khác yêu cầu chung của vai trò thì theo skill.` + (note ? '\nGhi chú của người dùng: ' + note : '') };
 }
@@ -67,4 +69,4 @@ function guide(skills) {
   return ['Skill dùng được (hướng dẫn đóng gói cho từng loại việc). Khi việc đang làm khớp mô tả của một skill, dùng Read đọc SKILL.md của skill đó trước rồi làm theo; tệp khác trong thư mục skill chỉ mở khi SKILL.md chỉ tới. Không có tool Skill. Skill không mở thêm quyền: vẫn chỉ ghi trong phạm vi của bạn, lệnh shell vẫn qua duyệt, bước cần tool không có trong phiên thì bỏ qua và ghi rõ trong handoff.',
     ...shown.map(skill => `- ${skill.name}: ${skill.description} (${skill.file})`), more > 0 ? `(+${more} skill khác không liệt kê)` : ''].filter(Boolean).join('\n');
 }
-module.exports = { NAME, PROJECT_DIR, CHAT_KEY, SOURCE_FILE, frontmatter, list, pick, extraDirs, guide, projectCommand, DESCRIPTION_LIMIT, LIST_LIMIT };
+module.exports = { NAME, PROJECT_DIR, CHAT_KEY, SOURCE_FILE, frontmatter, list, pick, extraDirs, guide, projectCommand, projectSkill, DESCRIPTION_LIMIT, LIST_LIMIT };
