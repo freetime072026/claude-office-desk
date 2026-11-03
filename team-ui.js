@@ -7,10 +7,11 @@
   const taskNames = { pending: 'Chờ tới lượt theo sơ đồ', queued: 'Chờ lượt/phụ thuộc', starting: 'Đang chuẩn bị', running: 'Đang thực hiện', finished: 'Đã trả kết quả · chưa QA', failed: 'Lỗi thực thi', blocked: 'Bị chặn', cancelled: 'Đã dừng', paused: 'Tạm dừng' };
   const MODES = [['read', 'Plan · chỉ đọc'], ['edit', 'Đọc & sửa · duyệt từng thao tác'], ['auto', 'Auto · CLI tự xét quyền'], ['bypass', 'Bypass · bỏ duyệt tệp']];
   const MODELS = [['claude-opus-5-5', 'Opus 5.5'], ['sonnet', 'Sonnet'], ['opus', 'Opus'], ['haiku', 'Haiku']];
-  const COMMANDS = [['/compact', 'Compact ngữ cảnh của khối đang chọn'], ['/model', 'Chọn model'], ['/status', 'Cấu hình session'], ['/role', 'Chạy/tạm dừng khối: /role <tên> start|pause'], ['/chot', 'Chốt GD, chạy tự động các bước sau'], ['/auto', 'Bật/tắt tự động: /auto on|off'], ['/mcp', 'MCP server (/mcp open để sửa)'], ['/usage', 'Usage nhận từ CLI'], ['/help', 'Trợ giúp']];
+  const COMMANDS = [['/compact', 'Compact ngữ cảnh của khối đang chọn'], ['/model', 'Chọn model'], ['/status', 'Cấu hình session'], ['/role', 'Chạy/tạm dừng khối: /role <tên> start|pause'], ['/chot', 'Chốt GD, chạy tự động các bước sau'], ['/auto', 'Bật/tắt tự động: /auto on|off'], ['/mcp', 'MCP server (/mcp open để sửa)'], ['/skills', 'Skill (/skills open để thêm)'], ['/usage', 'Usage nhận từ CLI'], ['/help', 'Trợ giúp']];
   const TAKES_ARGS = ['/role', '/auto'];
+  const CHAT_SKILLS = '*chat'; // skills.CHAT_KEY
   // Thứ tự role, giới hạn vòng QA và quyền xóa đều lấy từ backend (snapshot), UI không tự tính.
-  let removal = {}, qaRoundLimit, roleTypes = [], mcpNames = [], knownProfiles = [], defaultRoles = {}, presets = {};
+  let removal = {}, qaRoundLimit, roleTypes = [], mcpNames = [], skillCatalog = {}, knownProfiles = [], defaultRoles = {}, presets = {};
   const isLead = (thread, role) => (thread.workers?.[role]?.type || role) === 'Lead Dev';
   const current = () => team?.threads.find(thread => thread.id === selected);
   // Thông báo ngắn ở dòng trạng thái được giữ vài giây, không bị paint() (chạy mỗi lần main publish) ghi đè ngay.
@@ -279,6 +280,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     for (const field of document.querySelectorAll('#panel select, #panel textarea')) field.disabled = !thread || thread.archived;
     setField(get('#chat-mode'), config.mode || thread?.mode || 'read', force); setField(get('#worker-shell'), config.shell || 'once', force); setField(get('#chat-model'), config.model || thread?.model || 'claude-opus-5-5', force);
     if (force) get('#panel-saved').textContent = '';
+    paintRoleSkills(thread, role ? roleType(thread, role) : CHAT_SKILLS);
     if (!role) return;
     const account = get('#worker-account'); if (force || document.activeElement !== account) { account.replaceChildren(...[{ id: '', name: 'Theo tài khoản đang chọn' }, ...knownProfiles].map(profile => make('option', { value: profile.id, textContent: profile.name }))); account.value = config.profileId || ''; }
     setField(get('#worker-task'), config.task || '', force);
@@ -301,6 +303,20 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
       const input = make('input', { type: 'checkbox', value: name, checked: enabled.includes(name), disabled: thread.archived });
       input.onchange = () => act('role-mcp', { role: type, servers: [...box.querySelectorAll('input:checked')].map(item => item.value) });
       const label = make('label', { className: 'mcp-choice' }); label.append(input, ' ' + name); return label;
+    }));
+  }
+  // Skill bật cho loại role hoặc chat thường (team.roleSkills, khoá CHAT_SKILLS; dùng chung mọi session). Danh sách theo thư mục chính
+  // của session (skill của app + .claude/skills của dự án); skill đã bật nhưng không có ở thư mục này (dự án khác) được giữ khi lưu.
+  function paintRoleSkills(thread, type) {
+    const box = get('#role-skills'), available = thread ? skillCatalog[thread.folder || ''] || skillCatalog[''] || [] : [], enabled = team?.roleSkills?.[type] || [];
+    box.hidden = !available.length; if (box.hidden) return;
+    box.querySelector('small').textContent = type === CHAT_SKILLS ? 'Skill của chat thường (mọi session)' : 'Skill của role (mọi session)';
+    const key = [type, thread.archived, ...available.map(skill => skill.name + ':' + skill.description), '|', ...enabled].join(','); if (box.dataset.key === key) return; box.dataset.key = key;
+    const shown = available.map(skill => skill.name), hidden = enabled.filter(name => !shown.includes(name));
+    box.querySelector('.mcp-choices').replaceChildren(...available.map(skill => {
+      const input = make('input', { type: 'checkbox', value: skill.name, checked: enabled.includes(skill.name), disabled: thread.archived });
+      input.onchange = () => act('role-skills', { role: type, skills: [...hidden, ...[...box.querySelectorAll('input:checked')].map(item => item.value)] });
+      const label = make('label', { className: 'mcp-choice', title: skill.description + (skill.source === 'project' ? ' (skill của dự án)' : skill.origin ? ` (GitHub ${skill.origin})` : '') }); label.append(input, ' ' + skill.name); return label;
     }));
   }
   // Tệp .md của session (session-files.cjs) mở bằng trình xem tệp; tệp chỉ có sau lượt chạy role đầu tiên.
@@ -459,7 +475,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   get('#add-role-cancel').onclick = () => get('#add-role-dialog').close();
 
   // ---- Ô soạn: lệnh, gợi ý, thủ công, chạy/dừng/gửi.
-  get('#commands').append(make('option', { value: '', textContent: '/ Lệnh' }), ...['/chot', '/auto on', '/auto off', '/compact', '/mcp', '/model', '/status', '/usage', '/help'].map(value => make('option', { value, textContent: value })));
+  get('#commands').append(make('option', { value: '', textContent: '/ Lệnh' }), ...['/chot', '/auto on', '/auto off', '/compact', '/mcp', '/skills', '/model', '/status', '/usage', '/help'].map(value => make('option', { value, textContent: value })));
   get('#commands').onchange = () => { const value = get('#commands').value; if (value) { get('#message').value = value; get('#message').focus(); get('#commands').value = ''; } };
   const suggestions = get('#command-suggestions'); let suggestionIndex = 0;
   function suggest() {
@@ -552,7 +568,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   get('#usage-viewer').addEventListener('close', () => { if (usageId) window.office.run('close', { id: usageId }).catch(() => {}); usageId = undefined; usageTerm?.dispose(); usageTerm = undefined; get('#usage-terminal').replaceChildren(); });
 
   // ---- Trạng thái từ main.
-  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
+  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; skillCatalog = state.skills || {}; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
   window.office.onState(applyState);
   get('#search').oninput = sidebar;
   get('#new-thread').onclick = async () => { const id = await act('create', { project: current()?.archived ? '' : current()?.project || '' }); if (id) { select(id); get('#message').focus(); } };

@@ -160,10 +160,11 @@ const attachmentBlock = attachments => attachments.length ? 'Ảnh tham chiếu 
 // text: prompt đầy đủ cho phiên chưa có brief trong system prompt (terminal, phiên cũ); resumed thì chỉ tiêu đề + body.
 // brief/body: main.cjs gửi brief qua system prompt và body làm tin người dùng.
 function buildPrompt(input) {
-  const options = { label: '', type: '', issues: [], lead: false, phase: 'planning', round: 0, resumed: false, history: true, context: {}, task: '', roster: '', flow: [], messages: [], content: '', attachments: [], limits: PROMPT_LIMITS, files: null, qaPhase: 'functional', devFiles: [], unity: '', projectDocs: '', adPhase: 'planning', hasAd: false, artGenerator: 'chatgpt', ...input };
+  const options = { label: '', type: '', issues: [], lead: false, phase: 'planning', round: 0, resumed: false, history: true, context: {}, task: '', roster: '', flow: [], messages: [], content: '', attachments: [], limits: PROMPT_LIMITS, files: null, qaPhase: 'functional', devFiles: [], unity: '', projectDocs: '', skills: '', adPhase: 'planning', hasAd: false, artGenerator: 'chatgpt', ...input };
   options.label ||= '';
   const past = historyOf(options), join = lines => lines.filter(Boolean).join('\n');
-  const brief = join(briefLines(options)), body = join([...turnLines(options), options.projectDocs, ...past.lines, options.content, attachmentBlock(options.attachments)]);
+  // Danh sách skill (skills.cjs) ổn định trong phiên nên nằm ở brief, kể cả chat thường (không có brief vai trò).
+  const brief = join([...briefLines(options), options.skills]), body = join([...turnLines(options), options.projectDocs, ...past.lines, options.content, attachmentBlock(options.attachments)]);
   const head = options.label ? (options.resumed ? header(options) : brief) : '';
   return { text: join([head, body]), brief, body, omitted: past.omitted };
 }

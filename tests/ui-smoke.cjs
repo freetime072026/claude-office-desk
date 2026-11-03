@@ -9,6 +9,7 @@ const usageMessage = (role, text, value) => ({ id: 'usage-' + text, role, text, 
 fs.mkdirSync(userData, { recursive: true });
 fs.writeFileSync(path.join(userData, 'workspace.json'), JSON.stringify({ profiles: [], executable: '', team: { projects: [], roles: [], threads: [{ id: 'usage-thread', model: 'claude-opus-5-5', title: 'Usage session', project: '', pinned: false, stage: 0, status: 'waiting', flow: ['GD', 'Dev'], workers: { GD: { type: 'GD' }, Dev: { type: 'Dev' } }, messages: [usageMessage('GD', 'gd-1', usage(1000, 200, 3000, 500, 0.01)), usageMessage('Dev', 'dev-1', usage(2000, 300, 4000, 0, 0.02)), usageMessage('Dev', 'dev-2', usage(500, 100, 1000, 0, 0.005))], issues: [{ id: 'ISS-1', text: 'Mô tả lỗi rất dài '.repeat(40) }, { id: 'ISS-2', text: 'Đã sửa', closed: true }], folder: '', attachments: [] }] } }));
 fs.writeFileSync(path.join(userData, 'mcp-servers.json'), JSON.stringify({ mcpServers: { 'image-gen': { command: 'gen', args: [] } } }));
+fs.mkdirSync(path.join(userData, 'skills', 'deploy'), { recursive: true }); fs.writeFileSync(path.join(userData, 'skills', 'deploy', 'SKILL.md'), '---\nname: deploy\ndescription: Deploy steps\n---\n');
 require('../main.cjs');
 const delay = duration => new Promise(resolve => setTimeout(resolve, duration));
 app.whenReady().then(async () => {
@@ -31,6 +32,11 @@ app.whenReady().then(async () => {
       mcpInput.click(); await new Promise(resolve => setTimeout(resolve, 200));
       const mcpState = await window.office.run('state');
       if (JSON.stringify(mcpState.team.roleMcp?.GD) !== '["image-gen"]' || JSON.stringify(mcpState.mcpServers) !== '["image-gen"]') throw Error('Role MCP not saved: ' + JSON.stringify(mcpState.team.roleMcp));
+      const skillInput = document.querySelector('#role-skills:not([hidden]) input[value="deploy"]');
+      if (!skillInput || skillInput.checked || !/Deploy steps/.test(skillInput.parentElement.title)) throw Error('Role skill choices missing');
+      skillInput.click(); await new Promise(resolve => setTimeout(resolve, 200));
+      const skillState = await window.office.run('state');
+      if (JSON.stringify(skillState.team.roleSkills?.GD) !== '["deploy"]') throw Error('Role skill not saved: ' + JSON.stringify(skillState.team.roleSkills));
       document.querySelector('#role').click(); await new Promise(resolve => setTimeout(resolve, 200));
       const roleChoices = [...document.querySelectorAll('#add-role-choices button')].map(button => button.textContent); document.querySelector('#add-role-dialog').close();
       if (!['+ Art Director', '+ Art', '+ Anim', '+ Sound'].every(choice => roleChoices.includes(choice))) throw Error('Role choices missing Art/Art Director: ' + roleChoices.join(', '));

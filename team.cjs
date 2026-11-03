@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { defaults, roleKey, LEGACY_LEAD, isDevType } = require('./roles.cjs');
 const { MCP_NAME } = require('./modes.cjs');
+const { CHAT_KEY } = require('./skills.cjs');
 const { PIPELINE, LEAD, QA_ROUND_LIMIT, ownsSession, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, removable } = require('./workers.cjs');
 const { inheritedRole } = require('./prompt.cjs');
 const flowgraph = require('./flowgraph.cjs');
@@ -187,6 +188,14 @@ function update(team, action, payload) {
     if (!Array.isArray(payload.servers) || payload.servers.length > 32 || !payload.servers.every(name => typeof name === 'string' && MCP_NAME.test(name))) throw Error('Danh sách MCP server không hợp lệ');
     team.roleMcp ||= {}; team.roleMcp[key] = [...new Set(payload.servers)];
     log('Cấu hình', `MCP server của ${key}: ${team.roleMcp[key].join(', ') || 'không có'}`); return true;
+  }
+  // Skill bật cho từng loại role hoặc chat thường (CHAT_KEY, skills.cjs), dùng chung mọi session; tên skill không có trong thư mục
+  // của session thì bỏ qua.
+  if (action === 'role-skills') {
+    const key = payload.role === CHAT_KEY ? CHAT_KEY : roleKey(text(payload.role, 40)); if (key !== CHAT_KEY && ![...PIPELINE, ...item.flow.map(typeOf)].includes(key)) throw Error('Role không hợp lệ');
+    if (!Array.isArray(payload.skills) || payload.skills.length > 64 || !payload.skills.every(name => typeof name === 'string' && MCP_NAME.test(name))) throw Error('Danh sách skill không hợp lệ');
+    team.roleSkills ||= {}; team.roleSkills[key] = [...new Set(payload.skills)];
+    log('Cấu hình', `Skill của ${key === CHAT_KEY ? 'chat thường' : key}: ${team.roleSkills[key].join(', ') || 'không có'}`); return true;
   }
   // Cấu hình riêng của một khối (nhãn khối, không theo loại): Dev và Dev #2 sửa độc lập. Chỉ lưu trách nhiệm/đầu ra khác phần
   // thừa hưởng (preset/template/mặc định) để khối chưa sửa vẫn theo preset khi preset đổi.

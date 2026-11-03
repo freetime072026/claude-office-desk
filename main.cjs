@@ -21,6 +21,8 @@ const unity = require('./unity.cjs');
 const projectDocs = require('./project-docs.cjs');
 const fileChanges = require('./file-changes.cjs');
 const penpot = require('./penpot.cjs');
+const skills = require('./skills.cjs');
+const skillImport = require('./skill-import.cjs');
 const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor, ART_DIRECTOR, ART_CONSUMER_TYPES } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
@@ -61,6 +63,14 @@ function mcpServerNames() {
 // Cấu hình MCP chỉ gồm các server được chọn (US-08), dùng làm --mcp-config của một lượt.
 function mcpSubset(names) { const data = JSON.parse(fs.readFileSync(mcp, 'utf8')); return { mcpServers: Object.fromEntries(names.map(name => [name, data.mcpServers[name]])) }; }
 const safeMcpNames = () => { try { return mcpServerNames(); } catch { return []; } };
+// Skill dùng chung của app (skills.cjs); skill riêng của dự án nằm ở <thư mục>/.claude/skills.
+const skillsDir = () => path.join(root, 'skills');
+// Skill cho giao diện theo thư mục chính của từng session chưa lưu trữ; khoá '' là skill của app khi session chưa có thư mục.
+function skillCatalog() {
+  const brief = list => list.map(({ name, description, source, origin }) => ({ name, description, source, origin }));
+  const folders = [...new Set((metadata.team?.threads || []).filter(thread => !thread.archived && thread.folder).map(thread => thread.folder))];
+  return Object.fromEntries(['', ...folders].map(folder => [folder, brief(skills.list(skillsDir(), folder))]));
+}
 function sameOrNested(first, second) { const a = path.resolve(first).toLowerCase(), b = path.resolve(second).toLowerCase(); return a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep); }
 // Hai lượt cùng có phạm vi ghi (Dev theo danh sách tệp, GD/QA/Lead theo tệp .md) chỉ xung đột khi phạm vi chạm nhau:
 // nhờ vậy các Dev được Lead chia tệp riêng sửa song song. Lượt ghi không giới hạn vẫn xét theo thư mục như cũ.
@@ -108,7 +118,7 @@ function publish() { clearTimeout(publishTimer); publishTimer = null; if (window
 // Luồng stream gọi mỗi chunk; gửi trạng thái tối đa ~10 lần/giây thay vì mỗi chunk.
 let publishTimer = null;
 function publishSoon() { publishTimer ||= setTimeout(publish, 100); }
-function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, mcpServers: safeMcpNames(), profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
+function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, mcpServers: safeMcpNames(), skills: skillCatalog(), profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
 function requireTrusted(event) { const allowed = [entry, pathToFileURL(path.join(__dirname, 'dashboard.html')).href]; if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !allowed.includes(event.senderFrame.url)) throw Error('Unauthorized'); }
 function start(profileId, kind, task) {
   const item = profile(profileId);
@@ -240,12 +250,30 @@ app.whenReady().then(() => {
       // Lệnh slash xử lý cục bộ nên vẫn dùng được khi khối đang trả lời (ví dụ /role Dev pause).
       if (!content.startsWith('/')) { if (chats.has(activeKey)) throw retryable('Khối này đang trả lời. Khối khác vẫn có thể chạy.'); if (chats.size >= 8) throw retryable('Tối đa 8 phiên chat'); }
       const localReply = text => { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); thread.messages.push({ role: 'Hệ thống', text, time: new Date().toISOString() }); persist(); publish(); return true; };
-      if (content === '/help') return localReply('/role <khối> start|pause: chạy/tạm dừng một khối (vd. /role Lead Dev pause). /chot: chốt GD và chạy tự động các bước sau. /compact [điều cần giữ]: compact phiên của khối đang chọn. /auto on|off: bật/tắt chạy tự động. /model: chọn model bên dưới. /status: cấu hình session. /mcp, /mcp open: xem/sửa MCP server. /mcp penpot: thêm Penpot MCP cho UI/UX, Art Director, Art. /usage: quota đã nhận từ CLI. Lệnh tương tác khác dùng trong Terminal.');
+      if (content === '/help') return localReply('/role <khối> start|pause: chạy/tạm dừng một khối (vd. /role Lead Dev pause). /chot: chốt GD và chạy tự động các bước sau. /compact [điều cần giữ]: compact phiên của khối đang chọn. /auto on|off: bật/tắt chạy tự động. /model: chọn model bên dưới. /status: cấu hình session. /mcp, /mcp open: xem/sửa MCP server. /mcp penpot: thêm Penpot MCP cho UI/UX, Art Director, Art. /skills, /skills open: xem/thêm skill. /skills add <link GitHub> [--force]: tải skill sau khi kiểm tra an toàn. /skills update [tên], /skills remove <tên>. /usage: quota đã nhận từ CLI. Lệnh tương tác khác dùng trong Terminal.');
       if (content.startsWith('/model')) return localReply('Model của khối hiện tại: ' + (worker.model || 'claude-opus-5-5') + '. Đổi bằng danh sách Model dưới ô chat.');
       if (content === '/mcp') { let names; try { names = mcpServerNames(); } catch (error) { return localReply(error.message); } const own = payload.role ? names.filter(name => (metadata.team.roleMcp?.[worker.type] || []).includes(name)) : names; return localReply((names.length ? 'MCP server đã khai báo: ' + names.join(', ') + '\n' + (payload.role ? `${payload.role} nạp: ${own.join(', ') || 'không có'} (chọn trong mục Trách nhiệm & yêu cầu riêng; áp dụng cho mọi khối ${worker.type})` : 'Chat thường nạp tất cả.') : 'Chưa khai báo MCP server.') + '\nCấu hình: ' + mcp + '\nDùng /mcp open để mở và sửa (dạng {"mcpServers":{"ten":{"command":"...","args":[]}}}). Áp dụng từ lượt sau; Plan chỉ đọc không gọi tool MCP.'); }
       // Thêm Penpot MCP (penpot.cjs) vào mcp-servers.json, bật cho UI/UX, Art Director, Art và hướng dẫn chạy server + plugin.
       if (content === '/mcp penpot') { let text; try { mcpServerNames(); text = penpot.install(mcp, metadata.team); } catch (error) { return localReply(error.message); } persist(); publish(); return localReply(text); }
       if (content === '/mcp open') { const failure = await shell.openPath(mcp); return localReply(failure ? 'Không mở được: ' + failure : 'Đã mở ' + mcp + '. Lưu tệp rồi gửi lượt mới.'); }
+      // Skill (skills.cjs): thư mục chung của app và .claude/skills của dự án; khối trong luồng và chat thường chỉ dùng skill đã bật.
+      const skillKey = payload.role ? worker.type : skills.CHAT_KEY;
+      if (content === '/skills') { const all = skills.list(skillsDir(), thread.folder), own = skills.pick(all, metadata.team.roleSkills?.[skillKey] || []); return localReply((all.length ? 'Skill tìm thấy: ' + all.map(skill => `${skill.name} (${skill.source === 'app' ? skill.origin || 'app' : 'dự án'})`).join(', ') + '\n' + `${payload.role || 'Chat thường'} dùng: ${own.map(skill => skill.name).join(', ') || 'không có'} (chọn ở mục ${payload.role ? `Skill của role; áp dụng cho mọi khối ${worker.type}` : 'Skill của chat thường'})` : 'Chưa có skill.') + `\nThư mục skill của app: ${skillsDir()}\nSkill của dự án: <thư mục>\\${skills.PROJECT_DIR}\nMỗi skill là một thư mục có SKILL.md (frontmatter name, description). /skills open để mở thư mục của app. /skills add <link GitHub> tải về sau khi kiểm tra; /skills update [tên], /skills remove <tên>. Áp dụng từ lượt sau.`); }
+      // /skills add|update|remove: tải/gỡ skill GitHub, kiểm tra an toàn và độ tin cậy trước khi cài (skill-import.cjs).
+      const skillCommand = /^\/skills\s+(add|update|remove)(?:\s+(.*))?$/.exec(content);
+      if (skillCommand) {
+        const words = (skillCommand[2] || '').trim().split(/\s+/).filter(Boolean), force = words.includes('--force'), target = words.find(word => word !== '--force') || '';
+        const options = { appDir: skillsDir(), force, list: skills.list(skillsDir(), '') };
+        try {
+          if (skillCommand[1] === 'add') return localReply(target ? (await skillImport.add(target, options)).text : 'Dùng: /skills add <link GitHub> [--force]');
+          if (skillCommand[1] === 'update') return localReply((await skillImport.update(target, options)).text);
+          if (!target) return localReply('Dùng: /skills remove <tên>');
+          const result = skillImport.remove(target, options);
+          if (result.removed) for (const names of Object.values(metadata.team.roleSkills || {})) if (names.includes(target)) names.splice(names.indexOf(target), 1);
+          return localReply(result.text);
+        } catch (error) { return localReply('Lỗi: ' + error.message); }
+      }
+      if (content === '/skills open') { fs.mkdirSync(skillsDir(), { recursive: true }); const failure = await shell.openPath(skillsDir()); return localReply(failure ? 'Không mở được: ' + failure : 'Đã mở ' + skillsDir() + '. Chép thư mục skill (có SKILL.md) vào đây rồi gửi lượt mới.'); }
       const command = pipeline.parseCommand(content, thread.flow);
       if (command?.kind === 'error') return localReply(command.message);
       if (command?.kind === 'role') { const result = roleCommand(thread, command.label, command.verb); localReply(result.text); if (result.run) background(thread, result.run); return true; }
@@ -307,7 +335,9 @@ app.whenReady().then(() => {
       // CLAUDE.md của dự án: cả nội dung ở lượt đầu mỗi phiên CLI, sau đó chỉ dòng tra README (project-docs.cjs).
       const fullDocs = !compactOnly && projectDocs.needsFull(thread, sessionKey, resumed);
       const docsGuide = projectDocs.guide(projectDocs.read(thread.folder), payload.role ? worker.type : '', fullDocs);
-      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun });
+      // Skill: chỉ danh sách tên + mô tả + đường dẫn SKILL.md trong brief; model tự Read khi cần (skills.cjs).
+      const runSkills = skills.pick(skills.list(skillsDir(), thread.folder), metadata.team.roleSkills?.[skillKey] || []);
+      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills) });
       // Brief vai trò đi qua system prompt. CLI giữ system prompt của lần gọi đầu khi resume, nên brief đổi (task/pha mới) trong
       // phiên đang tiếp tục được gửi một lần trong tin; thread.briefSent nhớ bản phiên đã có.
       const briefHash = built?.brief ? createHash('sha1').update(built.brief).digest('hex') : '', briefKnown = !resumed || thread.briefSent?.[sessionKey] === briefHash;
@@ -321,7 +351,7 @@ app.whenReady().then(() => {
       const devRun = Boolean(files && payload.role && isDevType(worker.type) && scope?.paths?.length), gitBefore = devRun ? fileChanges.gitStatus(thread.folder, scope.paths) : null;
       const model = payload.role ? modelFor(worker.type, worker.model, thread.leadPhase) : worker.model;
       const runThread = { ...thread, mode: worker.mode, model, cliSessions: thread.cliSessions ||= {}, sessionTotals: thread.sessionTotals ||= {} };
-      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: images.length ? [attachments.folderOf(root, thread.id)] : [], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }, { approved: () => Boolean(thread.shellApproved?.[payload.role || 'Claude']), approve: () => { (thread.shellApproved ||= {})[payload.role || 'Claude'] = new Date().toISOString(); persist(); } }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
+      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: [...(images.length ? [attachments.folderOf(root, thread.id)] : []), ...(compactOnly ? [] : skills.extraDirs(runSkills))], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }, { approved: () => Boolean(thread.shellApproved?.[payload.role || 'Claude']), approve: () => { (thread.shellApproved ||= {})[payload.role || 'Claude'] = new Date().toISOString(); persist(); } }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
       run.message.profileId = profileId; run.message.model = model; run.penpot = penpotRun;
       run.child.once('close', () => {
         chats.delete(activeKey);
