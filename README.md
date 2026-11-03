@@ -126,6 +126,12 @@ Bảng tệp session có nút **Release**. Model mặc định Sonnet, 30 lượ
 
 **＋ Role → Đội Playable Ads (PLA)** chọn sẵn GD → UI/UX → Art Director → Lead Dev → Dev → Art → Anim → Sound → QA → Release, kèm engine (Phaser, Cocos, PixiJS…; để trống thì Lead chọn). Mọi khối có mục đích PLA: trách nhiệm/đầu ra viết riêng cho playable (GD là PLA Producer; Art Director giữ ảnh tối giản, tách layer theo nhu cầu ghép/animation, ngân sách dung lượng; Release đóng gói bản cho từng network và kiểm dung lượng, một tệp, không request ngoài) và chỉ nhận việc của PLA.
 
+**Cấu hình build của khối Release** (release-config.cjs). Khi thư mục chính của session có `build.json` của `@smoud/playable-scripts` (có `networks` và `tracking`), panel khối Release có mục **Build gửi network**: network đích (tích chọn), chế độ **Production** (`tracking.env` = `production`) hoặc **Preview** (`tracking.env` = `test`, collector ghi vào bucket test; adapter network build như Production), tên app (`app`), `playable_id`, package name (`tracking.package_name`), Google Play URL và App Store URL.
+- Khối Release mới thêm hiện đúng giá trị trong `build.json` và build theo tệp, app không ghi gì.
+- Sửa một ô là lưu cả cấu hình thành của khối (lưu theo khối, như Trách nhiệm & yêu cầu riêng). Trước mỗi lượt Release, app ghi các giá trị đó vào `build.json` (giữ các khoá khác, thụt lề và kiểu xuống dòng), rồi brief của Release nhận cấu hình đang dùng và lời dặn commit `build.json` cùng bản gửi.
+- **Theo build.json** bỏ cấu hình riêng, khối quay về build theo tệp của project.
+- Giá trị được kiểm trước khi lưu: ít nhất một network, network nằm trong danh sách của playable-scripts 1.1.4, `playable_id`/package name chỉ gồm chữ, số, `. _ -`, link store phải là https.
+
 ## Cấu hình riêng từng khối
 
 Mục **Trách nhiệm & yêu cầu riêng** của một khối (trách nhiệm, đầu ra, yêu cầu riêng) lưu theo **khối**, không theo loại role: sửa Dev #2 không đổi Dev, sửa khối ở session này không đổi session khác hay template. Khối chưa sửa hiện và dùng phần thừa hưởng: preset của khối (PLA…) → template của team → mặc định của role; app chỉ lưu phần khác phần thừa hưởng nên khối chưa sửa vẫn theo preset khi preset đổi. Xoá khối thì cấu hình của khối đi theo. Session cũ (cấu hình theo loại) được chuyển khi mở app: mỗi khối nhận bản sao cấu hình của loại mình, phần app tự chép từ template bị bỏ để preset/template áp lại. MCP server vẫn bật theo loại role (dùng chung mọi khối cùng loại).

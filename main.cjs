@@ -11,7 +11,7 @@ const { defaults: roleDefaults } = require('./roles.cjs');
 const { PRESETS } = require('./presets.cjs');
 const chatEngine = require('./chat.cjs');
 const chats = new Map();
-const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK, mergePlan } = require('./workers.cjs');
+const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK, mergePlan, labelType } = require('./workers.cjs');
 const { rolePrompt, FILE_ROLES } = require('./prompt.cjs');
 const { needsConfirm, needsTurnConfirm, ALWAYS_ASK } = require('./modes.cjs');
 const { describeTool, decide, roleScope, scopesOverlap, withShell } = require('./permissions.cjs');
@@ -23,6 +23,7 @@ const fileChanges = require('./file-changes.cjs');
 const penpot = require('./penpot.cjs');
 const skills = require('./skills.cjs');
 const skillImport = require('./skill-import.cjs');
+const releaseConfig = require('./release-config.cjs');
 const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor, ART_DIRECTOR, ART_CONSUMER_TYPES } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
@@ -71,6 +72,11 @@ function skillCatalog() {
   const folders = [...new Set((metadata.team?.threads || []).filter(thread => !thread.archived && thread.folder).map(thread => thread.folder))];
   return Object.fromEntries(['', ...folders].map(folder => [folder, brief(skills.list(skillsDir(), folder))]));
 }
+// build.json (playable-scripts) của thư mục các session có khối Release: panel lấy làm mặc định cho khối chưa lưu cấu hình riêng.
+function releaseFiles() {
+  const folders = [...new Set((metadata.team?.threads || []).filter(thread => !thread.archived && thread.folder && thread.flow?.some(label => labelType(thread, label) === 'Release')).map(thread => thread.folder))];
+  return Object.fromEntries(folders.map(folder => [folder, releaseConfig.read(folder)]).filter(([, config]) => config));
+}
 function sameOrNested(first, second) { const a = path.resolve(first).toLowerCase(), b = path.resolve(second).toLowerCase(); return a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep); }
 // Hai lượt cùng có phạm vi ghi (Dev theo danh sách tệp, GD/QA/Lead theo tệp .md) chỉ xung đột khi phạm vi chạm nhau:
 // nhờ vậy các Dev được Lead chia tệp riêng sửa song song. Lượt ghi không giới hạn vẫn xét theo thư mục như cũ.
@@ -118,7 +124,7 @@ function publish() { clearTimeout(publishTimer); publishTimer = null; if (window
 // Luồng stream gọi mỗi chunk; gửi trạng thái tối đa ~10 lần/giây thay vì mỗi chunk.
 let publishTimer = null;
 function publishSoon() { publishTimer ||= setTimeout(publish, 100); }
-function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, mcpServers: safeMcpNames(), skills: skillCatalog(), profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
+function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, mcpServers: safeMcpNames(), skills: skillCatalog(), releaseFiles: releaseFiles(), releaseNetworks: releaseConfig.NETWORKS, profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
 function requireTrusted(event) { const allowed = [entry, pathToFileURL(path.join(__dirname, 'dashboard.html')).href]; if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !allowed.includes(event.senderFrame.url)) throw Error('Unauthorized'); }
 function start(profileId, kind, task) {
   const item = profile(profileId);
@@ -337,7 +343,9 @@ app.whenReady().then(() => {
       const docsGuide = projectDocs.guide(projectDocs.read(thread.folder), payload.role ? worker.type : '', fullDocs);
       // Skill: chỉ danh sách tên + mô tả + đường dẫn SKILL.md trong brief; model tự Read khi cần (skills.cjs).
       const runSkills = skills.pick(skills.list(skillsDir(), thread.folder), metadata.team.roleSkills?.[skillKey] || []);
-      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills) });
+      // Release của project playable-scripts: cấu hình build của khối được ghi vào build.json trước lượt (release-config.cjs).
+      const releaseGuide = payload.role && worker.type === 'Release' && !compactOnly ? releaseConfig.prepare(thread.folder, worker.release) : '';
+      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide });
       // Brief vai trò đi qua system prompt. CLI giữ system prompt của lần gọi đầu khi resume, nên brief đổi (task/pha mới) trong
       // phiên đang tiếp tục được gửi một lần trong tin; thread.briefSent nhớ bản phiên đã có.
       const briefHash = built?.brief ? createHash('sha1').update(built.brief).digest('hex') : '', briefKnown = !resumed || thread.briefSent?.[sessionKey] === briefHash;

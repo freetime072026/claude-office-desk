@@ -6,6 +6,7 @@ const { PIPELINE, LEAD, QA_ROUND_LIMIT, ownsSession, typeOf, labelType, sortFlow
 const { inheritedRole } = require('./prompt.cjs');
 const flowgraph = require('./flowgraph.cjs');
 const { PRESETS, PURPOSES, purposeConfig, validEngine } = require('./presets.cjs');
+const releaseConfig = require('./release-config.cjs');
 const HALTED = ['awaiting-decision', 'cancelled'];
 const ART_GENERATORS = Object.freeze(['chatgpt', 'tool']);
 const initial = () => ({ projects: [], roles: [], threads: [] });
@@ -176,6 +177,14 @@ function update(team, action, payload) {
   if (action === 'delete') { if (!item.archived) throw Error('Chỉ xoá hẳn session đã lưu trữ'); team.threads.splice(team.threads.indexOf(item), 1); return true; }
   if (action === 'apply-task-plan') { if (!Array.isArray(item.taskDrafts) || !item.taskDrafts.length) throw Error('Chưa có phân công hợp lệ từ Lead'); for (const task of item.taskDrafts) if (!item.flow.includes(task.worker)) throw Error('Khối Dev đã thay đổi'); for (const task of item.taskDrafts) { const config = worker(item, task.worker); config.task = task.task; config.files = task.files || []; } log('Phân công đã duyệt', item.taskDrafts.map(task => task.worker + (task.dependsOn?.length ? ' (sau ' + task.dependsOn.join(', ') + ')' : '')).join(', ') + '. Nội dung task nằm trong khối tasks của Lead và ô task của từng Dev.'); item.taskDrafts = []; return true; }
   if (action === 'worker-config') { if (!item.flow.includes(payload.role)) throw Error('Role không tồn tại'); if (!require('./modes.cjs').validMode(payload.mode) || !['claude-opus-5-5', 'sonnet', 'opus', 'haiku'].includes(payload.model)) throw Error('Mode/model không hợp lệ'); const config = worker(item, payload.role); config.mode = payload.mode; config.model = payload.model; config.profileId = typeof payload.profileId === 'string' ? payload.profileId : ''; config.task = typeof payload.task === 'string' ? payload.task.slice(0, 12000) : ''; if (payload.shell !== undefined) setShell(item, payload.role, config, payload.shell); if (payload.purpose !== undefined) setPurpose(config, payload.purpose); return true; }
+  // Cấu hình build của một khối Release (release-config.cjs): null = theo build.json của project; app ghi vào build.json trước lượt.
+  // Panel lưu ở mỗi ô nên không ghi tin vào hội thoại; brief của lượt Release ghi cấu hình đang dùng.
+  if (action === 'release-config') {
+    if (!item.flow.includes(payload.role) || labelType(item, payload.role) !== 'Release') throw Error('Chỉ khối Release có cấu hình build');
+    const config = worker(item, payload.role);
+    if (payload.config === null) delete config.release; else config.release = releaseConfig.validate(payload.config);
+    return true;
+  }
   if (action === 'chat-options') { if (!require('./modes.cjs').validMode(payload.mode) || !['claude-opus-5-5', 'sonnet', 'opus', 'haiku'].includes(payload.model)) throw Error('Mode/model không hợp lệ'); item.mode = payload.mode; item.model = payload.model; return true; }
   if (action === 'template') { const key = roleKey(text(payload.role, 40)); team.roleTemplates ||= {}; team.roleTemplates[key] = { responsibility: text(payload.responsibility, 6000), output: text(payload.output, 6000) }; return true; }
   if (action === 'remove-role') { removeRole(item, payload, log); return true; }

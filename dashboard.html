@@ -72,6 +72,17 @@
   <label id="purpose-field" hidden title="PLA: khối dùng trách nhiệm/đầu ra của đội Playable Ads và chỉ nhận việc làm playable">Mục đích<select id="worker-purpose" aria-label="Mục đích của khối"><option value="game">Game</option><option value="pla">Playable Ads (PLA)</option></select></label>
   <label id="engine-field" hidden title="Engine dùng chung cho mọi khối PLA của session">Engine PLA<select id="worker-engine" aria-label="Engine PLA của session"></select></label>
   <label id="art-gen-field" hidden>Sinh ảnh<select id="art-generator" aria-label="Công cụ sinh ảnh của Art"><option value="chatgpt">ChatGPT (thủ công: Art viết prompt, bạn tạo ảnh)</option><option value="tool">Script/MCP của project (Art tự sinh)</option></select></label>
+  <details id="release-field" hidden open><summary>Build gửi network</summary>
+    <small id="release-source"></small>
+    <small>Network đích</small><div class="mcp-choices" id="release-networks"></div>
+    <label>Chế độ<select id="release-env" aria-label="Chế độ build"><option value="production">Production (tracking production)</option><option value="test">Preview (tracking test)</option></select></label>
+    <label>Tên app<input id="release-app" aria-label="Tên app" maxlength="80"></label>
+    <label>playable_id<input id="release-playable-id" aria-label="playable_id" maxlength="120"></label>
+    <label>Package name<input id="release-package" aria-label="Package name" maxlength="120"></label>
+    <label>Google Play URL<input id="release-google" aria-label="Google Play URL" maxlength="500"></label>
+    <label>App Store URL<input id="release-appstore" aria-label="App Store URL" maxlength="500"></label>
+    <button type="button" id="release-reset" title="Bỏ cấu hình riêng của khối, build theo build.json của project">Theo build.json</button>
+  </details>
   <label id="task-field">Task<textarea id="worker-task" aria-label="Task riêng của khối" placeholder="Task được Lead giao: owner, phạm vi file, AC, phụ thuộc…"></textarea></label>
   <small id="worker-files" hidden></small>
   <div id="session-files" hidden><small>Tệp session</small><div class="file-links"></div></div>

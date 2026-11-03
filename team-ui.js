@@ -11,7 +11,7 @@
   const TAKES_ARGS = ['/role', '/auto'];
   const CHAT_SKILLS = '*chat'; // skills.CHAT_KEY
   // Thứ tự role, giới hạn vòng QA và quyền xóa đều lấy từ backend (snapshot), UI không tự tính.
-  let removal = {}, qaRoundLimit, roleTypes = [], mcpNames = [], skillCatalog = {}, knownProfiles = [], defaultRoles = {}, presets = {};
+  let removal = {}, qaRoundLimit, roleTypes = [], mcpNames = [], skillCatalog = {}, releaseFiles = {}, releaseNetworks = [], knownProfiles = [], defaultRoles = {}, presets = {};
   const isLead = (thread, role) => (thread.workers?.[role]?.type || role) === 'Lead Dev';
   const current = () => team?.threads.find(thread => thread.id === selected);
   // Thông báo ngắn ở dòng trạng thái được giữ vài giây, không bị paint() (chạy mỗi lần main publish) ghi đè ngay.
@@ -278,6 +278,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     for (const id of ['#account-field', '#shell-field', '#task-field', '#role-texts', '#art-gen-field', '#purpose-field', '#engine-field']) get(id).hidden = !role;
     paintSessionFiles(thread, role);
     for (const field of document.querySelectorAll('#panel select, #panel textarea')) field.disabled = !thread || thread.archived;
+    paintRelease(thread, role, force);
     setField(get('#chat-mode'), config.mode || thread?.mode || 'read', force); setField(get('#worker-shell'), config.shell || 'once', force); setField(get('#chat-model'), config.model || thread?.model || 'claude-opus-5-5', force);
     if (force) get('#panel-saved').textContent = '';
     paintRoleSkills(thread, role ? roleType(thread, role) : CHAT_SKILLS);
@@ -295,6 +296,31 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     const effective = field => own[field] || preset[field] || template[field] || fallback[field] || '';
     setField(get('#role-responsibility'), effective('responsibility'), force); setField(get('#role-output'), effective('output'), force); setField(get('#role-instructions'), own.instructions || '', force);
   }
+  // Cấu hình build của khối Release (release-config.cjs), chỉ hiện khi thư mục chính có build.json của playable-scripts. Khối chưa
+  // lưu thì hiện giá trị trong build.json; sửa một ô là lưu cả cấu hình thành của khối, app ghi vào build.json trước lượt Release.
+  const RELEASE_FIELDS = [['#release-env', 'env'], ['#release-app', 'app'], ['#release-playable-id', 'playableId'], ['#release-package', 'packageName'], ['#release-google', 'googlePlayUrl'], ['#release-appstore', 'appStoreUrl']];
+  function paintRelease(thread, role, force) {
+    const box = get('#release-field'), file = role && roleType(thread, role) === 'Release' ? releaseFiles[thread.folder || ''] : null; box.hidden = !file; if (!file) return;
+    const own = thread.workers?.[role]?.release, values = own || file;
+    get('#release-source').textContent = own ? 'Cấu hình riêng của khối · app ghi vào build.json trước lượt Release' : 'Theo build.json của project';
+    get('#release-reset').disabled = !own || thread.archived;
+    const list = get('#release-networks'), key = [role, thread.archived, ...releaseNetworks, '|', ...values.networks].join(',');
+    if (force || list.dataset.key !== key) {
+      list.dataset.key = key;
+      list.replaceChildren(...releaseNetworks.map(name => {
+        const input = make('input', { type: 'checkbox', value: name, checked: values.networks.includes(name), disabled: thread.archived }); input.onchange = saveRelease;
+        const label = make('label', { className: 'mcp-choice' }); label.append(input, ' ' + name); return label;
+      }));
+    }
+    for (const [id, field] of RELEASE_FIELDS) { setField(get(id), values[field] || '', force); get(id).disabled = thread.archived; }
+  }
+  async function saveRelease() {
+    const thread = current(); if (!thread?.flow.includes(selectedWorker)) return;
+    const config = { networks: [...get('#release-networks').querySelectorAll('input:checked')].map(input => input.value), ...Object.fromEntries(RELEASE_FIELDS.map(([id, field]) => [field, get(id).value])) };
+    if (await act('release-config', { role: selectedWorker, config })) get('#panel-saved').textContent = '✓ Đã lưu cấu hình build của ' + selectedWorker;
+  }
+  for (const [id] of RELEASE_FIELDS) get(id).onchange = saveRelease;
+  get('#release-reset').onclick = async () => { if (await act('release-config', { role: selectedWorker, config: null })) get('#panel-saved').textContent = '✓ ' + selectedWorker + ' build theo build.json của project'; };
   // US-08: mỗi loại role chỉ nạp MCP server được tích ở đây (team.roleMcp, dùng chung mọi session); chat thường nạp tất cả.
   function paintRoleMcp(thread, type) {
     const box = get('#role-mcp'), enabled = team.roleMcp?.[type] || []; box.hidden = !mcpNames.length;
@@ -568,7 +594,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   get('#usage-viewer').addEventListener('close', () => { if (usageId) window.office.run('close', { id: usageId }).catch(() => {}); usageId = undefined; usageTerm?.dispose(); usageTerm = undefined; get('#usage-terminal').replaceChildren(); });
 
   // ---- Trạng thái từ main.
-  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; skillCatalog = state.skills || {}; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
+  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; skillCatalog = state.skills || {}; releaseFiles = state.releaseFiles || {}; releaseNetworks = state.releaseNetworks || []; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
   window.office.onState(applyState);
   get('#search').oninput = sidebar;
   get('#new-thread').onclick = async () => { const id = await act('create', { project: current()?.archived ? '' : current()?.project || '' }); if (id) { select(id); get('#message').focus(); } };
