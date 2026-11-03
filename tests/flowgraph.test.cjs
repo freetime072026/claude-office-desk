@@ -77,3 +77,20 @@ test('until the graph is customised it follows the roles; after that a new Dev i
   assert.ok(wired('Lead Dev@planning', 'Dev #3', 'done') && wired('Dev #3', 'QA', 'done') && wired('Lead Dev@review', 'Dev #3', 'reject'));
   update(team, 'remove-role', { id, role: 'Dev #3' }); assert.equal(thread.graph.nodes.some(node => node.label === 'Dev #3'), false); assert.equal(thread.graph.edges.some(edge => edge.to === 'Dev #3'), false);
 });
+test('saved graph keeps negative positions, wire points and per-wire ports; invalid values are dropped', () => {
+  const team = initial(), id = update(team, 'create', { request: 'x' });
+  for (const type of ['Dev', 'QA']) update(team, 'add-worker', { id, type });
+  const thread = team.threads.find(item => item.id === id), graph = structuredClone(thread.graph);
+  graph.nodes[0].x = -340.4; graph.nodes[0].y = -120; graph.nodes[0].in = 'top';
+  graph.edges[0].points = [{ x: 400.4, y: -60.6 }, { x: 520, y: 30 }]; graph.edges[0].fromPort = { side: 'bottom', at: 0.333 }; graph.edges[0].toPort = { side: 'diagonal', at: 0.5 };
+  graph.edges[0].bends = [1]; graph.edges[0].route = 'free';
+  if (graph.edges[1]) { graph.edges[1].points = [{ x: 'a', y: 1 }]; graph.edges[1].toPort = { side: 'top', at: 2 }; }
+  if (graph.edges[2]) graph.edges[2].points = [];
+  update(team, 'graph-save', { id, graph });
+  const saved = thread.graph;
+  assert.deepEqual({ x: saved.nodes[0].x, y: saved.nodes[0].y, in: saved.nodes[0].in }, { x: -340, y: -120, in: undefined });
+  assert.deepEqual(saved.edges[0], { id: saved.edges[0].id, from: saved.edges[0].from, to: saved.edges[0].to, when: saved.edges[0].when, points: [{ x: 400, y: -61 }, { x: 520, y: 30 }], fromPort: { side: 'bottom', at: 0.333 } });
+  if (saved.edges[1]) assert.deepEqual([saved.edges[1].points, saved.edges[1].toPort], [undefined, undefined]);
+  if (saved.edges[2]) assert.deepEqual(saved.edges[2].points, []);
+  graph.nodes[0].x = 1e9; update(team, 'graph-save', { id, graph }); assert.equal(thread.graph.nodes[0].x, 100000);
+});

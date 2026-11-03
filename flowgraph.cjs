@@ -83,24 +83,43 @@ function defaultGraph(thread) {
   return { nodes, edges };
 }
 // ---- Kiểm tra sơ đồ người dùng sửa: nút phải là khối có trong session (hoặc Hoàn tất), cạnh nối nút có thật, điều kiện hợp lệ.
+// Dây (graph-ui.js): points = các điểm gập {x, y} (mỗi đoạn thẳng theo mọi hướng; [] = nối thẳng, thiếu = tự xếp);
+// fromPort / toPort = cổng riêng của dây trên viền khối { side, at }. Dữ liệu sai thì bỏ để dây tự xếp lại.
+const COORD_LIMIT = 100000;
+// Vị trí nút có thể âm (sơ đồ mở rộng về trái/lên trên), giới hạn để dữ liệu hỏng không làm vỡ giao diện.
+const coord = value => Math.max(-COORD_LIMIT, Math.min(COORD_LIMIT, Math.round(Number(value) || 0)));
+function pointsOf(value) {
+  if (!Array.isArray(value) || value.length > 30) return null;
+  const points = value.map(point => ({ x: Number(point?.x), y: Number(point?.y) }));
+  return points.every(point => [point.x, point.y].every(number => Number.isFinite(number) && Math.abs(number) <= COORD_LIMIT)) ? points.map(point => ({ x: Math.round(point.x), y: Math.round(point.y) })) : null;
+}
+const SIDES = ['left', 'right', 'top', 'bottom'];
+function portOf(value) {
+  const at = Number(value?.at);
+  return SIDES.includes(value?.side) && Number.isFinite(at) && at >= 0 && at <= 1 ? { side: value.side, at: Math.round(at * 1000) / 1000 } : null;
+}
+function wireOf(edge) {
+  const points = pointsOf(edge.points), fromPort = portOf(edge.fromPort), toPort = portOf(edge.toPort);
+  return { ...(points ? { points } : {}), ...(fromPort ? { fromPort } : {}), ...(toPort ? { toPort } : {}) };
+}
 function validate(thread, graph) {
   if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw Error('Sơ đồ không hợp lệ');
   if (graph.nodes.length > 60 || graph.edges.length > 300) throw Error('Sơ đồ quá lớn');
   const ids = new Set(), nodes = graph.nodes.map(node => {
     const id = String(node.id || ''), label = String(node.label || ''), phase = node.phase ? String(node.phase) : '';
     if (ids.has(id)) throw Error('Nút trùng: ' + id); ids.add(id);
-    if (id === END) return { id, label: '', x: Math.round(Number(node.x) || 0), y: Math.round(Number(node.y) || 0) };
+    if (id === END) return { id, label: '', x: coord(node.x), y: coord(node.y) };
     if (!thread.flow.includes(label)) throw Error(`Khối "${label}" không có trong session`);
     const phases = PHASED[labelType(thread, label)];
     if (phases ? !phases.includes(phase) || id !== phaseId(label, phase) : phase || id !== label) throw Error('Nút không hợp lệ: ' + id);
-    return { id, label, ...(phase ? { phase } : {}), x: Math.round(Number(node.x) || 0), y: Math.round(Number(node.y) || 0) };
+    return { id, label, ...(phase ? { phase } : {}), x: coord(node.x), y: coord(node.y) };
   });
   const edges = [];
   for (const edge of graph.edges) {
     const from = String(edge.from || ''), to = String(edge.to || ''), when = String(edge.when || 'done');
     if (!ids.has(from) || !ids.has(to) || from === to || from === END) throw Error(`Cạnh không hợp lệ: ${from} → ${to}`);
     if (!CONDITIONS.includes(when)) throw Error('Điều kiện không hợp lệ: ' + when);
-    if (!edges.some(item => item.from === from && item.to === to && item.when === when)) edges.push({ id: `${from}>${to}:${when}`, from, to, when });
+    if (!edges.some(item => item.from === from && item.to === to && item.when === when)) edges.push({ id: `${from}>${to}:${when}`, from, to, when, ...wireOf(edge) });
   }
   return { custom: true, nodes, edges };
 }
