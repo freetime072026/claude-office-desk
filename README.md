@@ -124,7 +124,7 @@ Bảng tệp session có nút **Release**. Model mặc định Sonnet, 30 lượ
 
 ## Preset Playable Ads (PLA)
 
-**＋ Role → Đội Playable Ads (PLA)** chọn sẵn GD → UI/UX → Art Director → Lead Dev → Dev → Art → Anim → Sound → QA → Release, kèm engine (Phaser, Cocos, PixiJS…; để trống thì Lead chọn). Mọi khối có mục đích PLA: trách nhiệm/đầu ra viết riêng cho playable (GD là PLA Producer; Art Director giữ ảnh tối giản, tách layer theo nhu cầu ghép/animation, ngân sách dung lượng; Release đóng gói bản cho từng network và kiểm dung lượng, một tệp, không request ngoài) và chỉ nhận việc của PLA.
+**＋ Role → Đội Playable Ads (PLA)** chọn sẵn GD → UI/UX → Art Director → Lead Dev → Dev → Art → Anim → Sound → QA → Release, kèm engine (Phaser, Cocos, PixiJS…; để trống thì Lead chọn). Mọi khối có mục đích PLA: trách nhiệm/đầu ra viết riêng cho playable (GD là PLA Producer; Art Director giữ ảnh tối giản, tách layer theo nhu cầu ghép/animation, ngân sách dung lượng; Release đóng gói bản cho từng network và kiểm dung lượng, một tệp, không request ngoài trừ endpoint tracking project ghi trong CLAUDE.md/PROJECT.md) và chỉ nhận việc của PLA.
 
 **Cấu hình build của khối Release** (release-config.cjs). Khi thư mục chính của session có `build.json` của `@smoud/playable-scripts` (có `networks` và `tracking`), panel khối Release có mục **Build gửi network**: network đích (tích chọn), chế độ **Production** (`tracking.env` = `production`) hoặc **Preview** (`tracking.env` = `test`, collector ghi vào bucket test; adapter network build như Production), tên app (`app`), `playable_id`, package name (`tracking.package_name`), Google Play URL và App Store URL.
 - Khối Release mới thêm hiện đúng giá trị trong `build.json` và build theo tệp, app không ghi gì.

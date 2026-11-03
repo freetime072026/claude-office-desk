@@ -18,6 +18,16 @@ test('validate keeps networks in playable-scripts order and refuses bad values',
   for (const [extra, message] of [[{ networks: [] }, /ít nhất một/], [{ networks: ['preview'] }, /Network/], [{ env: 'staging' }, /Preview hoặc Production/], [{ playableId: 'PA 1' }, /playable_id/], [{ packageName: '' }, /Package name/], [{ app: 'a/b' }, /Tên app/], [{ googlePlayUrl: 'http://x.com' }, /https/], [{ appStoreUrl: 'not a url' }, /App Store URL/]]) assert.throws(() => release.validate(config(extra)), message);
 });
 
+test('template placeholders are refused in Production and flagged to Release when build.json still holds them', () => {
+  const { packageName, playableId } = release.PLACEHOLDER;
+  assert.throws(() => release.validate(config({ env: 'production', packageName })), /package name vẫn là giá trị mẫu/);
+  assert.throws(() => release.validate(config({ env: 'production', playableId })), /playable_id vẫn là giá trị mẫu/);
+  assert.equal(release.validate(config({ packageName, playableId })).env, 'test');
+  const folder = project({ ...BUILD, tracking: { ...BUILD.tracking, package_name: packageName, playable_id: playableId } });
+  assert.match(release.prepare(folder, undefined), /còn giá trị mẫu \(package name, playable_id\).*bàn giao blocked/);
+  assert.doesNotMatch(release.prepare(project(), undefined), /giá trị mẫu/);
+});
+
 test('apply writes only the mapped keys and keeps the other keys and CRLF line endings', () => {
   const folder = project(), changed = release.apply(folder, release.validate(config()));
   assert.deepEqual(changed, ['network đích', 'chế độ', 'playable_id', 'package name', 'tên app', 'Google Play URL', 'App Store URL']);

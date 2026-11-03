@@ -10,6 +10,9 @@ const ENVS = Object.freeze(['production', 'test']);
 const FILE = 'build.json';
 const ID = /^[A-Za-z0-9._-]{1,120}$/, APP = /^[^\\/:*?"<>|\r\n]{1,80}$/;
 const LABELS = { networks: 'network đích', env: 'chế độ', playableId: 'playable_id', packageName: 'package name', app: 'tên app', googlePlayUrl: 'Google Play URL', appStoreUrl: 'App Store URL' };
+// Giá trị mẫu của template-pla: build production của template dừng khi còn chúng, nên app cũng không nhận chúng ở Production.
+const PLACEHOLDER = Object.freeze({ packageName: 'com.example.app', playableId: 'PA0000' });
+const placeholderLeft = config => config.env === 'production' ? Object.keys(PLACEHOLDER).filter(key => config[key] === PLACEHOLDER[key]).map(key => LABELS[key]) : [];
 const envName = env => env === 'test' ? 'Preview (tracking.env "test")' : 'Production (tracking.env "production")';
 function load(folder) {
   if (!folder) return null; const file = path.join(folder, FILE);
@@ -35,6 +38,7 @@ function validate(config) {
   if (!ID.test(playableId)) throw Error('playable_id chỉ gồm chữ, số, . _ -');
   if (!ID.test(packageName)) throw Error('Package name chỉ gồm chữ, số, . _ -');
   if (!APP.test(app)) throw Error('Tên app trống, quá dài hoặc có ký tự không dùng được trong tên tệp');
+  const left = placeholderLeft({ env: config.env, playableId, packageName }); if (left.length) throw Error(left.join(', ') + ' vẫn là giá trị mẫu của template; điền giá trị thật hoặc chọn Preview');
   return { networks, env: config.env, playableId, packageName, app, googlePlayUrl: url(config.googlePlayUrl, 'Google Play URL'), appStoreUrl: url(config.appStoreUrl, 'App Store URL') };
 }
 // Ghi cấu hình của khối vào build.json, giữ các khoá khác, thụt lề và kiểu xuống dòng của tệp. Trả về tên các mục đã đổi.
@@ -55,7 +59,8 @@ function prepare(folder, config) {
   const current = read(folder); if (!current) return '';
   const used = config ? validate(config) : current, changed = config ? apply(folder, used) : [];
   const lines = [`Cấu hình build (${FILE}, ${config ? 'theo cấu hình của khối' : 'theo tệp của project'}): network đích ${used.networks.join(', ')}; chế độ ${envName(used.env)}; playable_id ${used.playableId}; package name ${used.packageName}; tên app ${used.app}; Google Play ${used.googlePlayUrl}; App Store ${used.appStoreUrl}. Đóng gói đúng các network này bằng lệnh có sẵn của project (npm run build đọc networks trong ${FILE}); bảng kết quả trong RELEASE.md ghi đủ từng network và chế độ build.`];
+  const left = placeholderLeft(used); if (left.length) lines.push(`${FILE} còn giá trị mẫu (${left.join(', ')}) ở chế độ Production nên build sẽ dừng: không sửa ${FILE} hay script, bàn giao blocked để người dùng điền trong panel Release.`);
   if (changed.length) lines.push(`App vừa ghi ${FILE} (đổi: ${changed.join(', ')}): commit ${FILE} cùng bản gửi; không tự sửa lại ${FILE}.`);
   return lines.join('\n');
 }
-module.exports = { NETWORKS, ENVS, FILE, read, validate, apply, prepare };
+module.exports = { NETWORKS, ENVS, FILE, PLACEHOLDER, read, validate, apply, prepare };
