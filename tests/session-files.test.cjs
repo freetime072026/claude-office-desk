@@ -93,3 +93,16 @@ test('file roles get the context-saving guide; Lead sees why its last plan was r
   assert.match(text('GD'), /tối đa khoảng 8\.000 ký tự/); assert.match(text('Lead Dev'), /tối đa 8 mục mỗi task/);
   assert.equal(require('../roles.cjs').MAX_TURNS.Dev, 40);
 });
+test('switching the main folder carries written session docs over; blank templates are filled, written files never overwritten', () => {
+  const old = temp(), next = temp(), thread = { id: 's1', folder: old, relatedFolders: [] };
+  const before = ensureFiles(thread);
+  fs.writeFileSync(before.gdd, '# GDD\nreal design'); fs.writeFileSync(before.style, '# STYLE\nreal style');
+  // Thư mục mới đã có mẫu trống cho GDD (app tạo trước khi sửa) và PROJECT.md do Lead vừa ghi.
+  const after = filesOf({ id: 's1', folder: next }); fs.mkdirSync(path.dirname(after.gdd), { recursive: true });
+  fs.writeFileSync(after.gdd, require('../session-files.cjs').TEMPLATES.gdd); fs.writeFileSync(after.project, '# PROJECT\nnew map');
+  ensureFiles({ id: 's1', folder: next, relatedFolders: [old] });
+  assert.equal(fs.readFileSync(after.gdd, 'utf8'), '# GDD\nreal design');
+  assert.equal(fs.readFileSync(after.style, 'utf8'), '# STYLE\nreal style');
+  assert.equal(fs.readFileSync(after.project, 'utf8'), '# PROJECT\nnew map');
+  assert.equal(fs.readFileSync(after.issues, 'utf8'), require('../session-files.cjs').TEMPLATES.issues);
+});

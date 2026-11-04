@@ -127,6 +127,12 @@ function briefLines(options) {
   const { label, context, task, roster } = options; if (!label) return [];
   return [header(options), field('Trách nhiệm', context.responsibility), field('Đầu ra', context.output), field('Yêu cầu riêng của session', context.instructions), field('Task của khối', task), roster ? 'Đội hiện có:\n' + roster : '', phaseGuide(options), fileGuide(options), options.type === 'Release' ? options.release : '', options.files ? WORK_GUIDE : '', options.files && SHELL_TYPES.includes(options.type) ? READER_GUIDE : '', SHELL_TYPES.includes(options.type) ? options.unity : '', options.penpot ? penpotGuide(options.type) : '', handoffGuide(options)];
 }
+// Người giao task (Lead, Art Director) cần biết gốc của đường dẫn tương đối trong files: app resolve theo thư mục chính,
+// nên khi project nằm ở thư mục liên quan (thư mục chính là kho tài nguyên) phải ghi đường dẫn tuyệt đối.
+function plannerFolders({ lead, type, folders = [] }) {
+  if (!(lead || type === ART_DIRECTOR) || folders.length < 2) return '';
+  return `Thư mục chính (gốc của đường dẫn tương đối trong files): ${folders[0]}. Thư mục liên quan: ${folders.slice(1).join(', ')}. Tệp nằm trong thư mục liên quan phải ghi đường dẫn tuyệt đối trong files (ví dụ D:/…/project/src/Game.ts, không phải src/Game.ts), nếu không app ghi vào thư mục chính.`;
+}
 function turnLines(options) {
   if (!options.label) return [];
   const rejected = options.lead && options.phase !== 'review' && options.planProblems ? `Kế hoạch tasks trước bị app từ chối: ${options.planProblems}. Sửa đúng lỗi này.` : '';
@@ -134,7 +140,7 @@ function turnLines(options) {
   const adRejected = options.type === ART_DIRECTOR && options.adPlanProblems ? `Task Art trước bị app từ chối: ${options.adPlanProblems}. Sửa đúng lỗi này.` : '';
   const uiuxReview = options.type === 'UI/UX' && options.uiuxReview ? `Art Director chưa duyệt mockup: ${options.uiuxReview}. Sửa các màn hình này trong UIUX.md.` : '';
   const artRework = options.type === ART_DIRECTOR && options.artRework?.length ? 'Review lại ảnh bạn đã duyệt — khối ghép báo không dùng được:\n' + options.artRework.map(item => `- ${item.worker} (${ART_REJECT_REASONS[item.reason] || item.reason})${item.art?.length ? ' ' + item.art.join(', ') : ''}: ${clip(item.summary, PROMPT_LIMITS.handoff)}`).join('\n') + '\nĐúng là lỗi art (lệch UIUX.md, thừa chi tiết so với ART.md, thiếu layer) → reject kèm khối tasks giao Art làm lại: ghi rõ chỗ lệch và số đo, chi tiết cần bỏ, layer cần tách (tên tệp từng layer), và cập nhật mục ART-… trong ART.md. Art đúng, lỗi ở cách ghép → pass, summary ghi hướng dẫn ghép cho khối đó. Lỗi code/layout khác → issue.' : '';
-  return [rejected, reassign, adRejected, uiuxReview, artRework, options.tweak ? tweakLine(options) : '', issueLines(options.type, options.issues || [])];
+  return [plannerFolders(options), rejected, reassign, adRejected, uiuxReview, artRework, options.tweak ? tweakLine(options) : '', issueLines(options.type, options.issues || [])];
 }
 // Vòng chỉnh sửa sau bản hoàn thiện (team.cjs requestTweak): việc nhỏ, đúng khối, không làm lại phần khác, không build bản network.
 function tweakLine({ type, lead }) {
@@ -187,6 +193,6 @@ const ROSTER_TASK_LIMIT = 160;
 const rosterOf = thread => thread.flow.map(label => label + ': ' + clip(thread.workers?.[label]?.task || 'chưa giao task', ROSTER_TASK_LIMIT)).join('\n');
 // Điểm vào duy nhất cho main.cjs: đọc trạng thái thread rồi gọi buildPrompt.
 function rolePrompt(team, thread, label, options) {
-  return buildPrompt({ label, type: label ? labelType(thread, label) : '', issues: (thread.issues || []).filter(issue => !issue.closed && !issue.accepted), lead: Boolean(label) && labelType(thread, label) === LEAD, phase: thread.leadPhase || 'planning', round: thread.qaFailRounds || 0, context: label ? roleContext(team, thread, label) : {}, task: thread.workers?.[label]?.task || '', roster: label && labelType(thread, label) === LEAD ? rosterOf(thread) : '', devFiles: thread.workers?.[label]?.files || [], qaPhase: thread.qaPhase || 'functional', tweak: Boolean(thread.tweak), poProblems: thread.poProblems || '', preset: thread.preset || '', poProduct: thread.poProduct || '', poPlan: thread.poPlan?.status === 'approved', planProblems: thread.planProblems || '', adPlanProblems: thread.adPlanProblems || '', uiuxReview: thread.uiuxReview || '', artRework: thread.artRework || [], adPhase: thread.adPhase || 'planning', hasAd: hasArtDirector(thread), artGenerator: team?.artGenerator || 'chatgpt', reassign: thread.reassign || [], flow: thread.flow || [], messages: thread.messages || [],  ...options });
+  return buildPrompt({ label, type: label ? labelType(thread, label) : '', issues: (thread.issues || []).filter(issue => !issue.closed && !issue.accepted), lead: Boolean(label) && labelType(thread, label) === LEAD, phase: thread.leadPhase || 'planning', round: thread.qaFailRounds || 0, context: label ? roleContext(team, thread, label) : {}, task: thread.workers?.[label]?.task || '', roster: label && labelType(thread, label) === LEAD ? rosterOf(thread) : '', devFiles: thread.workers?.[label]?.files || [], qaPhase: thread.qaPhase || 'functional', tweak: Boolean(thread.tweak), poProblems: thread.poProblems || '', preset: thread.preset || '', poProduct: thread.poProduct || '', poPlan: thread.poPlan?.status === 'approved', planProblems: thread.planProblems || '', adPlanProblems: thread.adPlanProblems || '', uiuxReview: thread.uiuxReview || '', artRework: thread.artRework || [], adPhase: thread.adPhase || 'planning', hasAd: hasArtDirector(thread), artGenerator: team?.artGenerator || 'chatgpt', reassign: thread.reassign || [], flow: thread.flow || [], messages: thread.messages || [], folders: [...new Set([thread.folder, ...(thread.relatedFolders || [])].filter(Boolean))], ...options });
 }
 module.exports = { PROMPT_LIMITS, FILE_ROLES, roleContext, inheritedRole, buildPrompt, rolePrompt };

@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const path = require('node:path');
 const { roleKey, DEFAULT_MODELS, DEFAULT_MODES, FALLBACK_MODEL, DEV_TYPES, isDevType, ART_DIRECTOR } = require('./roles.cjs');
 const { scopesOverlap } = require('./permissions.cjs');
@@ -7,6 +8,16 @@ const FILES_PER_TASK = 8;
 const sessionFolders = thread => [...new Set([thread.folder, ...(thread.relatedFolders || [])].filter(Boolean))];
 const insideFolder = (file, folder) => { const relative = path.relative(folder, path.resolve(file)); return !relative.startsWith('..') && !path.isAbsolute(relative); };
 const validFile = (file, folders = []) => typeof file === 'string' && Boolean(file.trim()) && file.length <= 500 && !file.split(/[\\/]/).includes('..') && (!path.isAbsolute(file.trim()) || folders.some(folder => insideFolder(file.trim(), folder)));
+// Đường dẫn tương đối nằm dưới một thư mục con (src/Game.ts, src/ui/) mà thư mục con đó không có trong thư mục chính nhưng có
+// ở thư mục liên quan: người giao đang nghĩ theo project ở thư mục liên quan, app sẽ ghi nhầm vào thư mục chính và khối nhận việc
+// bị chặn. Mục ở ngay gốc (CLAUDE.md, input/) không xét: thường là tệp tạo mới trong thư mục chính, dù template cũng có tệp cùng tên.
+// Đường dẫn tuyệt đối không xét, nên người giao luôn ghi rõ được ý mình bằng đường dẫn tuyệt đối.
+function misplacedIn(file, folders) {
+  const trimmed = file.trim(); if (folders.length < 2 || path.isAbsolute(trimmed)) return [];
+  const parts = trimmed.split(/[\\/]/).filter(part => part && part !== '.'); if (parts.length < 2) return [];
+  const top = parts[0], exists = folder => { try { return fs.statSync(path.join(folder, top)).isDirectory(); } catch { return false; } };
+  return exists(folders[0]) ? [] : folders.slice(1).filter(exists);
+}
 const resolvedFiles = (folder, files) => files.map(file => path.resolve(folder || '.', file) + (/[\\/]$/.test(file) ? path.sep : ''));
 // Thứ tự pipeline chuẩn (PLAN L-4). Role tùy chỉnh luôn đứng sau QA.
 const PIPELINE = Object.freeze(['PO', 'GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release']);
@@ -107,6 +118,10 @@ function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [
       if (!Array.isArray(task.files) || !task.files.length) return fail(`${task.worker}: files bắt buộc`);
       const bad = task.files.find(file => !validFile(file, folders));
       if (bad !== undefined) return fail(`${task.worker}: tệp "${String(bad).slice(0, 200)}" không hợp lệ; dùng đường dẫn tương đối theo thư mục chính (${thread.folder || 'chưa có'}) hoặc tuyệt đối nằm trong thư mục của session${folders.length > 1 ? ' (' + folders.slice(1).join(', ') + ')' : ''}, không dùng ".."`);
+      for (const file of task.files) {
+        const owners = misplacedIn(file, folders), absolute = owner => path.join(owner, file.trim()).replaceAll('\\', '/');
+        if (owners.length) return fail(`${task.worker}: "${file.trim()}" không có trong thư mục chính (${thread.folder}) mà có trong ${owners.join(', ')}; ghi đường dẫn tuyệt đối ${owners.length === 1 ? absolute(owners[0]) : 'vào đúng project (' + owners.map(absolute).join(' hoặc ') + ')'}; nếu đúng là tạo mới trong thư mục chính thì ghi ${absolute(thread.folder)}`);
+      }
       if (task.files.length > FILES_PER_TASK) return fail(`${task.worker}: ${task.files.length} tệp, tối đa ${FILES_PER_TASK} mỗi task; chia cho thêm Dev hoặc làm nhiều vòng`);
     }
     const scopes = plan.tasks.map(task => resolvedFiles(thread.folder, task.files));

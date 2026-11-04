@@ -38,10 +38,26 @@ function filesOf(thread) {
   const base = path.join(thread.folder, DIR), own = path.join(base, thread.id);
   return { project: path.join(base, 'PROJECT.md'), style: path.join(base, 'STYLE.md'), assets: path.join(base, 'ASSETS.md'), missingSounds: path.join(base, 'MISSING_SOUNDS.md'), ...Object.fromEntries(Object.entries(NAMES).map(([key, name]) => [key, path.join(own, name)])) };
 }
-// Tạo tệp còn thiếu (không ghi đè tệp đã có).
+// Đổi thư mục chính (ví dụ từ kho tài nguyên sang project game) thì tài liệu đã viết vẫn nằm ở .office-desk của thư mục cũ, nay là
+// thư mục liên quan. Tệp còn thiếu, hoặc vẫn đúng mẫu trống (chưa ai ghi), được lấy từ cùng vị trí ở thư mục khác của session có
+// nội dung thật; không có thì tạo mẫu. Tệp đã có nội dung không bao giờ bị ghi đè.
+const untouched = (file, key) => { try { return fs.statSync(file).size === Buffer.byteLength(TEMPLATES[key]) && fs.readFileSync(file, 'utf8') === TEMPLATES[key]; } catch { return false; } };
+function carried(thread, file, key) {
+  const relative = path.relative(thread.folder, file);
+  for (const folder of thread.relatedFolders || []) {
+    const source = path.join(folder, relative);
+    try { if (fs.statSync(source).isFile() && !untouched(source, key)) return source; } catch {}
+  }
+  return '';
+}
 function ensureFiles(thread) {
   const files = filesOf(thread); if (!files) return null;
-  for (const [key, file] of Object.entries(files)) { fs.mkdirSync(path.dirname(file), { recursive: true }); if (!fs.existsSync(file)) fs.writeFileSync(file, TEMPLATES[key]); }
+  for (const [key, file] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const missing = !fs.existsSync(file); if (!missing && !untouched(file, key)) continue;
+    const source = carried(thread, file, key);
+    if (source) fs.copyFileSync(source, file); else if (missing) fs.writeFileSync(file, TEMPLATES[key]);
+  }
   return files;
 }
 const stamp = () => new Date().toISOString();

@@ -99,6 +99,33 @@ test('task files may be absolute inside a related session folder, never outside 
   assert.match(plan([path.join(game, '..', 'Other', 'a.cs')]).problems[0], /không hợp lệ/);
   assert.match(plan([]).problems[0], /Dev: files bắt buộc/);
 });
+test('a relative task path that only exists in a related folder is refused with the absolute path to use', () => {
+  const fs = require('node:fs');
+  const team = initial(); const id = update(team, 'create', {}); update(team, 'add-worker', { id, type: 'Dev' }); const thread = team.threads[0];
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'res-')), game = fs.mkdtempSync(path.join(os.tmpdir(), 'game-'));
+  fs.mkdirSync(path.join(game, 'src')); fs.mkdirSync(path.join(main, 'docs')); fs.mkdirSync(path.join(game, 'docs'));
+  thread.folder = main; thread.relatedFolders = [game];
+  const plan = files => { const problems = []; return { result: taskPlan('```tasks\n' + JSON.stringify({ tasks: [{ worker: 'Dev', task: 'x', files }] }) + '\n```', thread, problems), problems }; };
+  const wrong = plan(['src/Game.ts']); assert.equal(wrong.result, null);
+  assert.ok(wrong.problems[0].includes(path.join(game, 'src/Game.ts').replaceAll('\\', '/')), wrong.problems[0]);
+  assert.ok(wrong.problems[0].includes('tạo mới trong thư mục chính thì ghi ' + path.join(main, 'src/Game.ts').replaceAll('\\', '/')), wrong.problems[0]);
+  assert.equal(plan(['docs/a.md', 'NEW.md', game + '/src/Game.ts']).result.length, 1);
+  // Mục ở gốc tạo mới trong thư mục chính không bị chặn dù thư mục liên quan (template) có tệp/thư mục cùng tên.
+  fs.writeFileSync(path.join(game, 'CLAUDE.md'), 'x'); fs.mkdirSync(path.join(game, 'input'));
+  assert.equal(plan(['CLAUDE.md', 'input/']).result.length, 1);
+  assert.equal(plan([main + '/src/Game.ts']).result.length, 1);
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'pixi-')); fs.mkdirSync(path.join(other, 'src')); thread.relatedFolders = [other, game];
+  const both = plan(['src/Game.ts']).problems[0]; assert.match(both, /vào đúng project/); assert.ok(both.includes(other) && both.includes(game), both);
+  thread.relatedFolders = []; assert.equal(plan(['src/Game.ts']).result.length, 1);
+});
+test('Lead and Art Director are told the main folder and to use absolute paths for related folders', () => {
+  const { buildPrompt } = require('../prompt.cjs');
+  const lead = buildPrompt({ label: 'Lead Dev', type: 'Lead Dev', lead: true, folders: ['D:\\Res', 'D:\\Game'], content: 'x' }).text;
+  assert.match(lead, /Thư mục chính \(gốc của đường dẫn tương đối trong files\): D:\\Res\. Thư mục liên quan: D:\\Game/);
+  assert.match(lead, /tuyệt đối trong files \(ví dụ D:\/…\/project\/src\/Game\.ts/);
+  assert.doesNotMatch(buildPrompt({ label: 'Dev', type: 'Dev', folders: ['D:\\Res', 'D:\\Game'], content: 'x' }).text, /Thư mục chính \(gốc/);
+  assert.doesNotMatch(buildPrompt({ label: 'Lead Dev', type: 'Lead Dev', lead: true, folders: ['D:\\Res'], content: 'x' }).text, /Thư mục chính \(gốc/);
+});
 test('Lead on the default model runs Sonnet in triage/review; an explicit Opus choice is kept', () => {
   const { modelFor } = require('../roles.cjs');
   assert.equal(modelFor('Lead Dev', 'claude-opus-5-5', 'planning'), 'claude-opus-5-5');
