@@ -14,7 +14,7 @@ const chats = new Map();
 const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK, mergePlan, labelType } = require('./workers.cjs');
 const { rolePrompt, FILE_ROLES } = require('./prompt.cjs');
 const { needsConfirm, needsTurnConfirm, ALWAYS_ASK } = require('./modes.cjs');
-const { describeTool, decide, roleScope, scopesOverlap, withShell } = require('./permissions.cjs');
+const { describeTool, decide, roleScope, scopesOverlap, exclusivePaths, withShell } = require('./permissions.cjs');
 const sessionFiles = require('./session-files.cjs');
 const attachments = require('./attachments.cjs');
 const unity = require('./unity.cjs');
@@ -354,9 +354,9 @@ app.whenReady().then(() => {
       const scope = payload.role ? withShell(roleScope(worker.type, files, worker.files || [], thread.folder), worker.shell) : null;
       const writes = worker.mode !== 'read' || Boolean(scope);
       // Đọc & sửa/Auto không hỏi trước cả lượt nữa: từng thao tác ghi/sửa/shell/web được duyệt riêng (askPermission bên dưới).
-      if (writes) { if (editOverlap(thread, scope?.paths)) throw retryable('Có Dev đang sửa cùng thư mục. Đợi lượt đó xong để tránh ghi đè; các lượt chỉ đọc vẫn chạy song song.'); if (needsTurnConfirm(worker.mode, foldersOf(thread)) && !autoApproved) { const answer = await dialog.showMessageBox(window, { type: 'warning', message: 'Bypass trên ổ hệ thống hoặc thư mục mạng: bỏ duyệt thao tác tệp và lệnh shell trong lượt này?', detail: foldersOf(thread).join('\n'), buttons: ['Hủy', 'Cho phép lần này'], defaultId: 0, cancelId: 0 }); if (answer.response !== 1) return false; } }
+      if (writes) { if (editOverlap(thread, exclusivePaths(scope))) throw retryable('Có Dev đang sửa cùng thư mục. Đợi lượt đó xong để tránh ghi đè; các lượt chỉ đọc vẫn chạy song song.'); if (needsTurnConfirm(worker.mode, foldersOf(thread)) && !autoApproved) { const answer = await dialog.showMessageBox(window, { type: 'warning', message: 'Bypass trên ổ hệ thống hoặc thư mục mạng: bỏ duyệt thao tác tệp và lệnh shell trong lượt này?', detail: foldersOf(thread).join('\n'), buttons: ['Hủy', 'Cho phép lần này'], defaultId: 0, cancelId: 0 }); if (answer.response !== 1) return false; } }
       if (chats.has(activeKey)) throw retryable('Khối đang trả lời');
-      if (writes && editOverlap(thread, scope?.paths)) throw retryable('Một lượt sửa đã bắt đầu trong lúc xác nhận; hãy đợi để tránh ghi đè.');
+      if (writes && editOverlap(thread, exclusivePaths(scope))) throw retryable('Một lượt sửa đã bắt đầu trong lúc xác nhận; hãy đợi để tránh ghi đè.');
       // US-08: khối trong luồng chỉ nạp MCP server bật cho loại role của nó (team.roleMcp); chat thường nạp tất cả.
       const allMcp = mcpServerNames(), mcpServers = payload.role ? allMcp.filter(name => (metadata.team.roleMcp?.[worker.type] || []).includes(name)) : allMcp;
       // Penpot MCP chỉ thao tác trên page đang mở trong một tab: mỗi lúc một khối dùng Penpot (penpot.cjs).
@@ -403,7 +403,7 @@ app.whenReady().then(() => {
       const devRun = Boolean(files && payload.role && isDevType(worker.type) && scope?.paths?.length), gitBefore = devRun ? fileChanges.gitStatus(thread.folder, scope.paths, foldersOf(thread)) : null;
       const model = payload.role ? modelFor(worker.type, worker.model, thread.leadPhase) : worker.model;
       const runThread = { ...thread, mode: worker.mode, model, cliSessions: thread.cliSessions ||= {}, sessionTotals: thread.sessionTotals ||= {} };
-      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: [...(images.length ? [attachments.folderOf(root, thread.id)] : []), ...(compactOnly ? [] : skills.extraDirs(runSkills))], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }, { approved: () => Boolean(thread.shellApproved?.[payload.role || 'Claude']), approve: () => { (thread.shellApproved ||= {})[payload.role || 'Claude'] = new Date().toISOString(); persist(); } }) }); run.mode = worker.mode; run.scope = scope?.paths || null; run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
+      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: [...(images.length ? [attachments.folderOf(root, thread.id)] : []), ...(compactOnly ? [] : skills.extraDirs(runSkills))], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }, { approved: () => Boolean(thread.shellApproved?.[payload.role || 'Claude']), approve: () => { (thread.shellApproved ||= {})[payload.role || 'Claude'] = new Date().toISOString(); persist(); } }) }); run.mode = worker.mode; run.scope = exclusivePaths(scope); run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
       run.message.profileId = profileId; run.message.model = model; run.penpot = penpotRun;
       run.child.once('close', () => {
         chats.delete(activeKey);

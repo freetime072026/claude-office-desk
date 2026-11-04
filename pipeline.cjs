@@ -182,9 +182,18 @@ function createAutoRun(deps) {
     thread.reassignRounds = (thread.reassignRounds || 0) + 1; graph.queue(thread, target.id);
   }
 
+  // Kế hoạch mới thay task chưa chạy của kế hoạch trước, nhưng nút của khối đó có thể vẫn "running" từ lần kích hoạt trước
+  // (task cũ còn chờ trong hàng thì bị thay). finish() không kích hoạt lại nút đang running, nên task mới nằm "pending" mãi:
+  // đưa thẳng vào hàng chờ; main.cjs pump sau lượt này.
+  function queueStale(thread) {
+    for (const task of thread.dispatch || []) {
+      if (task.status !== 'pending' || task.artReject || isRunning(thread, task.worker)) continue;
+      if (graph.nodesFor(thread, task.worker).some(item => graph.stateOf(thread, item.id).status === 'running')) task.status = 'queued';
+    }
+  }
   async function afterLead(thread, node, message, handoff, proposalApplied, planBlocked) {
     if (node.phase !== 'review') {
-      if (proposalApplied) { graph.finish(thread, node.id, 'done'); return note(thread, 'Lead đã phân công; chạy Dev/VFX theo sơ đồ.'); }
+      if (proposalApplied) { graph.finish(thread, node.id, 'done'); queueStale(thread); return note(thread, 'Lead đã phân công; chạy Dev/VFX theo sơ đồ.'); }
       if (planBlocked) return block(thread, node, planBlocked);
       if (handoff?.status === 'blocked') return block(thread, node, 'Lead Dev cần người dùng: ' + handoff.summary);
       if (!devLabels(thread).length && handoff?.status === 'done') { handedOff(thread, node.label, handoff.summary); return graph.finish(thread, node.id, 'done'); }
@@ -238,6 +247,7 @@ function createAutoRun(deps) {
     if (!handoff) return block(thread, node, `${node.label} chưa xuất khối handoff hợp lệ; dừng tự động. Trả lời ${node.label} hoặc dùng /role ${node.label} start.`);
     const summary = handoff.summary || handoff.status, tasksGiven = /```tasks/.test(message.text);
     if (handoff.status === 'blocked') return handoff.reassign && hasLead(thread) ? reassign(thread, node, node.label, handoff) : block(thread, node, `${node.label} cần người dùng: ${summary}`);
+    if (proposalApplied) queueStale(thread);
     if (tasksGiven && !proposalApplied) return block(thread, node, `${node.label} chưa xuất task Art hợp lệ (${thread.adPlanProblems || 'xem tin Điều phối'}); dừng tự động ở bước này.`);
     if (node.phase === 'planning') {
       if (handoff.status === 'reject') {

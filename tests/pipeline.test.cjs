@@ -250,3 +250,16 @@ test('QA blocked with reassign (missing tool) goes to Lead triage, then Devs, th
   await plain.auto.after(plain.thread, 'QA', reply('blocked', { summary: 'cần máy tầm trung' }));
   assert.match(plain.thread.messages.at(-1).text, /QA cần người dùng: cần máy tầm trung/);
 });
+test('a Lead replan queues the new task of a block whose node is still running from the replaced plan', async () => {
+  const { team, thread, sent, auto } = harness(); update(team, 'add-worker', { id: thread.id, type: 'Dev' });
+  await auto.after(thread, 'GD', reply('done'));
+  leadPlans(thread, tasksText(['Dev', 'Dev #2'])); await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev', 'Dev #2']) }, { proposalApplied: true });
+  // Dev #2 chưa kịp chạy (ví dụ còn chờ trong hàng) thì Dev bị chặn và Lead lập lại kế hoạch: nút Dev #2 vẫn "running".
+  const graph = require('../flowgraph.cjs'), dev2 = graph.nodesFor(thread, 'Dev #2')[0];
+  graph.stateOf(thread, dev2.id).status = 'running';
+  thread.dispatch = [{ worker: 'Dev', task: 'x', files: ['src/a/'], status: 'blocked' }, { worker: 'Dev #2', task: 'y', files: ['src/b/'], status: 'pending' }];
+  const lead = graph.nodesFor(thread, 'Lead Dev').find(node => (node.phase || 'planning') === 'planning'); graph.stateOf(thread, lead.id).status = 'running';
+  await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev #2']) }, { proposalApplied: true });
+  assert.equal(thread.dispatch.find(task => task.worker === 'Dev #2').status, 'queued', JSON.stringify(thread.dispatch));
+  assert.ok(sent.includes('Dev #2'));
+});

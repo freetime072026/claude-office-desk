@@ -46,12 +46,16 @@ function roleScope(type, files, devFiles = [], folder = '') {
   if (type === 'Art Director') return { paths: [files.style, files.assets, files.art, files.issues], bash: true, label: 'Art Director chỉ ghi STYLE.md, ASSETS.md, ART.md và ISSUES.md' };
   // Giữ dấu / cuối để mục thư mục vẫn là thư mục sau khi resolve.
   // MISSING_SOUNDS.md luôn ghi được: code cần âm thanh chưa có thì dùng sound tạm và ghi yêu cầu vào đây (prompt.cjs SOUND_GUIDE).
-  if (isDevType(type) && devFiles.length) return { paths: [...devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : [])], bash: true, label: type + ' chỉ sửa các tệp Lead giao (và MISSING_SOUNDS.md' + (type === 'Art' ? ', ART_PROMPTS.md' : '') + ')' };
+  // shared: tệp ghi chú chung mọi khối được thêm mục (MISSING_SOUNDS.md, ART_PROMPTS.md); không tính khi xét hai lượt có chồng
+  // phạm vi (exclusivePaths), nếu không mọi Dev/Art/Anim đều "chồng" nhau qua tệp này và chạy lần lượt thay vì song song.
+  if (isDevType(type) && devFiles.length) return { paths: [...devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : [])], shared: [files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : [])], bash: true, label: type + ' chỉ sửa các tệp Lead giao (và MISSING_SOUNDS.md' + (type === 'Art' ? ', ART_PROMPTS.md' : '') + ')' };
   return null;
 }
 const norm = value => path.resolve(value).toLowerCase();
 // Một mục phạm vi là tệp, hoặc thư mục nếu kết thúc bằng / hoặc \ (Lead ghi "src/ui/").
 function inScope(target, entries) { const file = norm(target); return entries.some(entry => { const base = norm(entry); return file === base || file.startsWith(base.replace(/[\\/]+$/, '') + path.sep) && /[\\/]$/.test(entry); }); }
+// Phạm vi riêng của lượt (bỏ tệp ghi chú chung) để xét chồng phạm vi giữa các lượt chạy song song.
+function exclusivePaths(scope) { if (!scope) return null; const shared = (scope.shared || []).map(norm); return scope.paths.filter(entry => !shared.includes(norm(entry))); }
 // Hai tập phạm vi có chạm nhau không (để cho Dev sửa song song khi tệp không trùng).
 function scopesOverlap(first, second) { return first.some(entry => inScope(entry, second)) || second.some(entry => inScope(entry, first)); }
 // Quyết định cho một yêu cầu duyệt: allow (không hỏi), deny (từ chối kèm lý do) hoặc ask (hiện hộp duyệt).
@@ -86,4 +90,4 @@ function bashVerdict(scope, mode) {
   if (scope?.bash) return { action: mode === 'bypass' ? 'allow' : 'ask' };
   return { action: mode === 'bypass' ? 'allow' : mode === 'read' ? 'deny' : 'ask', ...(mode === 'read' ? { message: 'Mode Plan không chạy lệnh shell.' } : {}) };
 }
-module.exports = { SHELL_OPTIONS, withShell, describeTool, roleScope, decide, inScope, scopesOverlap, withCurlTimeout };
+module.exports = { SHELL_OPTIONS, withShell, describeTool, roleScope, decide, inScope, scopesOverlap, exclusivePaths, withCurlTimeout };

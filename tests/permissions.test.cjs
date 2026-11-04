@@ -29,3 +29,14 @@ test('only Bypass on a protected drive still asks before the whole turn', () => 
   assert.equal(needsTurnConfirm('bypass', ['E:\work'], env), false);
   for (const mode of ['read', 'edit', 'auto']) assert.equal(needsTurnConfirm(mode, ['C:\work'], env), false);
 });
+test('shared note files (MISSING_SOUNDS.md, ART_PROMPTS.md) do not make two blocks with separate files overlap', () => {
+  const { roleScope, scopesOverlap, exclusivePaths } = require('../permissions.cjs');
+  const files = { missingSounds: 'D:/p/.office-desk/MISSING_SOUNDS.md', artPrompts: 'D:/p/.office-desk/s/ART_PROMPTS.md' };
+  const dev = roleScope('Dev', files, ['src/a/'], 'D:/p'), dev2 = roleScope('Dev', files, ['src/b/'], 'D:/p');
+  const art = roleScope('Art', files, ['assets/x/'], 'D:/p'), art2 = roleScope('Art', files, ['assets/y/'], 'D:/p');
+  assert.equal(scopesOverlap(dev.paths, dev2.paths), true); // vẫn cùng được ghi tệp chung
+  assert.equal(scopesOverlap(exclusivePaths(dev), exclusivePaths(dev2)), false);
+  assert.equal(scopesOverlap(exclusivePaths(art), exclusivePaths(art2)), false);
+  assert.equal(scopesOverlap(exclusivePaths(roleScope('Dev', files, ['src/'], 'D:/p')), exclusivePaths(dev)), true);
+  assert.deepEqual(exclusivePaths(roleScope('QA', { ...files, issues: 'I', perf: 'P' })), ['I', 'P']);
+});
