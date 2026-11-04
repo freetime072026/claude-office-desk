@@ -18,6 +18,8 @@ const CONDITION_NAMES = Object.freeze({ done: 'xong', pass: 'pass', issue: 'issu
 const PHASE_NAMES = Object.freeze({ planning: 'lập kế hoạch', triage: 'triage', review: 'review' });
 const OUTCOMES = Object.freeze(['done', 'pass', 'issue', 'reject', 'skipped', 'blocked']);
 const leadId = phase => phaseId(LEAD, phase);
+// Khoảng cách cột của sơ đồ mặc định (khối rộng 170): chừa khe ~110px cho các dây chạy dọc giữa hai cột (graph-ui.js dùng cùng số).
+const COLUMN = 280;
 const nodeLabel = node => node.id === END ? 'Hoàn tất' : node.phase ? `${node.label} · ${PHASE_NAMES[node.phase]}` : node.label;
 function matches(when, outcome) {
   if (outcome === 'blocked' || !OUTCOMES.includes(outcome)) return false;
@@ -32,7 +34,7 @@ function defaultGraph(thread) {
   const lead = flow.find(label => type(label) === LEAD), devs = flow.filter(label => isDevType(type(label)));
   const qas = flow.filter(label => type(label) === 'QA'), ad = flow.find(label => type(label) === ART_DIRECTOR), release = flow.find(label => type(label) === RELEASE);
   const custom = flow.filter(label => !pre.includes(label) && label !== lead && label !== ad && label !== release && !devs.includes(label) && !qas.includes(label));
-  const nodes = [], edges = [], at = (column, row, rows) => ({ x: 40 + column * 200, y: 180 + (row - (rows - 1) / 2) * 100 });
+  const nodes = [], edges = [], at = (column, row, rows) => ({ x: 40 + column * COLUMN, y: 180 + (row - (rows - 1) / 2) * 100 });
   let column = 0;
   const add = (id, label, phase, position) => { nodes.push({ id, label, ...(phase ? { phase } : {}), ...position }); return id; };
   const link = (from, to, when = 'done') => { if (from && to && !edges.some(edge => edge.from === from && edge.to === to && edge.when === when)) edges.push({ id: `${from}>${to}:${when}`, from, to, when }); };
@@ -52,7 +54,7 @@ function defaultGraph(thread) {
   if (adReview) add(adReview, ad, 'review', at(column, qas.length, checkers.length));
   if (checkers.length) { column++; linkAll(tail, checkers); tail = checkers; }
   // Triage đặt phía trên nút lập kế hoạch (cùng cột) để cạnh triage → Dev đi xuôi, không đè lên các Dev.
-  const addTriage = () => { const top = Math.min(...nodes.filter(node => devs.includes(node.id)).map(node => node.y)); return add(leadId('triage'), lead, 'triage', { x: 40 + (devColumn - 1) * 200, y: top - 120 }); };
+  const addTriage = () => { const top = Math.min(...nodes.filter(node => devs.includes(node.id)).map(node => node.y)); return add(leadId('triage'), lead, 'triage', { x: 40 + (devColumn - 1) * COLUMN, y: top - 120 }); };
   const triageOf = () => nodes.find(node => node.id === leadId('triage'))?.id || (lead && devs.length ? (id => { linkAll([id], devs); return id; })(addTriage()) : '');
   // Vòng sửa lỗi: QA issue → Lead triage → Dev (không có Lead thì QA issue → Dev).
   if (qas.length && devs.length) {
@@ -139,7 +141,7 @@ function addNode(thread, label) {
   if (!thread.graph?.custom) return syncGraph(thread);
   const graph = ensureGraph(thread); if (graph.nodes.some(node => node.label === label)) return graph;
   const type = labelType(thread, label), peers = graph.nodes.filter(node => node.id !== END && isDevType(labelType(thread, node.label)));
-  if (PHASED[type]) { PHASED[type].forEach((phase, index) => graph.nodes.push({ id: phaseId(label, phase), label, phase, x: 40 + index * 200, y: type === LEAD ? 30 : Math.max(30, ...graph.nodes.map(node => node.y)) + 100 })); return graph; }
+  if (PHASED[type]) { PHASED[type].forEach((phase, index) => graph.nodes.push({ id: phaseId(label, phase), label, phase, x: 40 + index * COLUMN, y: type === LEAD ? 30 : Math.max(30, ...graph.nodes.map(node => node.y)) + 100 })); return graph; }
   const lowest = Math.max(30, ...graph.nodes.map(node => node.y));
   if (isDevType(type) && peers.length) {
     const sample = peers[0];

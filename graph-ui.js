@@ -1,9 +1,12 @@
 // Tab "Sơ đồ luồng": xem và sửa sơ đồ chạy của session (flowgraph.cjs). Kéo nền để di chuyển cả sơ đồ (mở rộng mọi hướng),
 // Shift + kéo nền để quét chọn nhiều nút rồi kéo cả nhóm. Mỗi dây có cổng riêng ở hai đầu, kéo đầu dây để đặt tuỳ ý trên viền khối; kéo ● sang khối khác để tạo dây mới.
 // Dây là các đoạn thẳng (dọc/ngang/chéo) qua các điểm gập kéo được; bấm dây/nhãn để đổi điều kiện.
+// Dễ nhìn: rê chuột lên khối (hoặc chọn khối) thì chỉ dây của khối đó nổi lên, còn lại mờ đi; chấm cổng/điểm gập chỉ hiện ở dây
+// đang rê/đang sửa; nút lọc trên thanh công cụ ẩn/hiện từng loại dây; "Sắp xếp gọn" xếp khối theo cột rồi cho dây tự xếp lại.
 // Sửa trên bản nháp; Lưu mới gửi về main (kiểm tra ở flowgraph.validate).
 (() => {
-  const NODE_W = 170, NODE_H = 56, END = '@end', GRID = 10, STUB = 24, LANE = 14;
+  const NODE_W = 170, NODE_H = 56, END = '@end', GRID = 10, STUB = 24, LANE = 14, BACK_STUB = 12, COL = 280, ROW = 100;
+  const FORWARD = ['done', 'pass', 'always'];
   const CONDITIONS = [['done', 'xong'], ['pass', 'pass'], ['issue', 'issue'], ['reject', 'reject'], ['always', 'luôn']];
   const CONDITION_NAMES = Object.fromEntries(CONDITIONS);
   const PHASES = { planning: 'lập kế hoạch', triage: 'triage', review: 'review' };
@@ -15,6 +18,9 @@
   const nodeName = node => node.id === END ? 'Hoàn tất' : node.phase ? `${node.label} · ${PHASES[node.phase]}` : node.label;
   const snap = value => Math.round(value / GRID) * GRID;
   let thread, draft, dirty = false, draftOf = '', menu, scale = 1, panX = 0, panY = 0, fitted = '';
+  // Làm nổi: hoverNode/hoverEdge = khối/dây dưới con trỏ; activeEdge = dây đang mở menu; dragEdge = dây đang kéo; tracking = đang kéo gì đó.
+  let wires = new Map(), wireEdges = new Map(), hoverNode = '', hoverEdge = null, activeEdge = null, dragEdge = null, tracking = false;
+  const hiddenWhen = new Set(); try { for (const when of JSON.parse(localStorage.getItem('graph-hidden') || '[]')) if (CONDITION_NAMES[when]) hiddenWhen.add(when); } catch {}
   const selected = new Set();
   const viewport = get('.graph-scroll'), canvas = get('#graph-canvas'), edgesLayer = get('#graph-edges');
 
@@ -55,7 +61,8 @@
   }
   function fit() {
     const { minX, minY, maxX, maxY } = bounds(), width = viewport.clientWidth || 800, height = viewport.clientHeight || 400;
-    scale = Math.min(1, Math.max(0.3, Math.min((width - 40) / (maxX - minX), (height - 40) / (maxY - minY))));
+    // Làm tròn 0,01 như zoomAt để phóng to rồi thu nhỏ bằng con lăn quay về đúng mức cũ.
+    scale = Math.min(1, Math.max(0.3, Math.floor(Math.min((width - 40) / (maxX - minX), (height - 40) / (maxY - minY)) * 100) / 100));
     panX = (width - (maxX - minX) * scale) / 2 - minX * scale; panY = (height - (maxY - minY) * scale) / 2 - minY * scale; applyView();
   }
   viewport.addEventListener('wheel', event => { event.preventDefault(); zoomAt(scale * (event.deltaY < 0 ? 1.1 : 1 / 1.1), event.clientX, event.clientY); }, { passive: false });
@@ -90,13 +97,22 @@
   // Dây chưa có điểm gập thì tự xếp kiểu vuông góc theo cạnh của hai cổng; kéo một điểm (hoặc thêm điểm) thì dây giữ điểm đó.
   const across = side => side === 'left' || side === 'right';
   const away = side => (side === 'left' || side === 'top' ? -1 : 1);
-  function autoPoints(edge, from, to, lane) {
+  // Dây quay về: cổng ra/vào ở hai cạnh trái-phải nhưng khối đích nằm ngược phía (reject/issue về cột trước). Dây này đi vòng qua
+  // kênh phía trên cả sơ đồ thay vì cắt ngang các khối ở giữa; mỗi khối nguồn một kênh (back.lane), nên các dây quay về từ cùng
+  // một khối gom chung một đường rồi rẽ xuống từng khối đích.
+  function isBack(edge) {
+    if (Array.isArray(edge.points)) return false;
+    const o = portOf(edge, 'from').side, i = portOf(edge, 'to').side;
+    return across(o) && across(i) && away(o) !== away(i) && (portPoint(edge, 'to').x - portPoint(edge, 'from').x) * away(o) < GRID;
+  }
+  function autoPoints(edge, from, to, lane, back) {
     const o = portOf(edge, 'from').side, i = portOf(edge, 'to').side, s = portPoint(edge, 'from'), t = portPoint(edge, 'to');
     if (across(o) !== across(i)) return [across(o) ? { x: t.x, y: s.y } : { x: s.x, y: t.y }];
     const key = across(o) ? 'x' : 'y', start = s[key] + away(o) * STUB, end = t[key] + away(i) * STUB;
     let bends;
     if (away(o) === away(i)) bends = [snap(away(o) > 0 ? Math.max(start, end) : Math.min(start, end)) + away(o) * lane * 6];
     else if ((t[key] - s[key]) * away(o) >= GRID) bends = [snap((s[key] + t[key]) / 2)];
+    else if (back) bends = [s.x + away(o) * (BACK_STUB + back.lane * 8), back.top - 40 - back.lane * LANE, t.x + away(i) * (BACK_STUB + back.lane * 8)];
     else bends = [start + away(o) * lane * 6, snap(across(o) ? Math.min(from.y, to.y) - 40 - lane * LANE : Math.max(from.x, to.x) + NODE_W + 40 + lane * LANE), end + away(i) * lane * 6];
     // Bends xen kẽ toạ độ của đoạn vuông góc với hướng ra: dựng thành các góc, đoạn cuối vào cổng theo hướng của cổng vào.
     const points = []; let horizontal = across(o), current = s;
@@ -106,7 +122,6 @@
     step(horizontal ? { x: t.x, y: current.y } : { x: current.x, y: t.y });
     return points.filter((point, index) => index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y);
   }
-  function bendPoints(edge, from, to, lane) { return Array.isArray(edge.points) ? edge.points : autoPoints(edge, from, to, lane); }
   // Dây tự xếp chuyển thành điểm gập cố định trước khi sửa.
   const own = (edge, bends) => (edge.points ||= bends.map(point => ({ x: point.x, y: point.y })));
   function labelPoint(points) {
@@ -118,27 +133,35 @@
     edgesLayer.replaceChildren(svg('defs'));
     const defs = edgesLayer.firstChild;
     for (const [when] of CONDITIONS) { const marker = svg('marker', { id: 'arrow-' + when, viewBox: '0 0 10 10', refX: '9', refY: '5', markerWidth: '7', markerHeight: '7', orient: 'auto-start-reverse' }); marker.append(svg('path', { d: 'M0,0 L10,5 L0,10 z', class: 'edge-head ' + when })); defs.append(marker); }
-    const lanes = {}, all = []; spreadPorts();
+    const lanes = {}, all = [], labelled = [], counts = {}; spreadPorts(); wires = new Map(); wireEdges = new Map();
+    const top = Math.min(...draft.nodes.map(node => node.y)), drawn = edge => position(edge.from) && position(edge.to);
+    // Kênh quay về: khối nguồn bên trái dùng kênh trong cùng (thấp nhất), khối càng về phải kênh càng cao để các vòng lồng nhau, không cắt nhau.
+    const backSources = [...new Set(draft.edges.filter(edge => drawn(edge) && isBack(edge)).map(edge => edge.from))].sort((a, b) => position(a).x - position(b).x || position(a).y - position(b).y);
     for (const edge of draft.edges) {
       const from = position(edge.from), to = position(edge.to); if (!from || !to) continue;
+      counts[edge.when] = (counts[edge.when] || 0) + 1;
+      if (hiddenWhen.has(edge.when)) continue; // loại dây đang ẩn bằng nút lọc
       const lane = (lanes[edge.from + '>' + edge.to] = (lanes[edge.from + '>' + edge.to] ?? -1) + 1) + (lanes['@' + edge.to] = (lanes['@' + edge.to] ?? -1) + 1);
-      const bends = bendPoints(edge, from, to, lane), custom = Array.isArray(edge.points), points = [portPoint(edge, 'from'), ...bends, portPoint(edge, 'to')];
+      const custom = Array.isArray(edge.points), back = !custom && isBack(edge) ? { lane: backSources.indexOf(edge.from), top } : null;
+      const bends = custom ? edge.points : autoPoints(edge, from, to, lane, back), points = [portPoint(edge, 'from'), ...bends, portPoint(edge, 'to')];
       all.push(...points);
-      edgesLayer.append(svg('path', { d: points.map((point, index) => (index ? 'L' : 'M') + point.x + ',' + point.y).join(' '), class: 'graph-edge ' + edge.when, 'marker-end': `url(#arrow-${edge.when})` }));
+      // Mỗi dây một nhóm <g>: làm mờ/làm nổi cả dây, chấm cổng và điểm gập chỉ hiện khi rê chuột hoặc đang sửa dây đó.
+      const wire = svg('g', { class: 'graph-wire ' + edge.when }); wires.set(edge, wire); wireEdges.set(wire, edge);
+      wire.append(svg('path', { d: points.map((point, index) => (index ? 'L' : 'M') + point.x + ',' + point.y).join(' '), class: 'graph-edge ' + edge.when, 'marker-end': `url(#arrow-${edge.when})` }));
       // Mỗi đoạn: bấm mở menu, kéo để tạo điểm gập mới tại đó rồi kéo, nhấp đúp để thêm điểm gập.
       for (let j = 0; j < points.length - 1; j++) {
         const a = points[j], b = points[j + 1], hit = svg('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'graph-seg-hit' });
         hit.append(svg('title')); hit.firstChild.textContent = `${nodeName(from)} → ${nodeName(to)}: ${CONDITION_NAMES[edge.when]} · bấm để sửa, kéo hoặc nhấp đúp để thêm điểm gập`;
         hit.addEventListener('pointerdown', event => segmentDown(event, edge, j, bends));
         hit.addEventListener('dblclick', event => { event.stopPropagation(); if (thread.archived) return; const point = toWorld(event.clientX, event.clientY); own(edge, bends).splice(j, 0, { x: snap(point.x), y: snap(point.y) }); markDirty(); renderEdges(); });
-        edgesLayer.append(hit);
+        wire.append(hit);
       }
       // Điểm gập: kéo để dời (mỗi đoạn tới điểm kế bên thẳng theo mọi hướng), nhấp đúp để bỏ. Điểm tự xếp hiện mờ.
       bends.forEach((point, index) => {
         const dot = svg('circle', { cx: point.x, cy: point.y, r: 4.5, class: `graph-waypoint ${edge.when}${custom ? '' : ' auto'}` }); dot.append(svg('title')); dot.firstChild.textContent = 'Kéo để dời điểm gập · nhấp đúp để bỏ';
         dot.addEventListener('pointerdown', event => dragWaypoint(event, edge, index, bends));
         dot.addEventListener('dblclick', event => { event.stopPropagation(); if (thread.archived) return; own(edge, bends).splice(index, 1); markDirty(); renderEdges(); });
-        edgesLayer.append(dot);
+        wire.append(dot);
       });
       // Hai đầu dây: kéo dọc viền khối để dời cổng của riêng dây này, nhấp đúp để về vị trí chia đều.
       for (const end of ['from', 'to']) {
@@ -146,29 +169,74 @@
         cap.append(svg('title')); cap.firstChild.textContent = (end === 'from' ? 'Cổng ra' : 'Cổng vào') + ' của dây · kéo dọc viền khối để dời · nhấp đúp để đặt lại';
         cap.addEventListener('pointerdown', event => moveEnd(event, edge, end));
         cap.addEventListener('dblclick', event => { event.stopPropagation(); if (thread.archived) return; delete edge[end + 'Port']; markDirty(); renderEdges(); });
-        edgesLayer.append(cap);
+        wire.append(cap);
       }
+      edgesLayer.append(wire);
       if (edge.when === 'done') continue; // cạnh "xong" (mặc định) không hiện nhãn cho đỡ rối
-      const at = labelPoint(points);
+      // Dây quay về: nhãn đặt trên kênh ngay sau chỗ rẽ lên của khối nguồn, nên các dây cùng nguồn cùng điều kiện chung một nhãn.
+      // Nhãn cùng điều kiện mà chồng lên nhãn đã vẽ (dây chung đường) thì chỉ giữ một.
+      const at = back ? { x: bends[1].x - away(portOf(edge, 'from').side) * 36, y: bends[1].y } : labelPoint(points);
+      if (labelled.some(other => other.when === edge.when && Math.abs(other.x - at.x) < 56 && Math.abs(other.y - at.y) < 20)) continue; labelled.push({ when: edge.when, ...at });
       const tag = svg('g', { class: 'edge-tag ' + edge.when, transform: `translate(${at.x},${at.y})`, tabindex: '0', role: 'button', 'aria-label': `Cạnh ${nodeName(from)} → ${nodeName(to)}: ${CONDITION_NAMES[edge.when]}` });
       const text = svg('text', { 'text-anchor': 'middle', y: '4' }); text.textContent = CONDITION_NAMES[edge.when];
       tag.append(svg('rect', { x: '-26', y: '-9', width: '52', height: '18', rx: '9' }), text);
       tag.addEventListener('pointerdown', event => event.stopPropagation());
       tag.addEventListener('click', event => { event.stopPropagation(); openMenu(edge, at.x, at.y); });
       tag.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); openMenu(edge, at.x, at.y); } });
-      edgesLayer.append(tag);
+      wire.append(tag);
     }
     // Lớp SVG phủ đúng vùng có nút và dây (toạ độ có thể âm) để bấm được mọi đoạn.
     const xs = [...all.map(point => point.x), ...draft.nodes.flatMap(node => [node.x, node.x + NODE_W])], ys = [...all.map(point => point.y), ...draft.nodes.flatMap(node => [node.y, node.y + NODE_H])];
     const minX = Math.min(0, ...xs) - 200, minY = Math.min(0, ...ys) - 200, width = Math.max(400, ...xs) + 200 - minX, height = Math.max(300, ...ys) + 200 - minY;
     Object.assign(edgesLayer.style, { left: minX + 'px', top: minY + 'px', width: width + 'px', height: height + 'px' });
     edgesLayer.setAttribute('viewBox', `${minX} ${minY} ${width} ${height}`); edgesLayer.setAttribute('width', width); edgesLayer.setAttribute('height', height);
+    paintFilter(counts); paintFocus(true);
+  }
+  // ---- Làm nổi: khối đang rê chuột (không có thì các khối đang chọn) → dây nối vào/ra của nó và khối hai đầu nổi lên, phần còn
+  // lại mờ đi và không bấm được (sửa dây của khối đó không bị dây khác che). Dây đang rê/đang sửa: đậm hơn, hiện chấm cổng/điểm gập.
+  function paintFocus(reorder = false) {
+    const focus = hoverNode ? new Set([hoverNode]) : selected, focusing = focus.size > 0, lit = new Set(focus), hot = new Set();
+    for (const [edge, wire] of wires) {
+      const on = focusing && (focus.has(edge.from) || focus.has(edge.to)), active = edge === activeEdge || edge === dragEdge;
+      wire.classList.toggle('lit', on || active); wire.classList.toggle('active', active); wire.classList.toggle('hot', edge === hoverEdge);
+      if (on) { lit.add(edge.from); lit.add(edge.to); }
+      if (active || edge === hoverEdge) { hot.add(edge.from); hot.add(edge.to); }
+      if (reorder && on) edgesLayer.append(wire); // dây đang nổi vẽ đè lên dây mờ
+    }
+    canvas.classList.toggle('focusing', focusing);
+    for (const element of canvas.querySelectorAll('.graph-node')) { element.classList.toggle('lit', lit.has(element.dataset.id)); element.classList.toggle('hot', hot.has(element.dataset.id)); }
+  }
+  // Theo dõi con trỏ bằng một bộ nghe trên khung (khối/dây được vẽ lại liên tục nên không gắn riêng từng cái). Đang kéo thì giữ nguyên.
+  function hoverAt(target) {
+    if (tracking) return;
+    const node = target?.closest?.('.graph-node')?.dataset.id || '', wire = target?.closest?.('.graph-wire'), edge = (wire && wireEdges.get(wire)) || null;
+    if (node === hoverNode && edge === hoverEdge) return;
+    const refocus = node !== hoverNode; hoverNode = node; hoverEdge = edge; paintFocus(refocus);
+  }
+  viewport.addEventListener('pointerover', event => hoverAt(event.target));
+  viewport.addEventListener('pointerleave', () => hoverAt(null));
+  // ---- Lọc loại dây (cũng là chú giải màu): bấm để ẩn/hiện, nhớ theo máy. Dây ẩn chỉ không vẽ, vẫn nằm trong sơ đồ và vẫn chạy.
+  const filterBox = get('#graph-filter'), chips = {};
+  for (const [when, name] of CONDITIONS) {
+    const chip = make('button', { type: 'button', className: 'graph-chip', title: `Ẩn/hiện các dây "${name}"` }), count = make('span', { className: 'graph-chip-count' });
+    chip.dataset.when = when; // không dùng class (team.css có sẵn .issue cho thẻ lỗi)
+    chip.append(make('i'), document.createTextNode(name), count); chips[when] = { chip, count };
+    chip.onclick = () => { if (hiddenWhen.has(when)) hiddenWhen.delete(when); else hiddenWhen.add(when); try { localStorage.setItem('graph-hidden', JSON.stringify([...hiddenWhen])); } catch {} closeMenu(); renderEdges(); };
+    filterBox.append(chip);
+  }
+  function paintFilter(counts) {
+    for (const [when, { chip, count }] of Object.entries(chips)) { chip.hidden = !counts[when] && !hiddenWhen.has(when); chip.setAttribute('aria-pressed', String(!hiddenWhen.has(when))); count.textContent = counts[when] || 0; }
   }
   // Kéo chuột với ngưỡng 4px; thả khi chưa vượt ngưỡng thì coi là bấm.
   function track(event, onDrag, onClick, onEnd) {
-    const downX = event.clientX, downY = event.clientY; let moved = false;
+    const downX = event.clientX, downY = event.clientY; let moved = false; tracking = true;
     const onMove = moveEvent => { if (!moved && Math.hypot(moveEvent.clientX - downX, moveEvent.clientY - downY) < 4) return; moved = true; onDrag(toWorld(moveEvent.clientX, moveEvent.clientY), moveEvent); };
-    const onUp = upEvent => { document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerup', onUp); if (!moved) onClick?.(); else onEnd?.(upEvent); };
+    const onUp = upEvent => {
+      document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerup', onUp); tracking = false;
+      const held = dragEdge; dragEdge = null;
+      if (!moved) onClick?.(); else onEnd?.(upEvent);
+      if (held) paintFocus(); hoverAt(document.elementFromPoint(upEvent.clientX, upEvent.clientY)); // khối/dây vẽ lại khi kéo: cập nhật lại chỗ con trỏ
+    };
     document.addEventListener('pointermove', onMove); document.addEventListener('pointerup', onUp);
   }
   // Tự nắn thẳng: đoạn từ điểm đang kéo tới điểm kề bên lệch dưới 15° so với phương ngang/dọc thì kéo về đúng ngang/dọc
@@ -190,7 +258,7 @@
   // Bấm một đoạn: mở menu. Kéo đoạn: thêm điểm gập tại chỗ bấm rồi kéo theo chuột.
   function segmentDown(event, edge, j, bends) {
     if (event.button !== 0 || event.shiftKey) return; // Shift: để nền quét chọn
-    event.stopPropagation(); event.preventDefault(); closeMenu();
+    event.stopPropagation(); event.preventDefault(); closeMenu(); dragEdge = edge;
     const start = toWorld(event.clientX, event.clientY); let added = false;
     track(event, (point, moveEvent) => {
       if (thread.archived) return;
@@ -200,16 +268,16 @@
   }
   function dragWaypoint(event, edge, index, bends) {
     if (event.button !== 0 || thread.archived) return;
-    event.stopPropagation(); event.preventDefault(); closeMenu();
+    event.stopPropagation(); event.preventDefault(); closeMenu(); dragEdge = edge;
     track(event, (point, moveEvent) => { placeBend(edge, own(edge, bends), index, point, moveEvent.altKey); markDirty(); renderEdges(); });
   }
 
   // ---- Nút
-  function paintSelection() { for (const element of canvas.querySelectorAll('.graph-node')) element.classList.toggle('selected', selected.has(element.dataset.id)); }
+  function paintSelection() { for (const element of canvas.querySelectorAll('.graph-node')) element.classList.toggle('selected', selected.has(element.dataset.id)); paintFocus(true); }
   function render() {
     closeMenu();
     for (const element of [...canvas.querySelectorAll('.graph-node')]) element.remove();
-    get('#graph-empty').hidden = Boolean(thread?.flow?.length); get('#graph-reset').disabled = !thread?.flow?.length || thread.archived;
+    get('#graph-empty').hidden = Boolean(thread?.flow?.length); get('#graph-reset').disabled = get('#graph-arrange').disabled = !thread?.flow?.length || thread.archived;
     if (!thread?.flow?.length) { edgesLayer.replaceChildren(); return; }
     const run = thread.graphRun?.nodes || {};
     for (const node of draft.nodes) {
@@ -227,7 +295,7 @@
   // Kéo đầu dây dọc viền khối của nó: đặt cổng riêng cho dây; dây tự xếp đi lại theo cổng mới.
   function moveEnd(event, edge, end) {
     if (event.button !== 0 || thread.archived) return;
-    event.stopPropagation(); event.preventDefault(); closeMenu();
+    event.stopPropagation(); event.preventDefault(); closeMenu(); dragEdge = edge;
     const node = position(end === 'from' ? edge.from : edge.to);
     track(event, (point, moveEvent) => {
       const port = nearestPort(node, point), list = edge.points;
@@ -299,9 +367,10 @@
     });
   }
   // ---- Menu cạnh: đổi điều kiện / đặt lại đường nối / xoá.
-  function closeMenu() { menu?.remove(); menu = null; }
+  function closeMenu() { menu?.remove(); menu = null; if (activeEdge) { activeEdge = null; paintFocus(); } }
   function openMenu(edge, x, y) {
     closeMenu(); if (thread.archived) return;
+    activeEdge = edge; paintFocus();
     menu = make('div', { className: 'graph-edge-menu' }); menu.style.left = x + 'px'; menu.style.top = (y + 14) + 'px';
     menu.addEventListener('pointerdown', event => event.stopPropagation());
     const select = make('select'); select.setAttribute('aria-label', 'Điều kiện của cạnh');
@@ -320,6 +389,35 @@
   const showError = error => { get('#graph-state').textContent = error.message; };
   get('#graph-save').onclick = async () => { try { await window.office.run('team', { action: 'graph-save', id: thread.id, graph: { nodes: draft.nodes, edges: draft.edges } }); dirty = false; get('#graph-save').disabled = get('#graph-cancel').disabled = true; get('#graph-state').textContent = '✓ Đã lưu sơ đồ'; } catch (error) { showError(error); } };
   get('#graph-cancel').onclick = () => { loadDraft(); render(); };
+  // ---- Sắp xếp gọn (trên bản nháp, Huỷ để bỏ): khối xếp theo cột theo dây đi xuôi (xong/pass/luôn), trong mỗi cột giữ thứ tự
+  // trên-dưới hiện tại và căn giữa; khối chỉ được gọi bằng dây quay về (như Lead Dev · triage) đặt phía trên các khối nó giao việc.
+  // Bỏ điểm gập và cổng tự đặt của mọi dây để dây tự xếp lại theo vị trí mới.
+  function arrange() {
+    const nodes = draft.nodes, ids = new Set(nodes.map(node => node.id));
+    const forward = draft.edges.filter(edge => FORWARD.includes(edge.when) && ids.has(edge.from) && ids.has(edge.to) && edge.from !== edge.to);
+    const layer = new Map(nodes.map(node => [node.id, 0]));
+    for (let round = 0; round < nodes.length; round++) {
+      let changed = false;
+      for (const edge of forward) { const next = layer.get(edge.from) + 1; if (next > layer.get(edge.to) && next < nodes.length) { layer.set(edge.to, next); changed = true; } }
+      if (!changed) break;
+    }
+    const side = new Set(nodes.filter(node => !forward.some(edge => edge.to === node.id) && draft.edges.some(edge => edge.to === node.id && ids.has(edge.from)) && forward.some(edge => edge.from === node.id)).map(node => node.id));
+    for (const id of side) layer.set(id, Math.max(0, Math.min(...forward.filter(edge => edge.from === id).map(edge => layer.get(edge.to))) - 1));
+    const columns = [...new Set(layer.values())].sort((a, b) => a - b), byY = (a, b) => a.y - b.y || a.x - b.x;
+    for (const [column, value] of columns.entries()) {
+      const main = nodes.filter(node => layer.get(node.id) === value && !side.has(node.id)).sort(byY);
+      main.forEach((node, row) => { node.x = 40 + column * COL; node.y = snap((row - (main.length - 1) / 2) * ROW); });
+    }
+    for (const id of side) {
+      const node = position(id), column = columns.indexOf(layer.get(id)), targets = forward.filter(edge => edge.from === id).map(edge => position(edge.to));
+      const above = [...targets, ...nodes.filter(item => item !== node && layer.get(item.id) === layer.get(id) && !side.has(item.id))].map(item => item.y);
+      node.x = 40 + column * COL; node.y = snap(Math.min(...above) - ROW * 1.2);
+    }
+    const shift = 40 - Math.min(...nodes.map(node => node.y)); for (const node of nodes) node.y += shift;
+    for (const edge of draft.edges) { delete edge.points; delete edge.fromPort; delete edge.toPort; }
+    selected.clear(); markDirty(); fitted = ''; render();
+  }
+  get('#graph-arrange').onclick = () => { if (thread && !thread.archived && draft.nodes.length) arrange(); };
   get('#graph-reset').onclick = async () => { if (!confirm('Đặt lại sơ đồ theo mặc định? Các nối, đường dây và vị trí đã sửa sẽ mất.')) return; try { await window.office.run('team', { action: 'graph-reset', id: thread.id }); dirty = false; draftOf = ''; } catch (error) { showError(error); } };
 
   let saved = 'chat'; try { saved = localStorage.getItem('main-tab') || 'chat'; } catch {}
