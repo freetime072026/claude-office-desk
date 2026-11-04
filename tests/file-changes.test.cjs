@@ -32,3 +32,15 @@ test('Dev handoff asks for new files; Lead review must update PROJECT.md from CH
   assert.match(buildPrompt({ label: 'Dev', type: 'Dev', content: 'x' }).text, /Tệp mới: mỗi tệp một dòng/);
   assert.match(buildPrompt({ label: 'Lead Dev', type: 'Lead Dev', lead: true, phase: 'review', files, content: 'x' }).text, /bắt buộc cập nhật bản đồ theo các tệp "Tạo mới"/);
 });
+test('git snapshot also covers task paths in a related session folder, keyed by absolute path', { skip: !hasGit }, () => {
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'main-')), game = fs.mkdtempSync(path.join(os.tmpdir(), 'game-'));
+  git(game, 'init', '-q'); fs.mkdirSync(path.join(game, 'assets')); fs.writeFileSync(path.join(game, 'assets', 'a.webp'), 'a');
+  git(game, 'add', '.'); git(game, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init');
+  const scope = [path.join(game, 'assets') + path.sep], folders = [main, game], before = gitStatus(main, scope, folders);
+  fs.writeFileSync(path.join(game, 'assets', 'new.webp'), 'n'); fs.writeFileSync(path.join(game, 'assets', 'a.webp'), 'a2');
+  const changed = changedFiles({ folder: main, before, after: gitStatus(main, scope, folders), fileOps: { [path.join(game, 'assets', 'new.webp')]: 'created' } });
+  const top = execFileSync('git', ['-C', game, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+  const abs = file => path.resolve(top, file).split(path.sep).join('/');
+  assert.deepEqual(changed.edited, [abs('assets/a.webp')]);
+  assert.ok(changed.created.length >= 1 && changed.created.every(file => /new\.webp$/.test(file)));
+});

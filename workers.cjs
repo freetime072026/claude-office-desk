@@ -2,8 +2,11 @@ const path = require('node:path');
 const { roleKey, DEFAULT_MODELS, DEFAULT_MODES, FALLBACK_MODEL, DEV_TYPES, isDevType, ART_DIRECTOR } = require('./roles.cjs');
 const { scopesOverlap } = require('./permissions.cjs');
 const FILES_PER_TASK = 8;
-// Tệp Lead giao cho Dev: đường dẫn tương đối, không thoát khỏi thư mục chính. Thư mục kết thúc bằng /.
-const validFile = file => typeof file === 'string' && file.trim() && file.length <= 500 && !path.isAbsolute(file) && !file.split(/[\\/]/).includes('..');
+// Tệp Lead/Art Director giao: đường dẫn tương đối theo thư mục chính, hoặc tuyệt đối nằm trong một thư mục của session
+// (chính hoặc liên quan, ví dụ project game khi thư mục chính là kho tài nguyên). Không có "..". Thư mục kết thúc bằng /.
+const sessionFolders = thread => [...new Set([thread.folder, ...(thread.relatedFolders || [])].filter(Boolean))];
+const insideFolder = (file, folder) => { const relative = path.relative(folder, path.resolve(file)); return !relative.startsWith('..') && !path.isAbsolute(relative); };
+const validFile = (file, folders = []) => typeof file === 'string' && Boolean(file.trim()) && file.length <= 500 && !file.split(/[\\/]/).includes('..') && (!path.isAbsolute(file.trim()) || folders.some(folder => insideFolder(file.trim(), folder)));
 const resolvedFiles = (folder, files) => files.map(file => path.resolve(folder || '.', file) + (/[\\/]$/.test(file) ? path.sep : ''));
 // Thứ tự pipeline chuẩn (PLAN L-4). Role tùy chỉnh luôn đứng sau QA.
 const PIPELINE = Object.freeze(['PO', 'GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release']);
@@ -99,8 +102,11 @@ function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [
     const owners = new Set(); for (const task of plan.tasks) { if (!thread.flow.includes(task.worker) || !types.includes(worker(thread, task.worker).type) || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return fail(`worker "${task.worker}" không phải ${types.join('/')} trong đội, bị trùng, hoặc task trống/quá dài`); owners.add(task.worker); }
     // files bắt buộc và không chồng nhau giữa các Dev: điều kiện để Dev sửa song song không ghi đè nhau.
     // Tối đa FILES_PER_TASK mục: task lớn làm lượt Dev dài, ngữ cảnh phình và chi phí tăng nhanh hơn số lượt.
+    const folders = sessionFolders(thread);
     for (const task of plan.tasks) {
-      if (!Array.isArray(task.files) || !task.files.length || !task.files.every(validFile)) return fail(`${task.worker}: files bắt buộc, đường dẫn tương đối nằm trong thư mục chính`);
+      if (!Array.isArray(task.files) || !task.files.length) return fail(`${task.worker}: files bắt buộc`);
+      const bad = task.files.find(file => !validFile(file, folders));
+      if (bad !== undefined) return fail(`${task.worker}: tệp "${String(bad).slice(0, 200)}" không hợp lệ; dùng đường dẫn tương đối theo thư mục chính (${thread.folder || 'chưa có'}) hoặc tuyệt đối nằm trong thư mục của session${folders.length > 1 ? ' (' + folders.slice(1).join(', ') + ')' : ''}, không dùng ".."`);
       if (task.files.length > FILES_PER_TASK) return fail(`${task.worker}: ${task.files.length} tệp, tối đa ${FILES_PER_TASK} mỗi task; chia cho thêm Dev hoặc làm nhiều vòng`);
     }
     const scopes = plan.tasks.map(task => resolvedFiles(thread.folder, task.files));

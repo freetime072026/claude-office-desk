@@ -1,4 +1,5 @@
 const { test } = require('node:test'); const assert = require('node:assert/strict');
+const path = require('node:path'); const os = require('node:os');
 const { initial, update } = require('../team.cjs'); const { worker, runKey, resumeKey, forgetWorker, removable, taskPlan, authoredBy, ownsSession } = require('../workers.cjs');
 test('R3: authoredBy and ownsSession match exact labels only', () => {
   assert.equal(authoredBy({ role: 'Dev' }, 'Dev'), true); assert.equal(authoredBy({ role: 'Dev · bàn giao thủ công' }, 'Dev'), true);
@@ -85,6 +86,18 @@ test('a task may list at most 8 files, and every rejected plan says why', () => 
   assert.equal(plan([{ worker: 'Dev', task: 'x', files: nine.slice(0, 8) }]).result.length, 1);
   assert.match(plan([{ worker: 'Ghost', task: 'x', files: ['a'] }]).problems[0], /"Ghost" không phải Dev\/VFX/);
   const none = []; assert.equal(taskPlan('no block', thread, none), null); assert.deepEqual(none, ['không có khối tasks']);
+});
+test('task files may be absolute inside a related session folder, never outside the session folders', () => {
+  const team = initial(); const id = update(team, 'create', {}); update(team, 'add-worker', { id, type: 'Dev' }); const thread = team.threads[0];
+  const main = path.join(os.tmpdir(), 'Resource'), game = path.join(os.tmpdir(), 'Game-12-pla');
+  thread.folder = main; thread.relatedFolders = [game];
+  const plan = files => { const problems = []; return { result: taskPlan('```tasks\n' + JSON.stringify({ tasks: [{ worker: 'Dev', task: 'x', files }] }) + '\n```', thread, problems), problems }; };
+  assert.deepEqual(plan([game.replaceAll('\\', '/') + '/assets/stage/', 'docs/a.md']).result[0].files, [game.replaceAll('\\', '/') + '/assets/stage/', 'docs/a.md']);
+  assert.equal(plan([path.join(main, 'src', 'a.cs')]).result.length, 1);
+  const outside = plan([path.join(os.tmpdir(), 'Other', 'a.cs')]); assert.equal(outside.result, null); assert.match(outside.problems[0], /Dev: tệp ".*Other.*" không hợp lệ/);
+  assert.match(plan(['../Game-12-pla/a.cs']).problems[0], /không dùng "\.\."/);
+  assert.match(plan([path.join(game, '..', 'Other', 'a.cs')]).problems[0], /không hợp lệ/);
+  assert.match(plan([]).problems[0], /Dev: files bắt buộc/);
 });
 test('Lead on the default model runs Sonnet in triage/review; an explicit Opus choice is kept', () => {
   const { modelFor } = require('../roles.cjs');
