@@ -168,6 +168,8 @@ app.whenReady().then(async () => {
       if ((await window.office.run('state')).team.threads.at(-1).attachments.length) throw Error('Remove attachment failed');
       const rendered = window.renderChatText('Doc: ' + String.fromCharCode(96) + 'README.md:2' + String.fromCharCode(96) + '\\n' + String.fromCharCode(96).repeat(3) + 'text\\ncopy me\\n' + String.fromCharCode(96).repeat(3));
       if (!rendered.querySelector('.file-reference') || !rendered.querySelector('.copy-code')) throw Error('File references or copy blocks missing');
+      const linked = window.renderChatText('![hero](Assets/hero.png) [spec](docs/SPEC.md) Assets/bg.png');
+      if (!linked.querySelector('img.chat-image') || linked.querySelectorAll('.file-reference').length !== 2 || !linked.querySelector('.image-reference')) throw Error('Chat file/image links not rendered');
       document.querySelector('#edit-request').click();
       document.querySelector('#name-form > textarea').value = 'Updated session requirement';
       document.querySelector('#name-form').requestSubmit();

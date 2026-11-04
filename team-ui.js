@@ -616,7 +616,24 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   // ---- Xem tệp được nhắc trong chat.
   get('#file-copy').onclick = () => window.office.run('copy-text', { text: get('#file-text').textContent });
   get('#file-close').onclick = () => get('#file-viewer').close();
-  window.openChatFile = async reference => { try { const file = await window.office.run('file-read', { id: selected, path: reference }); get('#file-title').textContent = file.path; get('#file-text').textContent = file.content; get('#file-viewer').showModal(); } catch (error) { showError(error); } };
+  // Ảnh trong dự án được main trả về dạng data URL; nhớ theo session + đường dẫn để ảnh nhúng trong chat không đọc lại mỗi lần vẽ.
+  const chatFiles = new Map();
+  // Bấm mở luôn đọc lại từ đĩa (ảnh có thể vừa được tạo lại); chỉ giữ tối đa 40 ảnh gần nhất.
+  const readChatFile = (reference, fresh) => {
+    const key = selected + '\n' + reference; if (!fresh && chatFiles.has(key)) return chatFiles.get(key);
+    const pending = window.office.run('file-read', { id: selected, path: reference }); chatFiles.delete(key); chatFiles.set(key, pending);
+    pending.then(file => { if (file.kind !== 'image') chatFiles.delete(key); }, () => chatFiles.delete(key));
+    while (chatFiles.size > 40) chatFiles.delete(chatFiles.keys().next().value);
+    return pending;
+  };
+  window.loadChatImage = async reference => { try { const file = await readChatFile(reference); return file.kind === 'image' ? file.url : ''; } catch { return ''; } };
+  window.openChatFile = async reference => {
+    try {
+      const file = await readChatFile(reference, true);
+      if (file.kind === 'image') { get('#image-view').src = file.url; get('#image-title').textContent = file.path; get('#image-viewer').showModal(); return; }
+      get('#file-title').textContent = file.path; get('#file-text').textContent = file.content; get('#file-viewer').showModal();
+    } catch (error) { showError(error); }
+  };
 
   // ---- /usage: terminal CLI chính thức trong dialog.
   let usageId, usageTerm;
