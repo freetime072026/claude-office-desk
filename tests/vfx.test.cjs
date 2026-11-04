@@ -45,5 +45,5 @@ test('VFX prompt: only the VFX part of GDD, its files, Editor scripts over hand-
   const text = rolePrompt({}, thread, 'VFX', { content: 'NOW', resumed: false, files }).text;
   assert.match(text, /chỉ mục VFX trong .*GDD\.md\. Chỉ được sửa: Assets\/VFX\//); assert.match(text, /script Editor thay vì sửa YAML/); assert.match(text, /cần kiểm tra trực quan gì/);
   assert.doesNotMatch(text, /Bối cảnh session|Thiết kế dài|Đội hiện có/);
-  const scope = roleScope('VFX', files, ['Assets/VFX/'], 'E:\\game'); assert.equal(scope.label, 'VFX chỉ sửa các tệp Lead giao (và MISSING_SOUNDS.md)'); assert(scope.paths.includes(files.missingSounds));
+  const scope = roleScope('VFX', files, ['Assets/VFX/'], 'E:\\game'); assert.equal(scope.label, 'VFX chỉ ghi các tệp trong files của task Lead giao; ngoài ra mọi khối ghi thêm được MISSING_SOUNDS.md (báo âm thanh còn thiếu)'); assert(scope.paths.includes(files.missingSounds));
 });

@@ -123,6 +123,13 @@ function permissionResult(decision, input) { return decision?.allow ? { behavior
 // askPermission({ tool, input, toolUseId }) → Promise<{ allow, message? }>. Không truyền thì mọi yêu cầu bị từ chối (an toàn mặc định).
 // brief: hướng dẫn vai trò gửi qua system prompt (prompt.cjs). CLI ghi lại system prompt ở lần gọi đầu của phiên và dùng lại
 // nguyên văn khi resume, nên brief được cache và không cộng dồn vào lịch sử như khi nằm trong tin người dùng.
+// Lệnh nền model chạy bằng Bash (ví dụ `(node serve.js &)` để xem ảnh) kế thừa pipe stdout/stderr của CLI và sống tiếp sau khi CLI thoát.
+// Khi đó 'close' của tiến trình không bao giờ đến: tin kẹt "đang chạy", task và nút sơ đồ đứng mãi. Tiến trình đã thoát thì chờ một
+// chút cho dữ liệu còn lại đọc xong, rồi đóng pipe phía app để 'close' (và mọi xử lý kết thúc lượt) chạy.
+const EXIT_GRACE_MS = 3000;
+function closeAfterExit(child, grace = EXIT_GRACE_MS) {
+  child.once('exit', () => { const timer = setTimeout(() => { for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy(); }, grace); timer.unref?.(); child.once('close', () => clearTimeout(timer)); });
+}
 function launch({ brief = '', mcpConfig = null, executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [] }) {
   const message = { id: randomUUID(), role: role || 'Claude', text: '', time: new Date().toISOString(), streaming: true };
   message.progress = { startedAt: message.time, steps: 0, lastTool: '', target: '' };
@@ -169,7 +176,7 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
   // stdin giữ mở tới khi CLI trả event result (để trả lời yêu cầu duyệt), rồi đóng để CLI thoát.
   child.stdin.on('error', () => {}); send(userLine(prompt));
   const finish = code => { if (ended) return; ended = true; for (const file of [briefFile, mcpFile]) if (file) fs.rm(file, { force: true }, () => {}); if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
-  child.on('error', error => { errors = error.message; finish(1); }); child.on('close', finish);
+  child.on('error', error => { errors = error.message; finish(1); }); child.on('close', finish); closeAfterExit(child);
   return { child, cancel: () => { if (child.pid && !ended) execFile(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); }, message };
 }
-module.exports = { consume, launch, targetOf, usageOf, turnUsage, cleanStderr, permissionResult, userLine, CLI_FAILED_TEXT, CLI_EMPTY_TEXT };
+module.exports = { consume, launch, closeAfterExit, targetOf, usageOf, turnUsage, cleanStderr, permissionResult, userLine, CLI_FAILED_TEXT, CLI_EMPTY_TEXT };

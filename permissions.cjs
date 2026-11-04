@@ -33,8 +33,23 @@ function withCurlTimeout(command) {
   if (typeof command !== 'string' || !UNITY_PORTS.test(command) || !/\bcurl\b/.test(command) || /--max-time|--connect-timeout|(^|\s)-m\s*\d/.test(command)) return command;
   return command.replace(/\bcurl(\.exe)?(?=\s)/g, `curl$1 --max-time ${CURL_TIMEOUT_SECONDS}`);
 }
+// Lượt Sound treo hơn 10 phút vì `find / -iname ffmpeg.exe` quét mọi ổ qua Git Bash. Chặn find/ls -R/dir /s/Get-ChildItem -Recurse
+// bắt đầu từ gốc ổ (/, /c, /d/, C:\, D:/); tìm trong thư mục con cụ thể vẫn được.
+const ROOT = String.raw`(?:\/(?:[a-zA-Z]\/?)?|[a-zA-Z]:[\\\/]?)(?=["'\s;|&)]|$)`;
+const DISK_SCANS = [
+  new RegExp(String.raw`(?:^|[\s;|&(])find(?:\.exe)?\s+(?:-[HLP]\s+)*["']?${ROOT}`),
+  new RegExp(String.raw`(?:^|[\s;|&(])ls\s+(?:-\w*R\w*\s+)+["']?${ROOT}`),
+  new RegExp(String.raw`(?:^|[\s;|&(])dir\s+(?:\/\w+\s+)*["']?[a-zA-Z]:\\?["']?\s+[^\n]*\/s\b|(?:^|[\s;|&(])dir\s+\/s\s+(?:\/\w+\s+)*["']?[a-zA-Z]:\\?(?=["'\s]|$)`, 'i'),
+  new RegExp(String.raw`Get-ChildItem\b[^|;\n]*(?:-Path\s+)?["']?[a-zA-Z]:\\?["']?(?=\s)[^|;\n]*-Recurse`, 'i')
+];
+function wholeDiskScan(command) {
+  if (typeof command !== 'string') return '';
+  for (const pattern of DISK_SCANS) { const match = pattern.exec(command); if (match) return match[0].trim().slice(0, 60); }
+  return '';
+}
 const WEB = ['WebFetch', 'WebSearch'];
-function roleScope(type, files, devFiles = [], folder = '') {
+// assigner: người giao task của khối (Lead hoặc Art Director), để lời từ chối ghi chỉ đúng người cần bổ sung files.
+function roleScope(type, files, devFiles = [], folder = '', assigner = 'Lead') {
   if (!files) return null;
   if (type === 'GD') return { paths: [files.gdd], bash: false, label: 'GD chỉ ghi GDD.md' };
   if (type === 'Lead Dev') return { paths: [files.project], bash: true, label: 'Lead Dev chỉ ghi PROJECT.md' };
@@ -48,7 +63,7 @@ function roleScope(type, files, devFiles = [], folder = '') {
   // MISSING_SOUNDS.md luôn ghi được: code cần âm thanh chưa có thì dùng sound tạm và ghi yêu cầu vào đây (prompt.cjs SOUND_GUIDE).
   // shared: tệp ghi chú chung mọi khối được thêm mục (MISSING_SOUNDS.md, ART_PROMPTS.md); không tính khi xét hai lượt có chồng
   // phạm vi (exclusivePaths), nếu không mọi Dev/Art/Anim đều "chồng" nhau qua tệp này và chạy lần lượt thay vì song song.
-  if (isDevType(type) && devFiles.length) return { paths: [...devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : [])], shared: [files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : [])], bash: true, label: type + ' chỉ sửa các tệp Lead giao (và MISSING_SOUNDS.md' + (type === 'Art' ? ', ART_PROMPTS.md' : '') + ')' };
+  if (isDevType(type) && devFiles.length) return { paths: [...devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : [])], shared: [files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : [])], bash: true, assigner, label: `${type} chỉ ghi các tệp trong files của task ${assigner} giao; ngoài ra mọi khối ghi thêm được MISSING_SOUNDS.md (báo âm thanh còn thiếu)${type === 'Art' ? ' và ART_PROMPTS.md' : ''}` };
   return null;
 }
 const norm = value => path.resolve(value).toLowerCase();
@@ -68,9 +83,12 @@ function decide({ scope, mode, tool, input = {}, cwd = '' }) {
     if (!scope) return { action: mode === 'bypass' ? 'allow' : 'ask' };
     const target = path.resolve(cwd, input.file_path || input.notebook_path || '');
     if (inScope(target, scope.paths)) return { action: 'allow' };
-    return { action: 'deny', message: `Ngoài phạm vi ghi (${scope.label}): ${target}. Không ghi tệp khác; nếu cần sửa thêm, ghi rõ trong handoff để Lead giao lại.` };
+    const allowed = exclusivePaths(scope);
+    return { action: 'deny', message: `Ngoài phạm vi ghi (${scope.label}): ${target}.${scope.assigner && allowed.length ? ' Được ghi: ' + allowed.join(', ') + '.' : ''} Không ghi tệp khác; nếu cần ghi thêm, ghi rõ tệp đó trong handoff để ${scope.assigner || 'Lead'} giao lại.` };
   }
   if (tool === 'Bash') {
+    const scan = wholeDiskScan(input.command);
+    if (scan) return { action: 'deny', message: `Không quét cả ổ đĩa (${scan}): lệnh chạy hàng chục phút và treo lượt. Tìm công cụ bằng \`command -v ffmpeg\` / \`where ffmpeg\`; tìm tệp trong thư mục của session (đường dẫn cụ thể, có -maxdepth).` };
     const verdict = bashVerdict(scope, mode), command = withCurlTimeout(input.command);
     return command === input.command || verdict.action === 'deny' ? verdict : { ...verdict, updatedInput: { ...input, command } };
   }
@@ -90,4 +108,4 @@ function bashVerdict(scope, mode) {
   if (scope?.bash) return { action: mode === 'bypass' ? 'allow' : 'ask' };
   return { action: mode === 'bypass' ? 'allow' : mode === 'read' ? 'deny' : 'ask', ...(mode === 'read' ? { message: 'Mode Plan không chạy lệnh shell.' } : {}) };
 }
-module.exports = { SHELL_OPTIONS, withShell, describeTool, roleScope, decide, inScope, scopesOverlap, exclusivePaths, withCurlTimeout };
+module.exports = { SHELL_OPTIONS, withShell, describeTool, roleScope, decide, inScope, scopesOverlap, exclusivePaths, withCurlTimeout, wholeDiskScan };

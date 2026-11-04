@@ -50,7 +50,7 @@ test('Lead cannot assign Art when an Art Director exists, keeps AD tasks and may
   const { thread } = session(ROLES);
   thread.dispatch = mergePlan(thread, 'Art Director', tasks([['Art', ['ArtGen/popup/']]])).dispatch;
   assert.deepEqual(thread.dispatch, [{ worker: 'Art', task: 'Việc của Art', files: ['ArtGen/popup/'], status: 'pending', by: 'Art Director' }]);
-  assert.match(mergePlan(thread, 'Lead Dev', tasks([['Art', ['x/']]])).problems, /không phải Dev\/VFX/);
+  assert.match(mergePlan(thread, 'Lead Dev', tasks([['Art', ['x/']]])).problems, /Art: ở pha lập kế hoạch, Art\/Anim do Art Director giao/);
   assert.match(mergePlan(thread, 'Lead Dev', tasks([['Dev', ['ArtGen/']]])).problems, /chồng tệp với task đang giao cho Art/);
   const merged = mergePlan(thread, 'Lead Dev', tasks([['Dev', ['src/']]])).dispatch;
   assert.deepEqual(merged.map(task => task.worker + ':' + (task.by || 'lead')), ['Art:Art Director', 'Dev:lead']);
@@ -132,4 +132,30 @@ test('Art/Anim start beside a running Dev even while Art Director review (which 
   assert.deepEqual(graph.ready(thread).map(node => node.id), []);
   set('Art Director@review', 'idle'); set('Dev', 'queued'); set('Lead Dev@triage', 'queued');
   assert(!graph.ready(thread).some(node => node.id === 'Dev'));
+});
+
+test('Lead may assign Art/Anim while triaging (e.g. compress art for the size budget) but not while planning, and never on top of an open AD task', () => {
+  const { thread } = session(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'Art', 'Art', 'Anim', 'QA']);
+  const plan = list => tasks(list);
+  thread.leadPhase = 'planning';
+  assert.match(mergePlan(thread, 'Lead Dev', plan([['Dev', ['src/']], ['Art #2', ['assets/anim/pack/girl_page.webp']]])).problems, /Art #2: ở pha lập kế hoạch, Art\/Anim do Art Director giao/);
+  thread.leadPhase = 'triage';
+  const merged = mergePlan(thread, 'Lead Dev', plan([['Dev', ['src/ui/']], ['Art #2', ['assets/anim/pack/girl_page.webp']], ['Anim', ['assets/anim/pack/main_dj_page.webp']]]));
+  assert.deepEqual(merged.dispatch.map(task => `${task.worker}:${task.by || 'lead'}`), ['Dev:lead', 'Art #2:lead', 'Anim:lead']);
+  // Art Director còn task chưa xong cho Art #2 thì Lead không giao chồng.
+  thread.dispatch = mergePlan(thread, 'Art Director', plan([['Art #2', ['assets/common/']]])).dispatch;
+  assert.match(mergePlan(thread, 'Lead Dev', plan([['Art #2', ['assets/anim/pack/']]])).problems, /Art #2 đang có task Art Director giao chưa xong/);
+});
+
+test('QA and Art Director review reporting issues in the same check count one failed round, not two', async () => {
+  const { thread, auto } = harness();
+  const state = id => graph.stateOf(thread, id);
+  thread.auto = { enabled: true }; thread.status = 'working';
+  for (const id of ['GD', 'UI/UX', 'Art Director@planning', 'Lead Dev@planning', 'Dev', 'Art']) Object.assign(state(id), { status: 'done', outcome: 'done' });
+  state('QA').status = 'running'; state('Art Director@review').status = 'running'; thread.adPhase = 'review';
+  await auto.after(thread, 'QA', { text: handoff('issue', 'nút lệch') });
+  assert.equal(thread.qaFailRounds, 1);
+  await auto.after(thread, 'Art Director', { text: handoff('issue', 'bàn DJ quá nhỏ') });
+  assert.equal(thread.qaFailRounds, 1, 'the same fix round is not counted twice');
+  assert.equal(thread.issues.filter(issue => !issue.closed).length, 2, 'both issues are recorded for Lead triage');
 });

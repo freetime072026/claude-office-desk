@@ -1,4 +1,5 @@
 const { test } = require('node:test'); const assert = require('node:assert/strict');
+const path = require('node:path');
 const { describeTool } = require('../permissions.cjs');
 const { toolsFor, allowedFor, needsTurnConfirm, permissionMode } = require('../modes.cjs');
 
@@ -39,4 +40,26 @@ test('shared note files (MISSING_SOUNDS.md, ART_PROMPTS.md) do not make two bloc
   assert.equal(scopesOverlap(exclusivePaths(art), exclusivePaths(art2)), false);
   assert.equal(scopesOverlap(exclusivePaths(roleScope('Dev', files, ['src/'], 'D:/p')), exclusivePaths(dev)), true);
   assert.deepEqual(exclusivePaths(roleScope('QA', { ...files, issues: 'I', perf: 'P' })), ['I', 'P']);
+});
+
+test('a write outside an Anim task from the Art Director names the Art Director, the allowed folders, and not a Sound role', () => {
+  const { roleScope, decide } = require('../permissions.cjs'), { filesOf } = require('../session-files.cjs');
+  const folder = path.resolve('/game'), files = filesOf({ id: 's', folder });
+  const scope = roleScope('Anim', files, ['assets/anim/dj/', 'assets/anim/tut/'], folder, 'Art Director');
+  const verdict = decide({ scope, mode: 'edit', tool: 'Write', input: { file_path: path.join(folder, 'assets/anim/README.md') }, cwd: folder });
+  assert.equal(verdict.action, 'deny');
+  assert.match(verdict.message, /files của task Art Director giao/);
+  assert.ok(verdict.message.includes(`Được ghi: ${path.join(folder, 'assets/anim/dj') + path.sep}, ${path.join(folder, 'assets/anim/tut') + path.sep}.`), verdict.message);
+  assert.match(verdict.message, /để Art Director giao lại/);
+  assert.doesNotMatch(verdict.message.split('Được ghi')[1], /MISSING_SOUNDS/);
+});
+
+test('shell commands that scan a whole drive (find / -iname ffmpeg.exe hung Sound for 10+ minutes) are denied with a faster alternative', () => {
+  const { decide, wholeDiskScan } = require('../permissions.cjs');
+  const scope = { paths: [], bash: true, label: 'Sound' };
+  const verdict = decide({ scope, mode: 'edit', tool: 'Bash', input: { command: 'cd /d/ArcherPLA; which ffmpeg; find / -iname ffmpeg.exe 2>/dev/null | head -3' } });
+  assert.equal(verdict.action, 'deny'); assert.match(verdict.message, /Không quét cả ổ đĩa/); assert.match(verdict.message, /command -v ffmpeg/);
+  for (const command of ['find /d -name "*.mp3"', 'find /c/ -name a', 'find D:/ -name a', 'ls -laR /', 'x && find -L / -name y']) assert.ok(wholeDiskScan(command), command);
+  for (const command of ['find Resource -iname "*bass*"', 'find /d/ArcherPLA/Resource -name x', 'find . -name a', 'ls -R src/', 'which ffmpeg lame', 'find /tmp/w -name a']) assert.equal(wholeDiskScan(command), '', command);
+  assert.equal(decide({ scope, mode: 'bypass', tool: 'Bash', input: { command: 'find Resource -name "*.mp3"' } }).action, 'allow');
 });

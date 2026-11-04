@@ -160,11 +160,14 @@ const entries = graph => graph.nodes.filter(node => node.id !== END && !incoming
 // Nút kết thúc với kết quả → kích hoạt các nút đích của cạnh khớp. Trả về id các nút vừa được kích hoạt.
 function finish(thread, id, outcome) {
   const graph = ensureGraph(thread), state = stateOf(thread, id);
-  state.status = outcome === 'blocked' ? 'blocked' : outcome === 'skipped' ? 'skipped' : 'done'; state.outcome = outcome; delete state.again;
+  state.status = outcome === 'blocked' ? 'blocked' : outcome === 'skipped' ? 'skipped' : 'done'; state.outcome = outcome; delete state.again; delete state.waitNoted;
   const targets = [...new Set(outgoing(graph, id).filter(edge => matches(edge.when, outcome)).map(edge => edge.to))];
   for (const target of targets) { const next = stateOf(thread, target); if (next.status !== 'running') next.status = 'queued'; else next.again = true; }
   return targets;
 }
+// App vừa mở: không còn lượt nào chạy, nút đang "running" (QA, Lead, Art Director… bị ngắt khi đóng app) về hàng chờ để /role <khối> start
+// hoặc bước tự động kế tiếp chạy lại; nếu không chúng đứng mãi và giữ các bước sau. Nút Dev có task bị ngắt sẽ bị chặn kèm lý do (pipeline settleStale).
+function recoverRunning(thread) { for (const state of Object.values(thread.graphRun?.nodes || {})) if (state.status === 'running') { state.status = 'queued'; delete state.again; } }
 function queue(thread, id) { const state = stateOf(thread, id); if (state.status !== 'running') state.status = 'queued'; }
 // Nút đang chờ và không còn nút nối vào nó đang chờ/chạy. Nếu không có gì chạy được mà vẫn còn nút chờ (vòng chờ lẫn nhau),
 // chạy nút chờ đầu tiên theo thứ tự trong sơ đồ để luồng không đứng im.
@@ -185,4 +188,4 @@ function ready(thread) {
   return queued.slice(0, 1);
 }
 const nodesFor = (thread, label) => ensureGraph(thread).nodes.filter(node => node.label === label);
-module.exports = { syncGraph, END, LEAD_PHASES, PHASED, phaseId, CONDITIONS, CONDITION_NAMES, PHASE_NAMES, leadId, nodeLabel, matches, defaultGraph, validate, ensureGraph, addNode, runOf, stateOf, resetRun, entries, finish, queue, ready, nodesFor, incoming, outgoing };
+module.exports = { syncGraph, recoverRunning, END, LEAD_PHASES, PHASED, phaseId, CONDITIONS, CONDITION_NAMES, PHASE_NAMES, leadId, nodeLabel, matches, defaultGraph, validate, ensureGraph, addNode, runOf, stateOf, resetRun, entries, finish, queue, ready, nodesFor, incoming, outgoing };

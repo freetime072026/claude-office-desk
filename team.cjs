@@ -32,9 +32,12 @@ function handoff(item, content, log, auto = false) {
   if (item.stage >= item.flow.length - 1 && item.qaPassedAt) return reviewOrDone(item);
   advance(item);
 }
-function reportIssue(item, content, log) {
+// sameRound: vòng sửa của lần kiểm này đã được tính (QA và Art Director · review chạy song song, hoặc Lead triage đang chạy): chỉ ghi
+// Issue để Lead triage nhận, không tính thêm một vòng QA fail (trước đây một vòng sửa bị đếm hai lần và session dừng ở 3/3 dù Lead đang giao việc).
+function reportIssue(item, content, log, sameRound = false) {
   if (isHalted(item)) throw Error('Session đang chờ quyết định hoặc đã dừng');
   item.issues.push({ id: randomUUID(), text: content, closed: false }); log('Issue', content);
+  if (sameRound) { delete item.qaPassedAt; return; }
   item.qaFailRounds = (item.qaFailRounds || 0) + 1; delete item.qaPassedAt;
   if (item.qaFailRounds < QA_ROUND_LIMIT) return toTriage(item, log);
   item.status = 'awaiting-decision'; log('Hệ thống', `QA fail vòng ${item.qaFailRounds}/${QA_ROUND_LIMIT}; chờ người dùng quyết định`);
@@ -316,7 +319,7 @@ function update(team, action, payload) {
   else if (action === 'message') { const content = text(payload.text); if (!item.messages.some(message => message.role === 'Bạn')) item.title = content.replace(/\s+/g, ' ').slice(0, 70); log('Bạn', content); }
   else if (action === 'start') { if (item.status !== 'waiting') throw Error('Bước không ở trạng thái chờ'); item.status = 'working'; log('Hệ thống', 'Bắt đầu thủ công: ' + item.flow[item.stage]); }
   else if (action === 'handoff') handoff(item, text(payload.text), log, payload.auto === true);
-  else if (action === 'issue') reportIssue(item, text(payload.text), log);
+  else if (action === 'issue') reportIssue(item, text(payload.text), log, payload.sameRound === true);
   else if (action === 'tweak') requestTweak(item, text(payload.text), log);
   else if (action === 'review-reject') reviewReject(item, text(payload.text), log);
   else if (action === 'decision') decide(item, payload.choice, log);

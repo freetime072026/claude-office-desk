@@ -20,7 +20,8 @@ test('TC-PROMPT-02 / AC-PROMPT-01.1 / AC-LOOP-01.7 / AC-REVIEW-01.1: Lead prompt
   const triage = rolePrompt({}, thread({ leadPhase: 'triage', qaFailRounds: 2 }), 'Lead Dev', { content: 'Triage' }).text;
   assert.match(triage, /pha triage, vòng 2\/3/); assert.match(triage, TASK_BLOCK);
   const review = rolePrompt({}, thread({ leadPhase: 'review', qaFailRounds: 0 }), 'Lead Dev', { content: 'Review' }).text;
-  assert.match(review, /pha review/); assert.doesNotMatch(review, TASK_BLOCK);
+  // Review không đạt phải kèm khối tasks đúng định dạng planning, nên prompt review mang cả định dạng đó.
+  assert.match(review, /pha review/); assert.match(review, TASK_BLOCK);
   for (const item of [/1\. Code clean: tên rõ nghĩa, hàm ngắn một nhiệm vụ, không code chết, không magic value\./, CHECKLIST, /3\. Phạm vi diff khớp task và AC/, /file:line/]) assert.match(review, item);
 });
 test('AC-PROMPT-01.2: empty fields are dropped, no blank lines', () => {
@@ -81,4 +82,12 @@ test('performance budgets: GD writes measurable criteria, QA passes with device-
   assert.match(buildPrompt({ label: 'GD', type: 'GD', files, content: 'x' }).text, /kiểm trên thiết bị — không chặn/);
   const qa = buildPrompt({ label: 'QA', type: 'QA', files, qaPhase: 'performance', content: 'x' }).text;
   assert.match(qa, /không tính là lỗi: các mục còn lại đạt thì vẫn pass/); assert.match(qa, /không yêu cầu Dev làm thêm công cụ đo/);
+});
+test('Lead triage sees open issues, including the user\'s [Chỉnh sửa] request in full (it is not in ISSUES.md)', () => {
+  const request = '[Chỉnh sửa] Layout cảnh trailer theo ref PA0009, nâng cụm nhân vật vào safe area. ' + 'chi tiết '.repeat(120);
+  const issues = [{ id: 'a', text: request, kind: 'tweak', closed: false }, { id: 'b', text: 'ISS-1 nút lệch', closed: false }];
+  const triage = rolePrompt({}, thread({ leadPhase: 'triage', qaFailRounds: 0, tweak: true, issues }), 'Lead Dev', { content: 'Triage' }).text;
+  assert.match(triage, /Issue đang mở do app ghi/); assert.ok(triage.includes(request.trim()), 'tweak text not clipped at 500'); assert.match(triage, /ISS-1 nút lệch/);
+  const review = rolePrompt({}, thread({ leadPhase: 'review', qaFailRounds: 0, issues }), 'Lead Dev', { content: 'Review' }).text;
+  assert.doesNotMatch(review, /Issue đang mở do app ghi/);
 });

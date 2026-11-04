@@ -171,7 +171,7 @@ app.whenReady().then(() => {
     catch { dialog.showErrorBox('Không đọc được cấu hình', 'Hãy sao lưu và kiểm tra workspace.json trong ' + root); app.quit(); return; }
   }
   metadata.team ||= teamStore.initial();
-  for (const thread of metadata.team.threads) { teamStore.migrateThread(thread); teamStore.migrateRoleConfig(metadata.team, thread); if (thread.flow?.length) require('./flowgraph.cjs').ensureGraph(thread); delete thread.dispatchPumping; delete thread.dispatchAgain; teamStore.recoverInterrupted(thread); }
+  for (const thread of metadata.team.threads) { teamStore.migrateThread(thread); teamStore.migrateRoleConfig(metadata.team, thread); if (thread.flow?.length) { require('./flowgraph.cjs').ensureGraph(thread); require('./flowgraph.cjs').recoverRunning(thread); } delete thread.dispatchPumping; delete thread.dispatchAgain; teamStore.recoverInterrupted(thread); }
   settings = path.join(root, 'restricted-settings.json'); mcp = path.join(root, 'mcp-servers.json');
   // 0.10: bật Shell (Bash) cho mode có sửa tệp. Deny Read(...) chỉ chặn tool Read/Grep/Glob; lệnh shell (vd. type .env) vẫn đọc được,
   // nên chỉ mode Plan thực sự không đọc được các tệp này.
@@ -351,7 +351,8 @@ app.whenReady().then(() => {
       const autoApproved = Boolean(payload.auto && thread.auto?.enabled && thread.auto.approvedAt && thread.auto.scope === pipeline.approvalScope(thread));
       // Role trong flow làm việc với tệp .md của session (session-files.cjs) và bị giới hạn phạm vi ghi (permissions.roleScope).
       const files = payload.role ? sessionFiles.ensureFiles(thread) : null;
-      const scope = payload.role ? withShell(roleScope(worker.type, files, worker.files || [], thread.folder), worker.shell) : null;
+      const assigner = (thread.dispatch || []).find(task => task.worker === payload.role && task.status !== 'finished')?.by === ART_DIRECTOR ? ART_DIRECTOR : 'Lead';
+      const scope = payload.role ? withShell(roleScope(worker.type, files, worker.files || [], thread.folder, assigner), worker.shell) : null;
       const writes = worker.mode !== 'read' || Boolean(scope);
       // Đọc & sửa/Auto không hỏi trước cả lượt nữa: từng thao tác ghi/sửa/shell/web được duyệt riêng (askPermission bên dưới).
       if (writes) { if (editOverlap(thread, exclusivePaths(scope))) throw retryable('Có Dev đang sửa cùng thư mục. Đợi lượt đó xong để tránh ghi đè; các lượt chỉ đọc vẫn chạy song song.'); if (needsTurnConfirm(worker.mode, foldersOf(thread)) && !autoApproved) { const answer = await dialog.showMessageBox(window, { type: 'warning', message: 'Bypass trên ổ hệ thống hoặc thư mục mạng: bỏ duyệt thao tác tệp và lệnh shell trong lượt này?', detail: foldersOf(thread).join('\n'), buttons: ['Hủy', 'Cho phép lần này'], defaultId: 0, cancelId: 0 }); if (answer.response !== 1) return false; } }
@@ -427,6 +428,11 @@ app.whenReady().then(() => {
         if (worker.type === po.PO && !run.message.error) proposePoPlan(thread, run.message.text);
         // Lead (pha planning/triage) và Art Director (khi có khối tasks) giao việc; lý do kế hoạch bị từ chối được lưu và chèn vào
         // prompt lượt kế tiếp của người giao (prompt.cjs), xoá khi kế hoạch hợp lệ.
+        // Bạn gõ tay cho Lead khi Lead đang ở pha review (sau review không đạt, QA hết vòng…) và Lead xuất khối tasks: đó là giao lại việc
+        // sửa, áp như pha triage. Trước đây khối tasks này bị bỏ qua nên QA chạy lại trên code không đổi và luồng lặp mãi.
+        const handTriage = !run.message.error && !payload.auto && worker.type === LEAD && thread.leadPhase === 'review' && /```tasks/.test(run.message.text);
+        // Bạn chủ động cho sửa thêm sau review không đạt: vòng review kế tiếp lại có một lần trả về sửa.
+        if (handTriage) { thread.leadPhase = 'triage'; delete thread.reviewRejects; }
         const planner = run.message.error ? '' : worker.type === LEAD && thread.leadPhase !== 'review' ? LEAD : worker.type === ART_DIRECTOR && /```tasks/.test(run.message.text) ? ART_DIRECTOR : '';
         if (planner) {
           const result = applyPlan(thread, planner, run.message.text), problemKey = planner === LEAD ? 'planProblems' : 'adPlanProblems';

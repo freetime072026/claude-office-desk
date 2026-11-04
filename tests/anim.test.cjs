@@ -24,7 +24,7 @@ test('who assigns Anim: Lead without an Art Director, the Art Director when ther
   const solo = session(['Lead Dev', 'Dev', 'Anim']).thread;
   assert(mergePlan(solo, 'Lead Dev', tasks([['Dev', ['src/']], ['Anim', ['Assets/Anim/']]])).dispatch);
   const { thread } = session(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'Art', 'Anim', 'Sound', 'QA']);
-  assert.match(mergePlan(thread, 'Lead Dev', tasks([['Anim', ['Assets/Anim/']]])).problems, /không phải Dev\/VFX/);
+  assert.match(mergePlan(thread, 'Lead Dev', tasks([['Anim', ['Assets/Anim/']]])).problems, /Anim: ở pha lập kế hoạch, Art\/Anim do Art Director giao/);
   const ad = mergePlan(thread, 'Art Director', tasks([['Art', ['ArtGen/']], ['Anim', ['Assets/Anim/']]])).dispatch;
   assert.deepEqual(ad.map(task => task.worker + ':' + task.by), ['Art:Art Director', 'Anim:Art Director']);
   const edges = graph.defaultGraph(thread).edges.map(edge => `${edge.from}>${edge.to}:${edge.when}`);

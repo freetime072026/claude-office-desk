@@ -293,3 +293,80 @@ test('a stopped Dev (task cancelled) is blocked instead of staying "running", an
   assert.deepEqual(sent.slice(before), ['Dev #2']);
   assert.ok(!sent.includes('QA'));
 });
+
+test('a step that cannot start yet (another turn is writing the same file) waits in the queue instead of stopping the run', async () => {
+  const { retryable } = require('../dispatch.cjs'), graph = require('../flowgraph.cjs');
+  const team = initial(); const id = update(team, 'create', { request: 'Feature' }); update(team, 'select-roles', { id, roles: ['GD', 'Lead Dev', 'Dev', 'QA'] });
+  const thread = team.threads[0], sent = []; let busy = true;
+  const auto = createAutoRun({
+    update: (item, action, payload) => update(team, action, { ...payload, id: item.id }),
+    send: async (item, label) => { if (label === 'QA' && busy) throw retryable('Có Dev đang sửa cùng thư mục.'); sent.push(label); return true; },
+    pump: item => pump(item, async task => { sent.push(task.worker); return true; }, () => {}),
+    log: (item, role, text) => item.messages.push({ role, text, time: new Date().toISOString() }),
+    changed: () => {}, approve: async () => true, isRunning: () => false
+  });
+  await auto.after(thread, 'GD', reply('done'));
+  leadPlans(thread, tasksText(['Dev'])); await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev']) }, { proposalApplied: true });
+  devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  const qa = graph.stateOf(thread, 'QA');
+  assert.equal(qa.status, 'queued'); assert.ok(!sent.includes('QA'));
+  assert.match(thread.messages.at(-1).text, /QA chờ lượt đang chạy xong rồi chạy: Có Dev đang sửa cùng thư mục/);
+  busy = false; await auto.runStage(thread);
+  assert.equal(sent.at(-1), 'QA'); assert.equal(qa.status, 'running');
+});
+
+test('after an app restart a step that was mid-run (QA) is queued again instead of staying "running" forever', async () => {
+  const { thread, sent, auto } = harness(); const graph = require('../flowgraph.cjs');
+  await auto.after(thread, 'GD', reply('done'));
+  leadPlans(thread, tasksText(['Dev'])); await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev']) }, { proposalApplied: true });
+  devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  assert.equal(graph.stateOf(thread, 'QA').status, 'running');
+  const before = sent.length;
+  await auto.runStage(thread, 'QA'); assert.equal(sent.length, before, 'without recovery the stale QA node never restarts');
+  graph.recoverRunning(thread); assert.equal(graph.stateOf(thread, 'QA').status, 'queued');
+  await auto.runStage(thread, 'QA'); assert.deepEqual(sent.slice(before), ['QA']);
+});
+
+test('Lead review does not run while Lead triage is still waiting or blocked (it would judge unfixed code)', async () => {
+  const { thread, sent, auto } = harness(['GD', 'Lead Dev', 'Dev', 'QA']); const graph = require('../flowgraph.cjs');
+  await auto.after(thread, 'GD', reply('done'));
+  for (const id of ['Lead Dev@planning', 'Dev', 'QA']) Object.assign(graph.stateOf(thread, id), { status: 'done', outcome: 'done' });
+  graph.stateOf(thread, 'Lead Dev@triage').status = 'blocked'; graph.stateOf(thread, 'Lead Dev@review').status = 'queued';
+  const before = sent.length; await auto.runStage(thread);
+  assert.equal(sent.length, before, 'review must not start'); assert.equal(graph.stateOf(thread, 'Lead Dev@review').status, 'idle');
+  assert.match(thread.messages.at(-1).text, /Lead Dev · review chờ vòng sửa \(Lead Dev · triage\) xong mới chạy/);
+});
+
+test('Lead review reject with a malformed tasks block neither sprays the review on every block nor spends the one retry', async () => {
+  const { thread, sent, auto } = harness(); const graph = require('../flowgraph.cjs');
+  await auto.after(thread, 'GD', reply('done'));
+  for (const id of ['Lead Dev@planning', 'Dev', 'QA']) Object.assign(graph.stateOf(thread, id), { status: 'done', outcome: 'done' });
+  thread.dispatch = [{ worker: 'Dev', task: 'cũ', files: ['src/'], status: 'finished' }];
+  graph.stateOf(thread, 'Lead Dev@review').status = 'running'; thread.leadPhase = 'review';
+  const bad = 'Review\n' + fence('tasks', [{ role: 'Dev', title: 'x', plan: 'y', files: ['src/a.ts'] }]) + '\n' + fence('handoff', { status: 'reject', summary: 'magic value' });
+  const before = sent.length;
+  await auto.after(thread, 'Lead Dev', { text: bad });
+  assert.equal(graph.stateOf(thread, 'Lead Dev@review').status, 'blocked');
+  assert.equal(thread.reviewRejects || 0, 0, 'retry not spent');
+  assert.ok(thread.planProblems, 'reason kept for the next Lead turn');
+  assert.equal(sent.length, before, 'nothing dispatched'); assert.equal(thread.dispatch[0].task, 'cũ');
+  assert.match(thread.messages.at(-1).text, /khối tasks không hợp lệ/);
+});
+
+test('Lead review prompt carries the tasks format so a reject can assign fixes', () => {
+  const { buildPrompt } = require('../prompt.cjs');
+  const { brief, text } = buildPrompt({ label: 'Lead Dev', type: 'Lead Dev', lead: true, phase: 'review', files: require('../session-files.cjs').filesOf({ id: 's', folder: __dirname }) });
+  assert.match(brief || text, /"tasks":\[\{"worker"/);
+});
+
+test('a block added to the graph after the Lead assigned it (task pending, node idle) is started, so blocks depending on it are not stuck', async () => {
+  const { team, thread, sent, auto } = harness(['GD', 'Lead Dev', 'Dev', 'QA']); const graph = require('../flowgraph.cjs');
+  await auto.after(thread, 'GD', reply('done'));
+  update(team, 'add-worker', { id: thread.id, type: 'Sound' });
+  Object.assign(graph.stateOf(thread, 'Lead Dev@planning'), { status: 'done', outcome: 'done' });
+  graph.stateOf(thread, 'Dev').status = 'running'; graph.stateOf(thread, 'Sound').status = 'idle';
+  thread.dispatch = [{ worker: 'Sound', task: 'nén nhạc', files: ['assets/audio/'], status: 'pending' }, { worker: 'Dev', task: 'âm thanh', files: ['src/'], status: 'queued', dependsOn: ['Sound'] }];
+  const before = sent.length; await auto.runStage(thread);
+  assert.deepEqual(sent.slice(before), ['Sound']);
+  assert.equal(graph.stateOf(thread, 'Sound').status, 'running');
+});

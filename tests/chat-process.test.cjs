@@ -98,3 +98,15 @@ test('progress keeps the running tool until its result arrives, so a long Bash i
   consume(message, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'PASS' }] } });
   assert.equal(message.progress.runningId, undefined); assert.equal(message.progress.runningSince, undefined);
 });
+test('a background process that inherits the CLI pipes (e.g. `node serve.js &`) no longer keeps the turn "running" after the CLI exits', { timeout: 20000 }, async () => {
+  const { spawn } = require('node:child_process'), { closeAfterExit } = require('../chat.cjs');
+  // Tiến trình con in pid của tiến trình nền rồi thoát; tiến trình nền giữ stdout/stderr kế thừa trong 60 s.
+  const script = "const c = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'inherit', detached: true }); console.log(c.pid); c.unref();";
+  const child = spawn(process.execPath, ['-e', script], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let out = ''; child.stdout.setEncoding('utf8').on('data', chunk => { out += chunk; });
+  closeAfterExit(child, 300);
+  const started = Date.now();
+  await new Promise(resolve => child.once('close', resolve));
+  try { assert(Date.now() - started < 10000, 'close fired soon after exit'); assert.match(out, /^\d+/); }
+  finally { const pid = Number.parseInt(out, 10); if (pid) try { process.kill(pid); } catch {} }
+});

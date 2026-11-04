@@ -6,6 +6,7 @@ const { isHalted } = require('./team.cjs');
 const { isDevType, ART_DIRECTOR, RELEASE, ART_REJECT_REASONS } = require('./roles.cjs');
 const { foldersOf } = require('./usage.cjs');
 const graph = require('./flowgraph.cjs');
+const { RETRY } = require('./dispatch.cjs');
 const PO_TYPE = 'PO';
 const HANDOFF_STATUSES = Object.freeze(['done', 'blocked', 'issue', 'pass', 'reject']);
 const ROLE_VERBS = Object.freeze(['start', 'pause']);
@@ -128,6 +129,12 @@ function createAutoRun(deps) {
     if (thread.tweak && node.phase === 'review' && labelType(thread, node.label) === ART_DIRECTOR && !(thread.dispatch || []).some(task => ART_TYPES.includes(labelType(thread, task.worker)))) {
       log(thread, 'Tự động', `${graph.nodeLabel(node)}: vòng chỉnh sửa không đổi art · bỏ qua.`); graph.finish(thread, node.id, 'pass'); return;
     }
+    // Lead review chỉ chạy khi việc sửa của vòng đã xong: Lead triage còn chờ/chạy/bị chặn (QA hoặc Art Director báo issue) thì review
+    // sẽ chấm trên code chưa sửa và tốn lượt sửa duy nhất. Bỏ hàng chờ; review được kích hoạt lại khi QA/Art Director pass sau vòng sửa.
+    if (node.phase === 'review' && labelType(thread, node.label) === LEAD) {
+      const triage = graph.nodesFor(thread, node.label).find(item => item.phase === 'triage');
+      if (triage && ['queued', 'running', 'blocked'].includes(graph.stateOf(thread, triage.id).status)) { state.status = 'idle'; log(thread, 'Tự động', `${graph.nodeLabel(node)} chờ vòng sửa (${graph.nodeLabel(triage)}) xong mới chạy.`); return; }
+    }
     if (worker(thread, node.label).paused) { if (!state.pausedNoted) { state.pausedNoted = true; focus(thread, node, ''); note(thread, `${node.label} đang tạm dừng; dùng /role ${node.label} start để tiếp tục.`); } return; }
     delete state.pausedNoted;
     if (isRunning(thread, node.label)) return;
@@ -139,19 +146,34 @@ function createAutoRun(deps) {
       state.status = 'running'; focus(thread, node); changed(); await pump(thread); return;
     }
     state.status = 'running'; focus(thread, node);
-    log(thread, 'Tự động', 'Bắt đầu ' + graph.nodeLabel(node)); changed();
+    if (!state.waitNoted) log(thread, 'Tự động', 'Bắt đầu ' + graph.nodeLabel(node)); changed();
     try {
       const result = await send(thread, node.label, stageText(thread, node.label));
       if (result?.loginStarted) block(thread, node, `${node.label} cần đăng nhập; đăng nhập rồi dùng /role ${node.label} start.`);
       else if (result === false) block(thread, node, `Lượt ${node.label} bị hủy ở bước xác nhận; dùng /role ${node.label} start để chạy lại.`);
-    } catch (error) { block(thread, node, `Không chạy được ${node.label}: ${error.message}`); }
+    } catch (error) {
+      // Lỗi tạm thời (khối khác đang ghi cùng tệp, ví dụ QA và Art Director · review cùng ghi ISSUES.md; đủ phiên chat): nút về hàng chờ
+      // và chạy khi lượt đang chạy xong (after → advance), thay vì bị chặn chờ người dùng.
+      if (error.code === RETRY) {
+        state.status = 'queued';
+        if (!state.waitNoted) { state.waitNoted = true; log(thread, 'Tự động', `${graph.nodeLabel(node)} chờ lượt đang chạy xong rồi chạy: ${error.message}`); }
+        changed(); return;
+      }
+      block(thread, node, `Không chạy được ${node.label}: ${error.message}`);
+    }
   }
   // Nút Dev/VFX/Art/Anim "running" mà khối không chạy và không còn task trong hàng (bị dừng giữa chừng, task bị kế hoạch mới bỏ,
   // app đóng khi đang chạy) làm QA và các bước sau chờ mãi. Đưa nút về đúng trạng thái theo task của khối:
   // còn task chờ hoặc vừa được kích hoạt lại → chờ chạy (không có task thì startNode bỏ qua); task xong → xong; bị chặn/lỗi/dừng → chặn.
   function settleStale(thread) {
-    for (const node of graph.ensureGraph(thread).nodes) {
+    const graphNow = graph.ensureGraph(thread);
+    for (const node of graphNow.nodes) {
       const state = graph.stateOf(thread, node.id);
+      // Khối có task chờ nhưng nút chưa từng được kích hoạt: nút bước trước đã xong lúc khối chưa có trên sơ đồ (thêm khối/đặt lại sơ đồ
+      // sau khi Lead giao việc). Không đưa vào hàng chờ thì task nằm "pending" mãi và các khối phụ thuộc (dependsOn) chờ theo.
+      if (state.status === 'idle' && isDevType(labelType(thread, node.label)) && !isRunning(thread, node.label)
+        && (thread.dispatch || []).some(task => task.worker === node.label && task.status === 'pending' && !task.artReject)
+        && graph.incoming(graphNow, node.id).some(edge => { const from = graph.stateOf(thread, edge.from); return from.status === 'done' && graph.matches(edge.when, from.outcome); })) { graph.queue(thread, node.id); continue; }
       if (state.status !== 'running' || !isDevType(labelType(thread, node.label)) || isRunning(thread, node.label)) continue;
       const tasks = (thread.dispatch || []).filter(task => task.worker === node.label);
       if (tasks.some(task => [...RUNNING_TASK, 'paused'].includes(task.status))) continue;
@@ -219,15 +241,24 @@ function createAutoRun(deps) {
     if (!handoff) return block(thread, node, `${node.label} chưa xuất khối handoff hợp lệ; dừng tự động ở bước review.`);
     if (handoff.status === 'pass' || handoff.status === 'done') { handedOff(thread, node.label, handoff.summary || 'Review đạt'); note(thread, 'Lead review đạt.'); return graph.finish(thread, node.id, 'pass'); }
     if (handoff.status === 'reject') {
-      if ((thread.reviewRejects || 0) >= REVIEW_RETRY_LIMIT) return block(thread, node, `Review vẫn không đạt sau ${REVIEW_RETRY_LIMIT} lần sửa; dừng tự động để bạn quyết định. Mục chưa đạt: ${handoff.summary || '(không ghi)'}`);
+      if ((thread.reviewRejects || 0) >= REVIEW_RETRY_LIMIT) return block(thread, node, `Review vẫn không đạt sau ${REVIEW_RETRY_LIMIT} lần sửa; dừng tự động để bạn quyết định. Mục chưa đạt: ${handoff.summary || '(không ghi)'}. Muốn sửa thêm một vòng: nhắn Lead Dev giao task sửa (Lead xuất khối tasks, app áp như triage rồi chạy tiếp); hoặc chấp nhận và chạy tiếp các bước sau.`);
+      // Khối tasks có nhưng sai (định dạng, tệp…): không giao nguyên nhận xét cho mọi khối (fallback) và không tính lần sửa; Lead xuất lại.
+      const problems = [], hasTasks = /```tasks/.test(message.text), planned = hasTasks ? taskPlan(message.text, thread, problems) : null;
+      if (hasTasks && !planned) { thread.planProblems = problems.join('; '); return block(thread, node, `Lead review không đạt nhưng khối tasks không hợp lệ (${thread.planProblems}); chưa giao Dev và chưa tính lần sửa. Dùng /role ${node.label} start để Lead xuất lại tasks.`); }
+      delete thread.planProblems;
       thread.reviewRejects = (thread.reviewRejects || 0) + 1; thread.qaPhase = 'functional';
       update(thread, 'review-reject', { text: handoff.summary || 'Review không đạt' });
       if (!devLabels(thread).length) return block(thread, node, 'Review không đạt nhưng không có Dev để sửa.');
-      const tasks = taskPlan(message.text, thread) || fallbackTasks(thread, handoff.summary || 'Review không đạt');
+      const tasks = planned || fallbackTasks(thread, handoff.summary || 'Review không đạt');
       thread.dispatch = tasks.map(task => ({ ...task, status: 'pending' })); recordTasks(thread, tasks, 'Review không đạt · sửa lần ' + thread.reviewRejects);
       return graph.finish(thread, node.id, 'reject');
     }
     return block(thread, node, `Lead Dev cần người dùng: ${handoff.summary || handoff.status}`);
+  }
+  // Issue từ QA / Art Director · review / Release: vòng sửa đã được tính khi Lead triage đang chờ hoặc đang chạy thì không đếm thêm vòng fail.
+  function reportIssue(thread, payload) {
+    const triage = graph.ensureGraph(thread).nodes.find(item => item.phase === 'triage' && labelType(thread, item.label) === LEAD);
+    update(thread, 'issue', { ...payload, sameRound: Boolean(triage) && ['queued', 'running'].includes(graph.stateOf(thread, triage.id).status) });
   }
   // QA và Art Director review chạy song song: một bên pass đã đưa Lead review vào hàng chờ, bên kia báo issue/reject thì Lead review
   // không được chạy trên phần đang sửa; bỏ hàng chờ, nó được kích hoạt lại khi cả hai pass ở vòng sau.
@@ -281,7 +312,7 @@ function createAutoRun(deps) {
         Object.assign(graph.stateOf(thread, node.id), { status: 'done', outcome: 'pass' }); return;
       }
       if (['done', 'pass'].includes(handoff.status)) { handedOff(thread, node.label, summary); return graph.finish(thread, node.id, 'pass'); }
-      if (handoff.status === 'issue') { delete thread.artRework; delete thread.artRedo; update(thread, 'issue', { text: '[Visual · Art Director] ' + summary }); holdLeadReview(thread); return graph.finish(thread, node.id, 'issue'); }
+      if (handoff.status === 'issue') { delete thread.artRework; delete thread.artRedo; reportIssue(thread, { text: '[Visual · Art Director] ' + summary }); holdLeadReview(thread); return graph.finish(thread, node.id, 'issue'); }
       if (handoff.status === 'reject') {
         if (!tasksGiven) return block(thread, node, `${node.label} trả ảnh về nhưng không kèm khối tasks giao Art: ${summary}`);
         if ((thread.adRejects || 0) >= AD_REJECT_LIMIT) return block(thread, node, `Ảnh vẫn chưa đạt sau ${AD_REJECT_LIMIT} lần Art làm lại; dừng để bạn quyết định. ${summary}`);
@@ -294,7 +325,7 @@ function createAutoRun(deps) {
   }
   // QA hai pha: chức năng (theo GDD/AC) → khi hết Issue và không có Issue mới mới sang performance (GC Alloc, CPU, GPU).
   function afterQa(thread, node, handoff) {
-    if (handoff.status === 'issue') { update(thread, 'issue', { text: handoff.summary || 'QA báo lỗi' }); holdLeadReview(thread); return graph.finish(thread, node.id, 'issue'); }
+    if (handoff.status === 'issue') { reportIssue(thread, { text: handoff.summary || 'QA báo lỗi' }); holdLeadReview(thread); return graph.finish(thread, node.id, 'issue'); }
     if (handoff.status !== 'pass') return block(thread, node, 'QA cần người dùng: ' + (handoff.summary || handoff.status));
     for (const item of handoff.retested) if (openIssues(thread).some(issue => issue.id === item.id)) update(thread, 'retest', { issue: item.id, text: item.evidence || handoff.summary || 'QA retest đạt' });
     if (openIssues(thread).length) return block(thread, node, `QA pass nhưng còn ${openIssues(thread).length} Issue chưa ghi retest; dừng tự động.`);
@@ -304,7 +335,7 @@ function createAutoRun(deps) {
   }
   // Release: pass → Hoàn tất; issue (build lỗi, vượt dung lượng…) → Issue và Lead triage giao sửa, rồi QA/review/Release chạy lại.
   function afterRelease(thread, node, handoff) {
-    if (handoff.status === 'issue') { update(thread, 'issue', { text: '[Release] ' + (handoff.summary || 'Release lỗi') }); return graph.finish(thread, node.id, 'issue'); }
+    if (handoff.status === 'issue') { reportIssue(thread, { text: '[Release] ' + (handoff.summary || 'Release lỗi') }); return graph.finish(thread, node.id, 'issue'); }
     if (handoff.status === 'pass') { handedOff(thread, node.label, handoff.summary || 'Release đạt'); return graph.finish(thread, node.id, 'pass'); }
     return block(thread, node, `Trạng thái handoff "${handoff.status}" không hợp lệ cho ${node.label}; Release trả pass hoặc issue.`);
   }

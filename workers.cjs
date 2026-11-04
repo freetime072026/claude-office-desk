@@ -100,7 +100,9 @@ function removable(thread, label, { busy = false } = {}) {
 const hasArtDirector = thread => (thread.flow || []).some(label => typeOf(label) === ART_DIRECTOR);
 const VISUAL_TYPES = Object.freeze(['Art', 'Anim']);
 const LEAD_TYPES_WITH_AD = Object.freeze(DEV_TYPES.filter(type => !VISUAL_TYPES.includes(type)));
-const leadTypes = thread => hasArtDirector(thread) ? LEAD_TYPES_WITH_AD : DEV_TYPES;
+// Có Art Director: ở pha lập kế hoạch Art Director giao Art/Anim theo đặc tả ART.md; ở pha triage (sửa Issue, ví dụ nén ảnh cho đủ
+// dung lượng) Lead giao được cả Art/Anim cho kịp vòng sửa, Art Director vẫn review ảnh sau đó.
+const leadTypes = thread => hasArtDirector(thread) && (thread.leadPhase || 'planning') === 'planning' ? LEAD_TYPES_WITH_AD : DEV_TYPES;
 const AD_TYPES = VISUAL_TYPES;
 const ownedByAd = (thread, task) => task.by === ART_DIRECTOR && hasArtDirector(thread);
 // problems nhận lý do khi kế hoạch bị từ chối, để báo cho người dùng/Lead thay vì chỉ "không hợp lệ".
@@ -110,7 +112,13 @@ function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [
   const match = /```tasks\s*([\s\S]*?)```/.exec(text); if (!match) return fail('không có khối tasks');
   try {
     const plan = JSON.parse(match[1]); if (!Array.isArray(plan.tasks) || !plan.tasks.length || plan.tasks.length > 30) return fail('tasks phải là mảng 1–30 mục');
-    const owners = new Set(); for (const task of plan.tasks) { if (!thread.flow.includes(task.worker) || !types.includes(worker(thread, task.worker).type) || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return fail(`worker "${task.worker}" không phải ${types.join('/')} trong đội, bị trùng, hoặc task trống/quá dài`); owners.add(task.worker); }
+    const owners = new Set(); for (const task of plan.tasks) {
+      // Lead lập kế hoạch giao Art/Anim khi có Art Director: nói rõ luật thay vì lỗi chung "không phải Dev/VFX/Sound".
+      if (thread.flow.includes(task.worker) && VISUAL_TYPES.includes(worker(thread, task.worker).type) && !types.includes(worker(thread, task.worker).type) && types.includes('Dev')) return fail(`${task.worker}: ở pha lập kế hoạch, Art/Anim do Art Director giao theo ART.md; bỏ task này khỏi khối tasks (pha triage thì Lead giao được Art/Anim)`);
+      // Khối đang giữ task chưa xong của người giao kia (Art Director/Lead): không giao chồng thêm task thứ hai.
+      const held = reserved.find(item => item.worker === task.worker);
+      if (held) return fail(`${task.worker} đang có task ${held.by === ART_DIRECTOR ? 'Art Director' : 'Lead'} giao chưa xong (${held.status}); đợi xong hoặc giao khối khác`);
+      if (!thread.flow.includes(task.worker) || !types.includes(worker(thread, task.worker).type) || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return fail(`worker "${task.worker}" không phải ${types.join('/')} trong đội, bị trùng, hoặc task trống/quá dài`); owners.add(task.worker); }
     // files bắt buộc và không chồng nhau giữa các Dev: điều kiện để Dev sửa song song không ghi đè nhau.
     // Tối đa FILES_PER_TASK mục: task lớn làm lượt Dev dài, ngữ cảnh phình và chi phí tăng nhanh hơn số lượt.
     const folders = sessionFolders(thread);
