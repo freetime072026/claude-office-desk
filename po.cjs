@@ -84,16 +84,20 @@ function planMarkdown(plan, current = 0) {
 const brief = value => { const first = String(value || '').split(/\.(?:\s|$)/)[0]; return first.length > 200 ? first.slice(0, 200) + '…' : first; };
 // Hướng dẫn cho PO (prompt.cjs): loại khối có sẵn kèm trách nhiệm ngắn (bản game và bản của từng preset), định dạng khối team.
 // preset: preset hiện có của session (thread.preset), là loại sản phẩm khi PO không ghi product.
-function guide(problems = '', preset = '') {
+// chosen: loại sản phẩm người dùng chọn ở panel khối PO (thread.poProduct); có thì PO không tự chọn và chỉ thấy trách nhiệm của loại đó.
+function guide(problems = '', preset = '', chosen = '') {
   const roles = choices().map(type => `${type}: ${brief(defaults[type].responsibility)}`).join('; ');
-  const presets = Object.entries(PRESETS).map(([key, item]) => `Nếu project là ${item.name} thì ghi "product":"${key.toLowerCase()}"; khi đó các khối ${item.roles.join(', ')} dùng trách nhiệm riêng của ${key} thay cho bản game (${item.roles.map(type => `${type}: ${brief(item.config[type]?.responsibility)}`).join('; ')}), loại khác vẫn làm theo bản game.`);
+  const presetLine = ([key, item], lead) => `${lead || 'Các khối'}${lead ? 'các khối' : ''} ${item.roles.join(', ')} dùng trách nhiệm riêng của ${key} thay cho bản game (${item.roles.map(type => `${type}: ${brief(item.config[type]?.responsibility)}`).join('; ')}), loại khác vẫn làm theo bản game.`;
+  const fixed = PRODUCTS.includes(chosen) ? chosen : '', fixedPreset = Object.entries(PRESETS).find(([key]) => key.toLowerCase() === fixed);
+  const presets = fixed ? (fixedPreset ? [presetLine(fixedPreset, '')] : []) : Object.entries(PRESETS).map(entry => presetLine(entry, `Nếu project là ${entry[1].name} thì ghi "product":"${entry[0].toLowerCase()}"; khi đó `));
   const current = preset && PRESETS[preset] ? `${PRESETS[preset].name} ("${preset.toLowerCase()}")` : 'Game ("game")';
   return [
-    'Bạn là PO (Product Owner): đọc yêu cầu project và bối cảnh dự án (README, CLAUDE.md, .office-desk/PROJECT.md nếu có), xác định loại sản phẩm, chia project thành các mốc (vòng lớn) theo thứ tự làm, chọn đội cần cho từng mốc và viết phần việc giao GD của mỗi mốc. Không thiết kế chi tiết thay GD, không viết code.',
-    'Loại khối có sẵn (trách nhiệm khi làm game): ' + roles + '.',
+    `Bạn là PO (Product Owner): đọc yêu cầu project và bối cảnh dự án (README, CLAUDE.md, .office-desk/PROJECT.md nếu có), ${fixed ? '' : 'xác định loại sản phẩm, '}chia project thành các mốc (vòng lớn) theo thứ tự làm, chọn đội cần cho từng mốc và viết phần việc giao GD của mỗi mốc. Không thiết kế chi tiết thay GD, không viết code.`,
+    fixed ? `Người dùng đã chọn loại sản phẩm: ${productName(fixed)}. Lên kế hoạch cho loại này và ghi "product":"${fixed}".` : '',
+    `Loại khối có sẵn (trách nhiệm khi làm ${fixedPreset ? 'game, cho loại khối ngoài đội ' + fixedPreset[0] : 'game'}): ` + roles + '.',
     ...presets,
-    `Loại sản phẩm hiện tại của session: ${current}; không ghi product thì giữ nguyên.`,
-    `Cuối câu trả lời xuất khối fenced code nhãn team chứa JSON {"product":"${PRODUCTS.join('" hoặc "')}","summary":"tóm tắt project và cách chia mốc","milestones":[{"title":"tên mốc","goal":"kết quả của mốc","gd":"phần giao GD: mục tiêu, phạm vi làm và không làm, ưu tiên, ràng buộc, câu hỏi mở","blocks":["GD","UI/UX","Lead Dev","Dev","Dev","QA"],"reasons":"vì sao cần từng khối, vì sao bỏ khối khác"}],"responsibilities":{"tên loại hoặc tên khối (Dev #2)":"trách nhiệm riêng trong session này"}}.`,
+    fixed ? '' : `Loại sản phẩm hiện tại của session: ${current}; không ghi product thì giữ nguyên.`,
+    `Cuối câu trả lời xuất khối fenced code nhãn team chứa JSON {"product":"${fixed || PRODUCTS.join('" hoặc "')}","summary":"tóm tắt project và cách chia mốc","milestones":[{"title":"tên mốc","goal":"kết quả của mốc","gd":"phần giao GD: mục tiêu, phạm vi làm và không làm, ưu tiên, ràng buộc, câu hỏi mở","blocks":["GD","UI/UX","Lead Dev","Dev","Dev","QA"],"reasons":"vì sao cần từng khối, vì sao bỏ khối khác"}],"responsibilities":{"tên loại hoặc tên khối (Dev #2)":"trách nhiệm riêng trong session này"}}.`,
     `blocks liệt kê đủ khối hoạt động của mốc đó, lặp loại để có nhiều khối (hai "Dev" = Dev và Dev #2); mỗi mốc cần GD; GD, UI/UX, Lead Dev, Art Director, Release tối đa một khối; loại khác tối đa ${DEV_LIMIT}; tối đa ${MILESTONE_LIMIT} mốc. Khối chỉ cần ở mốc sau thì chỉ ghi ở mốc đó; khối không ghi ở một mốc sẽ tạm nghỉ, không còn ở các mốc sau sẽ bị xoá. Người dùng duyệt một lần cả kế hoạch nên ghi đủ các mốc ngay từ đầu.`,
     problems ? `Kế hoạch trước bị app từ chối: ${problems}. Sửa đúng lỗi này.` : ''
   ].filter(Boolean).join('\n');

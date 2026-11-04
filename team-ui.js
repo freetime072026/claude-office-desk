@@ -276,7 +276,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     paintBlockPicker(thread);
     const running = role ? runningOf(thread, role) : thread?.messages.findLast(message => message.role === 'Claude' && message.streaming);
     get('#panel-state').textContent = !thread ? 'Chưa có session' : running ? progressText(running) : role ? blockLabel(thread, role, thread.flow.indexOf(role)) : 'Không role · chạy Claude Code thường';
-    for (const id of ['#account-field', '#shell-field', '#task-field', '#role-texts', '#art-gen-field', '#purpose-field', '#engine-field', '#spine-field']) get(id).hidden = !role;
+    for (const id of ['#account-field', '#shell-field', '#task-field', '#role-texts', '#art-gen-field', '#purpose-field', '#product-field', '#engine-field', '#spine-field']) get(id).hidden = !role;
     paintSessionFiles(thread, role);
     for (const field of document.querySelectorAll('#panel select, #panel textarea')) field.disabled = !thread || thread.archived;
     paintRelease(thread, role, force);
@@ -292,8 +292,11 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     paintRoleMcp(thread, type);
     // Mục đích chỉ hiện cho loại role preset có cấu hình (hiện chỉ có PLA).
     get('#purpose-field').hidden = !presets.PLA?.roles.includes(type); setField(get('#worker-purpose'), config.purpose || 'game', force);
-    get('#engine-field').hidden = config.purpose !== 'pla'; fillEngines(get('#worker-engine'), thread.preset || 'PLA'); setField(get('#worker-engine'), thread.engine || '', force);
-    get('#spine-field').hidden = config.purpose !== 'pla'; fillEngines(get('#worker-spine'), thread.preset || 'PLA', 'spine'); setField(get('#worker-spine'), thread.spine || '', force);
+    // Khối PO chọn loại sản phẩm của session (thread.poProduct); session đang là PLA thì PO cũng chọn được engine/Spine.
+    const isPo = type === 'PO', pla = config.purpose === 'pla' || (isPo && thread.preset === 'PLA');
+    get('#product-field').hidden = !isPo; setField(get('#po-product'), thread.poProduct || '', force);
+    get('#engine-field').hidden = !pla; fillEngines(get('#worker-engine'), thread.preset || 'PLA'); setField(get('#worker-engine'), thread.engine || '', force);
+    get('#spine-field').hidden = !pla; fillEngines(get('#worker-spine'), thread.preset || 'PLA', 'spine'); setField(get('#worker-spine'), thread.spine || '', force);
     get('#art-gen-field').hidden = type !== 'Art'; setField(get('#art-generator'), team.artGenerator || 'chatgpt', force);
     const effective = field => own[field] || preset[field] || template[field] || fallback[field] || '';
     setField(get('#role-responsibility'), effective('responsibility'), force); setField(get('#role-output'), effective('output'), force); setField(get('#role-instructions'), own.instructions || '', force);
@@ -401,6 +404,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     const engines = Object.entries(presets[key]?.[field] || {}), id = key + ':' + field + ':' + engines.length; if (select.dataset.key === id) return; select.dataset.key = id;
     select.replaceChildren(make('option', { value: '', textContent: 'Lead chọn theo project' }), ...engines.map(([value, name]) => make('option', { value, textContent: name })));
   }
+  get('#po-product').onchange = async () => { const value = get('#po-product').value; if (await act('po-product', { product: value })) get('#panel-saved').textContent = value ? '✓ Đã lưu loại sản phẩm; PO lên kế hoạch theo loại này' : '✓ Để PO chọn loại sản phẩm'; };
   get('#worker-engine').onchange = async () => { if (await act('preset-engine', { engine: get('#worker-engine').value })) get('#panel-saved').textContent = '✓ Đã lưu engine PLA của session'; };
   get('#worker-spine').onchange = async () => { if (await act('preset-spine', { spine: get('#worker-spine').value })) get('#panel-saved').textContent = '✓ Đã lưu cách dùng Spine của session'; };
   // Công cụ sinh ảnh dùng chung cho mọi khối Art ở mọi session (team.artGenerator).

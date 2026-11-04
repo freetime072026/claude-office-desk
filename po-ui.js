@@ -34,11 +34,13 @@
       get('#po-status').hidden = plan?.status !== 'approved';
       if (plan?.status === 'approved') { const milestone = plan.plan.milestones[plan.current ?? 0]; get('#po-status').textContent = `Kế hoạch PO · mốc ${(plan.current ?? 0) + 1}/${plan.plan.milestones.length}: ${milestone?.title || ''}`; }
       box.hidden = plan?.status !== 'proposed'; if (box.hidden) { box.dataset.key = ''; return; }
-      const key = thread.id + plan.proposedAt; if (box.dataset.key === key) return; box.dataset.key = key;
+      const key = thread.id + plan.proposedAt + (thread.poProduct || '') + (thread.preset || ''); if (box.dataset.key === key) return; box.dataset.key = key;
       const body = [make('h3', { textContent: `Kế hoạch đội của PO · ${plan.plan.milestones.length} mốc · chờ bạn duyệt` })];
       // Loại sản phẩm: duyệt thì app đặt preset của session theo đó (PLA: khối dùng trách nhiệm PLA); không ghi thì giữ preset hiện có.
-      const product = { game: 'Game', pla: 'Playable Ads (PLA)' }[plan.plan.product];
-      body.push(make('p', { className: 'po-product', textContent: 'Loại sản phẩm: ' + (product ? product + (plan.plan.product === 'game' ? '' : ' (các khối dùng trách nhiệm và giới hạn của preset này)') : 'giữ như session hiện tại (' + (thread.preset ? 'Playable Ads (PLA)' : 'Game') + ')') }));
+      // Loại bạn chọn ở panel khối PO (thread.poProduct) thắng product trong kế hoạch.
+      const names = { game: 'Game', pla: 'Playable Ads (PLA)' }, chosen = thread.poProduct || plan.plan.product, product = names[chosen];
+      const source = thread.poProduct ? ' · bạn chọn ở panel khối PO' : plan.plan.product ? ' · PO chọn, đổi ở panel khối PO' : '';
+      body.push(make('p', { className: 'po-product', textContent: 'Loại sản phẩm: ' + (product ? product + (chosen === 'game' ? '' : ' (các khối dùng trách nhiệm và giới hạn của preset này)') : 'giữ như session hiện tại (' + (thread.preset ? names.pla : names.game) + ')') + source }));
       if (plan.plan.summary) body.push(make('p', { className: 'po-summary', textContent: plan.plan.summary }));
       body.push(make('p', { className: 'po-note', textContent: 'Duyệt một lần cho cả kế hoạch: khối cần ở mốc sau sẽ được thêm, khối không còn cần sẽ bị xoá, khối không dùng ở một mốc sẽ tạm nghỉ, khi tới mốc đó app tự làm và không hỏi lại.' }));
       plan.plan.milestones.forEach((milestone, index) => {

@@ -193,19 +193,28 @@ function proposePlan(item, payload, log) {
 }
 // Loại sản phẩm PO chọn: preset (pla → PLA) thì mọi khối có cấu hình preset nhận mục đích đó; game thì bỏ preset, engine, Spine.
 // Kế hoạch không ghi product hoặc trùng preset hiện có thì giữ nguyên (kể cả mục đích người dùng đã đổi tay ở panel khối).
-function setProduct(item, product, log) {
+function setProduct(item, product, log, source = 'kế hoạch PO') {
   if (!product) return;
   const key = po.presetKey(product); if (key === item.preset || (!key && !item.preset)) return;
   if (key) item.preset = key; else { delete item.preset; delete item.engine; delete item.spine; }
   for (const label of item.flow) { const config = worker(item, label); if (key && purposeConfig(typeOf(label), product)) config.purpose = product; else delete config.purpose; }
-  log('Hệ thống', `Loại sản phẩm theo kế hoạch PO: ${po.productName(product)}.` + (key ? ` Các khối chỉ nhận việc của ${key}. ${engineText(item)}. ${spineText(item)}.` : ''));
+  log('Hệ thống', `Loại sản phẩm theo ${source}: ${po.productName(product)}.` + (key ? ` Các khối chỉ nhận việc của ${key}. ${engineText(item)}. ${spineText(item)}.` : ''));
+}
+// Người dùng chọn loại sản phẩm ở panel khối PO (thread.poProduct): áp ngay cho session, PO lên kế hoạch theo loại này và khi duyệt
+// lựa chọn này thắng product trong kế hoạch. '' = để PO tự chọn (giữ preset hiện có tới khi duyệt kế hoạch).
+function chooseProduct(item, product, log) {
+  if (product !== '' && !po.PRODUCTS.includes(product)) throw Error('Loại sản phẩm không hợp lệ');
+  if (!item.flow.some(label => typeOf(label) === po.PO)) throw Error('Session chưa có khối PO');
+  if (!product) { delete item.poProduct; log('Cấu hình', 'Loại sản phẩm: để PO chọn'); return; }
+  item.poProduct = product; log('Cấu hình', `Loại sản phẩm do bạn chọn: ${po.productName(product)}; PO lên kế hoạch theo loại này`);
+  setProduct(item, product, log, 'lựa chọn của bạn');
 }
 function approvePlan(team, item, payload, log) {
   if (item.poPlan?.status !== 'proposed') throw Error('Không có kế hoạch PO chờ duyệt');
   if (busyOf(payload).some(label => typeOf(label) !== po.PO)) throw Error('Còn khối đang chạy; đợi xong rồi duyệt kế hoạch');
   item.poPlan.status = 'approved'; item.poPlan.approvedAt = new Date().toISOString(); delete item.poPlan.previous;
   log('Hệ thống', 'Đã duyệt kế hoạch đội của PO (gồm thay đổi khối ở các mốc sau; app tự áp khi tới mốc, không hỏi lại).');
-  setProduct(item, item.poPlan.plan.product, log);
+  setProduct(item, item.poProduct || item.poPlan.plan.product, log, item.poProduct ? 'lựa chọn của bạn' : 'kế hoạch PO');
   applyMilestone(team, item, 0, log, busyOf(payload)); return true;
 }
 function rejectPlan(item, payload, log) {
@@ -261,6 +270,7 @@ function update(team, action, payload) {
   if (action === 'po-approve') return approvePlan(team, item, payload, log);
   if (action === 'po-reject') return rejectPlan(item, payload, log);
   if (action === 'po-next') return nextMilestone(team, item, payload, log);
+  if (action === 'po-product') { chooseProduct(item, payload.product, log); return true; }
   // Công cụ sinh ảnh của Art (dùng chung mọi session): 'chatgpt' = Art viết prompt chi tiết, người dùng tạo ảnh bằng ChatGPT;
   // 'tool' = Art tự gọi script/pipeline của project hoặc MCP sinh ảnh.
   if (action === 'art-generator') { if (!ART_GENERATORS.includes(payload.mode)) throw Error('Công cụ sinh ảnh không hợp lệ'); team.artGenerator = payload.mode; log('Cấu hình', 'Art sinh ảnh bằng: ' + (payload.mode === 'chatgpt' ? 'ChatGPT (thủ công)' : 'script/MCP của project')); return true; }

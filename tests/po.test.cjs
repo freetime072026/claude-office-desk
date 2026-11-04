@@ -120,3 +120,20 @@ test('PO prompt explains the product field with PLA responsibilities and the cur
   assert.match(game, /Loại sản phẩm hiện tại của session: Game/); assert.match(game, /Lead Dev: Project đã có pipeline \(template-pla: CLAUDE\.md, scripts\//);
   assert.match(buildPrompt({ label: 'PO', type: 'PO', files, content: 'x', preset: 'PLA' }).text, /Loại sản phẩm hiện tại của session: Playable Ads \(PLA\) \("pla"\)/);
 });
+test('choosing the product in the PO panel applies it now, fixes the PO guide and wins over the plan', () => {
+  const team = initial(), id = update(team, 'create', { request: 'x' }), thread = team.threads.find(item => item.id === id);
+  assert.throws(() => update(team, 'po-product', { id, product: 'pla' }), /chưa có khối PO/);
+  update(team, 'add-worker', { id, type: 'PO' }); update(team, 'add-worker', { id, type: 'GD' });
+  assert.throws(() => update(team, 'po-product', { id, product: 'web' }), /Loại sản phẩm không hợp lệ/);
+  update(team, 'po-product', { id, product: 'pla' });
+  assert.equal(thread.poProduct, 'pla'); assert.equal(thread.preset, 'PLA'); assert.equal(thread.workers.GD.purpose, 'pla');
+  const files = filesOf({ id: 's', folder: 'E:\game' });
+  const text = buildPrompt({ label: 'PO', type: 'PO', files, content: 'x', preset: 'PLA', poProduct: 'pla' }).text;
+  assert.match(text, /Người dùng đã chọn loại sản phẩm: Playable Ads \(PLA\)/); assert.doesNotMatch(text, /Nếu project là/);
+  assert.match(text, /\nCác khối GD, UI\/UX/); assert.match(text, /\{"product":"pla","summary"/);
+  update(team, 'po-propose', { id, plan: po.parsePlan(fence({ ...PLAN, product: 'game' })), steps: [], previews: [] }); update(team, 'po-approve', { id, busy: [] });
+  assert.equal(thread.preset, 'PLA'); assert.equal(thread.workers['Dev #2'].purpose, 'pla'); // lựa chọn của bạn thắng product của PO
+  update(team, 'po-product', { id, product: '' }); assert.equal(thread.poProduct, undefined); assert.equal(thread.preset, 'PLA');
+  update(team, 'po-product', { id, product: 'game' }); assert.equal(thread.preset, undefined); assert.equal(thread.workers.GD.purpose, undefined);
+  assert.doesNotMatch(buildPrompt({ label: 'PO', type: 'PO', files, content: 'x', poProduct: 'game' }).text, /PLA Producer/);
+});
