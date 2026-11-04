@@ -83,3 +83,40 @@ test('auto run: idle blocks are skipped and reaching Hoàn tất starts the next
   assert.equal(thread.poPlan.current, 1); assert.equal(thread.workers.GD.task, 'mốc B'); assert.deepEqual(sent, ['GD', 'GD']);
   assert.equal(thread.status, 'working'); assert.ok(thread.messages.some(message => /Sang mốc 2\/2/.test(message.text)));
 });
+test('parsePlan reads product (game or a preset key) and rejects unknown products', () => {
+  assert.equal(po.parsePlan(fence({ ...PLAN, product: 'PLA' })).product, 'pla');
+  assert.equal(po.parsePlan(fence({ ...PLAN, product: 'game' })).product, 'game');
+  assert.equal(po.parsePlan(fence(PLAN)).product, undefined);
+  const problems = []; assert.equal(po.parsePlan(fence({ ...PLAN, product: 'web' }), problems), null); assert.match(problems[0], /product phải là "game" hoặc "pla"/);
+  assert.match(po.planMarkdown(po.parsePlan(fence({ ...PLAN, product: 'pla' }))), /Loại sản phẩm: Playable Ads \(PLA\)/);
+});
+test('approving a PLA plan sets the PLA preset: blocks of every milestone get the PLA purpose, guard and PO responsibility', () => {
+  const { roleContext } = require('../prompt.cjs');
+  const team = initial(), id = update(team, 'create', { request: 'Làm playable' }); update(team, 'add-worker', { id, type: 'PO' });
+  const thread = team.threads.find(item => item.id === id), plan = po.parsePlan(fence({ ...PLAN, product: 'pla' }));
+  update(team, 'po-propose', { id, plan, steps: [], previews: [] }); update(team, 'po-approve', { id, busy: [] });
+  assert.equal(thread.preset, 'PLA'); assert.equal(thread.workers.PO.purpose, undefined);
+  for (const label of thread.flow.filter(label => label !== 'PO')) assert.equal(thread.workers[label].purpose, 'pla', label);
+  const gd = roleContext(team, thread, 'GD'); assert.match(gd.responsibility, /PLA Producer/); assert.match(gd.instructions, /playable ad/);
+  const dev2 = roleContext(team, thread, 'Dev #2'); assert.match(dev2.instructions, /playable ad[\s\S]*Chỉ làm UI/);
+  update(team, 'po-next', { id, busy: [] }); // mốc 2 thêm Art, Release
+  assert.equal(thread.workers.Art.purpose, 'pla'); assert.equal(thread.workers.Release.purpose, 'pla');
+  assert.match(roleContext(team, thread, 'Release').responsibility, /network/);
+  update(team, 'add-worker', { id, type: 'QA' }); assert.equal(thread.workers['QA #2'].purpose, 'pla');
+});
+test('a plan without product keeps the session preset; a game plan clears the preset and block purposes', () => {
+  const team = initial(), id = update(team, 'create', { request: 'x' }), thread = team.threads.find(item => item.id === id);
+  update(team, 'apply-preset', { id, preset: 'PLA', engine: 'phaser' }); update(team, 'add-worker', { id, type: 'PO' });
+  update(team, 'po-propose', { id, plan: po.parsePlan(fence(PLAN)), steps: [], previews: [] }); update(team, 'po-approve', { id, busy: [] });
+  assert.equal(thread.preset, 'PLA'); assert.equal(thread.engine, 'phaser'); assert.equal(thread.workers['Dev #2'].purpose, 'pla');
+  update(team, 'po-propose', { id, plan: po.parsePlan(fence({ ...PLAN, product: 'game' })), steps: [], previews: [] }); update(team, 'po-approve', { id, busy: [] });
+  assert.equal(thread.preset, undefined); assert.equal(thread.engine, undefined);
+  for (const label of thread.flow) assert.equal(thread.workers[label]?.purpose, undefined, label);
+});
+test('PO prompt explains the product field with PLA responsibilities and the current session product', () => {
+  const files = filesOf({ id: 's', folder: 'E:\game' });
+  const game = buildPrompt({ label: 'PO', type: 'PO', files, content: 'x' }).text;
+  assert.match(game, /"product":"game" hoặc "pla"/); assert.match(game, /ghi "product":"pla"/); assert.match(game, /GD: Đóng vai PLA Producer/);
+  assert.match(game, /Loại sản phẩm hiện tại của session: Game/); assert.match(game, /Lead Dev: Project đã có pipeline \(template-pla: CLAUDE\.md, scripts\//);
+  assert.match(buildPrompt({ label: 'PO', type: 'PO', files, content: 'x', preset: 'PLA' }).text, /Loại sản phẩm hiện tại của session: Playable Ads \(PLA\) \("pla"\)/);
+});

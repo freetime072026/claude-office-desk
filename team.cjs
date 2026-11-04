@@ -62,11 +62,12 @@ function decide(item, choice, log) {
   if (!Object.hasOwn(DECISIONS, choice)) throw Error('Quyết định không hợp lệ');
   DECISIONS[choice](item, log);
 }
+// Session theo preset: khối mới cùng loại cũng chỉ phục vụ preset đó (đổi lại ở panel khối nếu cần).
+function inheritPurpose(item, label) { const purpose = item.preset?.toLowerCase(); if (purposeConfig(typeOf(label), purpose)) worker(item, label).purpose = purpose; }
 function addRole(item, type, log) {
   if (!Object.hasOwn(defaults, type)) throw Error('Loại role không hợp lệ');
   const label = addWorker(item, type);
-  // Session theo preset: khối mới cùng loại cũng chỉ phục vụ preset đó (đổi lại ở panel khối nếu cần).
-  const purpose = item.preset?.toLowerCase(); if (purposeConfig(type, purpose)) worker(item, label).purpose = purpose;
+  inheritPurpose(item, label);
   flowgraph.addNode(item, label); // sơ đồ mặc định dựng lại; sơ đồ đã sửa: Dev/VFX mới nối song song như các Dev khác
   log('Hệ thống', 'Đã thêm ' + label + (item.flow.indexOf(label) < item.stage ? '; bỏ qua ở vòng này' : '')); return label;
 }
@@ -175,7 +176,7 @@ function applyMilestone(team, item, k, log, busy = []) {
   for (const label of change.remove) {
     try { notes.push(`xoá ${label} (${dropRole(item, label, busy, true)})`); } catch (error) { worker(item, label).idle = true; notes.push(`chưa xoá được ${label}: ${error.message}; tạm nghỉ`); }
   }
-  for (const label of change.add) { const added = addWorker(item, typeOf(label)); notes.push('thêm ' + added); }
+  for (const label of change.add) { const added = addWorker(item, typeOf(label)); inheritPurpose(item, added); notes.push('thêm ' + added); }
   for (const label of item.flow) { if (typeOf(label) === po.PO) continue; const config = worker(item, label); if (milestone.blocks.includes(label)) delete config.idle; else config.idle = true; }
   migrateRoleConfig(team, item); item.roleConfig ||= {};
   for (const label of item.flow) { const body = po.responsibilityFor(plan, label); if (body) item.roleConfig[label] = { ...item.roleConfig[label], instructions: body }; }
@@ -190,11 +191,21 @@ function proposePlan(item, payload, log) {
   item.poPlan = { ...(item.poPlan?.status === 'approved' ? { previous: { plan: item.poPlan.plan, current: item.poPlan.current } } : {}), status: 'proposed', plan: payload.plan, steps: payload.steps || [], previews: payload.previews || [], proposedAt: new Date().toISOString() };
   delete item.poProblems; log('Hệ thống', `PO đề xuất kế hoạch đội ${payload.plan.milestones.length} mốc; chờ bạn duyệt.`);
 }
+// Loại sản phẩm PO chọn: preset (pla → PLA) thì mọi khối có cấu hình preset nhận mục đích đó; game thì bỏ preset, engine, Spine.
+// Kế hoạch không ghi product hoặc trùng preset hiện có thì giữ nguyên (kể cả mục đích người dùng đã đổi tay ở panel khối).
+function setProduct(item, product, log) {
+  if (!product) return;
+  const key = po.presetKey(product); if (key === item.preset || (!key && !item.preset)) return;
+  if (key) item.preset = key; else { delete item.preset; delete item.engine; delete item.spine; }
+  for (const label of item.flow) { const config = worker(item, label); if (key && purposeConfig(typeOf(label), product)) config.purpose = product; else delete config.purpose; }
+  log('Hệ thống', `Loại sản phẩm theo kế hoạch PO: ${po.productName(product)}.` + (key ? ` Các khối chỉ nhận việc của ${key}. ${engineText(item)}. ${spineText(item)}.` : ''));
+}
 function approvePlan(team, item, payload, log) {
   if (item.poPlan?.status !== 'proposed') throw Error('Không có kế hoạch PO chờ duyệt');
   if (busyOf(payload).some(label => typeOf(label) !== po.PO)) throw Error('Còn khối đang chạy; đợi xong rồi duyệt kế hoạch');
   item.poPlan.status = 'approved'; item.poPlan.approvedAt = new Date().toISOString(); delete item.poPlan.previous;
   log('Hệ thống', 'Đã duyệt kế hoạch đội của PO (gồm thay đổi khối ở các mốc sau; app tự áp khi tới mốc, không hỏi lại).');
+  setProduct(item, item.poPlan.plan.product, log);
   applyMilestone(team, item, 0, log, busyOf(payload)); return true;
 }
 function rejectPlan(item, payload, log) {
