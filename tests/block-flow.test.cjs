@@ -63,7 +63,7 @@ test('block config: migration copies the old per-type config to every block of t
 });
 
 test('Release: one per session after QA, writes only RELEASE.md/ISSUES.md, runs shell; default graph Lead review → Release → end, issue → Lead triage', () => {
-  assert.equal(PIPELINE.at(-1), 'Release');
+  assert.equal(PIPELINE.filter(type => type !== 'Fixer').at(-1), 'Release'); // Fixer không phải bước của luồng
   const { team, id, thread } = session(ROLES);
   assert.equal(thread.flow.at(-1), 'Release'); assert.throws(() => update(team, 'add-worker', { id, type: 'Release' }), /Session đã có Release/);
   const files = filesOf({ id: 's', folder: 'E:\\game' }), scope = roleScope('Release', files);

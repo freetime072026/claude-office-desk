@@ -22,8 +22,8 @@ function labelsOf(types) {
 // Đọc khối ```team```. Trả về kế hoạch hoặc null (lý do ghi vào problems để báo lại cho PO).
 function parsePlan(source, problems = []) {
   const fail = reason => { problems.push(reason); return null; };
-  const match = /```team\s*([\s\S]*?)```/.exec(String(source || '')); if (!match) return fail('không có khối team');
-  let data; try { data = JSON.parse(match[1]); } catch { return fail('JSON trong khối team không đọc được'); }
+  const body = require('./fence.cjs').fenceBody(source, 'team'); if (body === null) return fail('không có khối team');
+  let data; try { data = JSON.parse(body); } catch { return fail('JSON trong khối team không đọc được'); }
   if (!Array.isArray(data.milestones) || !data.milestones.length || data.milestones.length > MILESTONE_LIMIT) return fail(`milestones phải là mảng 1–${MILESTONE_LIMIT} mốc`);
   const product = data.product === undefined || data.product === '' ? '' : String(data.product).trim().toLowerCase();
   if (product && !PRODUCTS.includes(product)) return fail(`product phải là ${PRODUCTS.map(item => '"' + item + '"').join(' hoặc ')}`);

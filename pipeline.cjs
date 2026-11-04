@@ -33,8 +33,8 @@ function approvalScope(thread) {
 }
 
 function parseHandoff(text) {
-  const blocks = [...String(text || '').matchAll(/```handoff\s*([\s\S]*?)```/g)]; if (!blocks.length) return null;
-  let data; try { data = JSON.parse(blocks.at(-1)[1]); } catch { return null; }
+  const blocks = require('./fence.cjs').fenceBodies(text, 'handoff'); if (!blocks.length) return null;
+  let data; try { data = JSON.parse(blocks.at(-1)); } catch { return null; }
   if (!data || typeof data !== 'object' || !HANDOFF_STATUSES.includes(data.status)) return null;
   const retested = Array.isArray(data.retested) ? data.retested.filter(item => item && typeof item.id === 'string').slice(0, 50).map(item => ({ id: item.id, evidence: clipText(item.evidence, SUMMARY_LIMIT) })) : [];
   // reassign: Dev/VFX bị chặn vì AC cần sửa tệp ngoài phạm vi hoặc cần khối khác, QA bị chặn vì thiếu công cụ Dev làm được;
@@ -84,7 +84,7 @@ const openTask = (thread, label) => (thread.dispatch || []).find(task => task.wo
 // chat-send, pump(thread), log(thread, role, text), changed(), approve(thread) → Promise<boolean>, isRunning(thread, label),
 // recordTasks(thread, tasks, reason), newRound(thread, round, summary).
 function createAutoRun(deps) {
-  const { update, send, pump, log, changed, approve, isRunning, recordTasks = () => {}, newRound = () => {}, nextMilestone = () => false } = deps;
+  const { update, send, pump, log, changed, approve, isRunning, recordTasks = () => {}, newRound = () => {}, nextMilestone = () => false, incident = () => {} } = deps;
   // Xoá trạng thái của vòng trước (dùng khi GD mở vòng mới và khi kế hoạch PO sang mốc mới); giữ phiên CLI của các khối.
   function resetRound(thread) {
     graph.resetRun(thread); thread.leadPhase = 'planning'; thread.qaFailRounds = 0; delete thread.tweak;
@@ -101,7 +101,8 @@ function createAutoRun(deps) {
     const index = Math.min(thread.flow.indexOf(node.label), ...running.filter(at => at >= 0));
     if (index >= 0) thread.stage = index; if (node.phase) thread[phaseKey(thread, node.label)] = node.phase; if (status) thread.status = status;
   }
-  function block(thread, node, text) { graph.finish(thread, node.id, 'blocked'); note(thread, text); }
+  // Dừng ở một khối: báo main.cjs (incident) để Fixer chẩn đoán và gọi đúng khối chạy tiếp, nếu session có Fixer.
+  function block(thread, node, text) { graph.finish(thread, node.id, 'blocked'); note(thread, text); if (active(thread)) incident(thread, { label: node.label, kind: 'bị chặn', reason: text }); }
 
   async function enable(thread, reason) {
     if (!(await approve(thread))) { note(thread, reason + ' Người dùng không xác nhận; giữ chạy thủ công.'); return false; }
@@ -236,7 +237,7 @@ function createAutoRun(deps) {
       if (planBlocked) return block(thread, node, planBlocked);
       if (handoff?.status === 'blocked') return block(thread, node, 'Lead Dev cần người dùng: ' + handoff.summary);
       if (!devLabels(thread).length && handoff?.status === 'done') { handedOff(thread, node.label, handoff.summary); return graph.finish(thread, node.id, 'done'); }
-      return block(thread, node, 'Lead Dev chưa xuất khối tasks hợp lệ; dừng tự động ở bước này.');
+      return block(thread, node, `Lead Dev chưa xuất khối tasks hợp lệ${thread.planProblems ? ' (' + thread.planProblems + ')' : ''}; dừng tự động ở bước này.`);
     }
     if (!handoff) return block(thread, node, `${node.label} chưa xuất khối handoff hợp lệ; dừng tự động ở bước review.`);
     if (handoff.status === 'pass' || handoff.status === 'done') { handedOff(thread, node.label, handoff.summary || 'Review đạt'); note(thread, 'Lead review đạt.'); return graph.finish(thread, node.id, 'pass'); }
@@ -366,6 +367,7 @@ function createAutoRun(deps) {
   // planBlocked: kế hoạch Lead hợp lệ nhưng main.cjs chưa áp vì còn Dev đang chạy/tạm dừng (lý do để báo đúng).
   async function after(thread, label, message, { proposalApplied = false, planBlocked = '' } = {}) {
     if (!label || !thread.flow.includes(label)) return;
+    if (!graph.nodesFor(thread, label).length) return; // khối không có nút trên sơ đồ (Fixer)
     graph.ensureGraph(thread);
     const handoff = parseHandoff(message.text), type = labelType(thread, label); let node = nodeOfRun(thread, label);
     const status = graph.stateOf(thread, node.id).status, gdDone = type === 'GD' && handoff?.status === 'done' && !message.error;
@@ -466,6 +468,8 @@ function createAutoRun(deps) {
     if (!thread.auto?.enabled && !(await enable(thread, 'Người dùng bật tự động.'))) return false;
     return runStage(thread);
   }
-  return { after, runStage, chot, setAuto, enable, decide, tweak };
+  // Fixer kết luận cần giao lại: như khối tự báo blocked kèm reassign (chuyển Lead triage, có giới hạn số lần).
+  async function reassignFor(thread, label, summary) { const node = nodeOfRun(thread, label); if (!node) return false; reassign(thread, node, label, { summary }); return advance(thread); }
+  return { after, runStage, chot, setAuto, enable, decide, tweak, reassignFor };
 }
 module.exports = { parseHandoff, parseCommand, createAutoRun, fallbackTasks, freshDevTasks, approvalScope, HANDOFF_STATUSES };

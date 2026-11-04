@@ -180,7 +180,7 @@ function applyMilestone(team, item, k, log, busy = []) {
     try { notes.push(`xoá ${label} (${dropRole(item, label, busy, true)})`); } catch (error) { worker(item, label).idle = true; notes.push(`chưa xoá được ${label}: ${error.message}; tạm nghỉ`); }
   }
   for (const label of change.add) { const added = addWorker(item, typeOf(label)); inheritPurpose(item, added); notes.push('thêm ' + added); }
-  for (const label of item.flow) { if (typeOf(label) === po.PO) continue; const config = worker(item, label); if (milestone.blocks.includes(label)) delete config.idle; else config.idle = true; }
+  for (const label of item.flow) { if ([po.PO, 'Fixer'].includes(typeOf(label))) continue; const config = worker(item, label); if (milestone.blocks.includes(label)) delete config.idle; else config.idle = true; }
   migrateRoleConfig(team, item); item.roleConfig ||= {};
   for (const label of item.flow) { const body = po.responsibilityFor(plan, label); if (body) item.roleConfig[label] = { ...item.roleConfig[label], instructions: body }; }
   const gd = item.flow.find(label => typeOf(label) === 'GD'); if (gd) worker(item, gd).task = milestone.gd;

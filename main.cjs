@@ -21,6 +21,7 @@ const unity = require('./unity.cjs');
 const projectDocs = require('./project-docs.cjs');
 const fileChanges = require('./file-changes.cjs');
 const po = require('./po.cjs');
+const fixer = require('./fixer.cjs');
 const flowgraphLib = require('./flowgraph.cjs');
 const penpot = require('./penpot.cjs');
 const skills = require('./skills.cjs');
@@ -211,11 +212,71 @@ app.whenReady().then(() => {
     update: (thread, action, payload) => teamStore.update(metadata.team, action, { ...payload, id: thread.id }),
     send: (thread, label, text) => handleDesk(null, 'chat-send', { id: thread.id, role: label, text, auto: true }),
     pump: pumpThread, isRunning, approve: approveAuto, recordTasks,
+    incident: (thread, incident) => scheduleFix(thread, incident),
     nextMilestone: thread => { const applied = teamStore.update(metadata.team, 'po-next', { id: thread.id, busy: busyLabels(thread) }); if (applied) writePoPlan(thread); return applied; },
     newRound: (thread, round, summary) => { try { sessionFiles.appendRound(thread, round, summary); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } },
     log: (thread, role, text) => thread.messages.push({ role, text, time: new Date().toISOString() }),
     changed: () => { persist(); publish(); }
   });
+  // ---- Fixer (fixer.cjs): luồng tự động dừng ở một khối → Fixer chẩn đoán → app làm theo hành động Fixer chọn.
+  const fixerOf = thread => thread.flow.find(label => getWorker(thread, label).type === fixer.FIXER);
+  const say = (thread, role, textValue) => thread.messages.push({ role, text: textValue, time: new Date().toISOString() });
+  function scheduleFix(thread, incident) {
+    const label = fixerOf(thread); if (!label || incident.label === label) return false;
+    thread.lastIncident = incident; // bạn bấm chạy Fixer bằng tay sau đó vẫn có ngữ cảnh sự cố này
+    // Fixer đang xử lý khối khác: xếp hàng, xử lý lần lượt sau khi Fixer xong.
+    if (thread.fixing) { if (thread.fixing.label !== incident.label && !(thread.fixQueue ||= []).some(item => item.label === incident.label)) thread.fixQueue.push(incident); return false; }
+    if (!fixer.canFix(thread, incident.label)) { say(thread, 'Tự động', `Fixer đã xử lý ${incident.label} ${fixer.ATTEMPTS} lần trong vòng này; dừng chờ bạn.`); return false; }
+    fixer.count(thread, incident.label); thread.fixing = { ...incident, at: new Date().toISOString() };
+    say(thread, 'Tự động', `${incident.label} dừng (${incident.kind}); gọi ${label} tìm nguyên nhân.`); persist(); publish();
+    background(thread, () => handleDesk(null, 'chat-send', { id: thread.id, role: label, text: fixer.brief(thread, incident), auto: true }).catch(error => { delete thread.fixing; throw error; }));
+    return true;
+  }
+  function takeFixNote(thread, label) { const note = thread.fixNotes?.[label] || ''; if (note) delete thread.fixNotes[label]; return note; }
+  function applyFix(thread, message) {
+    const incident = thread.fixing; delete thread.fixing; if (!incident) return;
+    const next = thread.fixQueue?.shift(); if (next) setImmediate(() => scheduleFix(thread, next));
+    const problems = [], result = message.error ? null : fixer.parseFix(message.text, thread.flow, problems);
+    if (!result) { say(thread, 'Tự động', `Fixer chưa đưa ra kết luận dùng được (${message.error ? 'lượt lỗi' : problems.join('; ')}); ${incident.label} vẫn dừng, chờ bạn.`); return; }
+    try { sessionFiles.appendFix(thread, fixer.entryMarkdown(incident, result)); } catch {}
+    const target = result.target || incident.label;
+    say(thread, 'Fixer · kết luận', `${incident.label}: ${result.cause}${result.fix ? ' · Khắc phục: ' + result.fix : ''} → ${fixer.ACTION_NAMES[result.action]}${result.action === 'user' ? '' : ' ' + target}${result.action === 'user' && result.message ? ': ' + result.message : ''}`);
+    if (result.action === 'user') return;
+    if (result.action === 'reassign') { background(thread, () => autoRun.reassignFor(thread, target, result.cause + (result.message ? ' · ' + result.message : ''))); return; }
+    (thread.fixNotes ||= {})[target] = `${result.cause}. ${result.message || result.fix}`;
+    const task = (thread.dispatch || []).find(item => item.worker === target && ['blocked', 'failed', 'cancelled', 'queued'].includes(item.status));
+    if (result.action === 'restart') { for (const key of Object.keys(thread.cliSessions || {})) if (key.endsWith(':' + target)) delete thread.cliSessions[key]; if (task) delete task.session; }
+    if (task) { task.status = 'pending'; delete task.error; }
+    persist(); publish(); background(thread, () => autoRun.runStage(thread, target));
+  }
+  // ---- Bộ canh: lượt treo (không có tiến độ quá lâu) bị dừng để Fixer xử lý; luồng tự động đứng yên (task/nút chờ mãi vì
+  // trùng tệp đang ghi rồi không ai gọi lại) được đẩy chạy lại, đứng tiếp thì gọi Fixer.
+  const HANG_IDLE_MS = 15 * 60 * 1000, HANG_TOOL_MS = 40 * 60 * 1000, STUCK_TICKS = 3, stuck = new Map();
+  function watch() {
+    const now = Date.now();
+    for (const [key, run] of chats) {
+      const message = run.message; if (!message?.streaming || message.hang) continue;
+      const open = (message.steps || []).findLast(step => !step.end), last = Date.parse(message.progress?.updatedAt || message.time) || now;
+      const limit = open ? Date.parse(open.at) + HANG_TOOL_MS : last + HANG_IDLE_MS; if (now < limit) continue;
+      message.hang = true; message.text += `\n\n[App dừng lượt này: ${open ? 'lệnh ' + open.tool + ' chạy quá ' + HANG_TOOL_MS / 60000 + ' phút' : 'không có tiến độ ' + HANG_IDLE_MS / 60000 + ' phút'}; coi là treo.]`;
+      const thread = metadata.team.threads.find(item => key.startsWith(item.id + ':')); if (thread) say(thread, 'Tự động', `${message.role} bị treo; app dừng lượt để xử lý.`);
+      run.cancel?.();
+    }
+    for (const thread of metadata.team.threads) {
+      if (!thread.auto?.enabled || teamStore.isHalted(thread) || thread.status === 'done' || thread.fixing) { stuck.delete(thread.id); continue; }
+      const running = [...chats.keys()].some(key => key.startsWith(thread.id + ':'));
+      const waiting = (thread.dispatch || []).filter(task => ['queued', 'pending'].includes(task.status)).map(task => task.worker);
+      const queued = Object.entries(thread.graphRun?.nodes || {}).filter(([, state]) => state.status === 'queued').map(([id]) => id);
+      if (running || (!waiting.length && !queued.length)) { stuck.delete(thread.id); continue; }
+      const snapshot = waiting.join(',') + '|' + queued.join(','), seen = stuck.get(thread.id);
+      const ticks = seen?.snapshot === snapshot ? seen.ticks + 1 : 1; stuck.set(thread.id, { snapshot, ticks });
+      if (ticks === 2) { pumpThread(thread).catch(() => {}); background(thread, () => autoRun.runStage(thread)); }
+      if (ticks === STUCK_TICKS) {
+        const label = waiting[0] || flowgraphLib.ensureGraph(thread).nodes.find(node => node.id === queued[0])?.label;
+        if (label) scheduleFix(thread, { label, kind: 'đứng trong hàng chờ', reason: `Không khối nào chạy nhưng hàng chờ đứng yên ${STUCK_TICKS} phút (thường do trùng tệp đang ghi rồi không được gọi lại).`, queue: snapshot.replace('|', ' · nút chờ: ') });
+      }
+    }
+  }
   // ---- Kế hoạch đội của PO (po.cjs, team.cjs). Xem trước: sơ đồ mặc định của đội ở từng mốc (chỉ để hiện trong thẻ duyệt).
   function proposePoPlan(thread, textValue) {
     const problems = [], plan = po.parsePlan(textValue, problems);
@@ -295,6 +356,16 @@ app.whenReady().then(() => {
       const content = payload.text?.trim(); if (!content || content.length > 12000) throw Error('Nhập yêu cầu tối đa 12000 ký tự');
       // Lệnh slash xử lý cục bộ nên vẫn dùng được khi khối đang trả lời (ví dụ /role Dev pause).
       if (!content.startsWith('/')) { if (chats.has(activeKey)) throw retryable('Khối này đang trả lời. Khối khác vẫn có thể chạy.'); if (chats.size >= 8) throw retryable('Tối đa 8 phiên chat'); }
+      // Bạn bấm chạy Fixer: gửi kèm ngữ cảnh sự cố đang mở và mở phiên Fixer mới (phiên cũ giữ chẩn đoán cũ), để kết luận được áp.
+      if (!content.startsWith('/') && worker.type === fixer.FIXER && !payload.auto && !payload.fixBrief && !thread.fixing) {
+        const incident = fixer.currentIncident(thread, flowgraphLib.ensureGraph(thread).nodes);
+        if (incident) {
+          thread.fixing = { ...incident, manual: true, at: new Date().toISOString() };
+          for (const key of Object.keys(thread.cliSessions || {})) if (key.endsWith(':' + payload.role)) delete thread.cliSessions[key];
+          const own = content === 'Thực hiện nhiệm vụ theo yêu cầu session.' ? '' : '\n\nGhi chú của bạn: ' + content.slice(0, 800);
+          try { return await handleDesk(null, 'chat-send', { ...payload, text: fixer.brief(thread, thread.fixing) + own, fixBrief: true }); } catch (error) { delete thread.fixing; throw error; }
+        }
+      }
       const localReply = text => { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); thread.messages.push({ role: 'Hệ thống', text, time: new Date().toISOString() }); persist(); publish(); return true; };
       if (content === '/help') return localReply('/role <khối> start|pause: chạy/tạm dừng một khối (vd. /role Lead Dev pause). /chot: chốt GD và chạy tự động các bước sau. /compact [điều cần giữ]: compact phiên của khối đang chọn. /auto on|off: bật/tắt chạy tự động. /model: chọn model bên dưới. /status: cấu hình session. /mcp, /mcp open: xem/sửa MCP server. /mcp penpot: thêm Penpot MCP cho UI/UX, Art Director, Art. /skills, /skills open: xem/thêm skill. /skills add <link GitHub> [--force]: tải skill sau khi kiểm tra an toàn. /skills update [tên], /skills remove <tên>. /usage: quota đã nhận từ CLI. /<tên skill của dự án> [ghi chú]: khối đang chọn chạy skill trong .claude/skills của thư mục dự án (vd. /build_preview). Lệnh tương tác khác dùng trong Terminal.');
       if (content.startsWith('/model')) return localReply('Model của khối hiện tại: ' + (worker.model || 'claude-opus-5-5') + '. Đổi bằng danh sách Model dưới ô chat.');
@@ -391,7 +462,7 @@ app.whenReady().then(() => {
       // Lượt Release thường (không phải lệnh /build_…) của dự án có skill build_production: đóng gói và kiểm theo skill đó.
       const releaseSkill = payload.role && worker.type === 'Release' && !compactOnly && !projectSkill ? skills.projectSkill(thread.folder, 'build_production') : null;
       const releaseGuide = payload.role && worker.type === 'Release' && !compactOnly ? [releaseConfig.prepare(thread.folder, worker.release), releaseSkill ? `Dự án có skill build_production (${releaseSkill.file}): sau khi commit code đã review cùng build.json lên nhánh hiện tại (không push), bước đóng gói và kiểm làm đúng theo skill này (Read SKILL.md: kiểm build.json, npm run verify -- production, xem ảnh chụp, đi hết CHECKLIST.md) thay cho chỉ chạy npm run build.` : ''].filter(Boolean).join('\n') : '';
-      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { content: projectSkill ? projectSkill.prompt : content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide });
+      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { fixNote: payload.role ? takeFixNote(thread, payload.role) : '', content: projectSkill ? projectSkill.prompt : content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide });
       // Brief vai trò đi qua system prompt. CLI giữ system prompt của lần gọi đầu khi resume, nên brief đổi (task/pha mới) trong
       // phiên đang tiếp tục được gửi một lần trong tin; thread.briefSent nhớ bản phiên đã có.
       const briefHash = built?.brief ? createHash('sha1').update(built.brief).digest('hex') : '', briefKnown = !resumed || thread.briefSent?.[sessionKey] === briefHash;
@@ -427,6 +498,7 @@ app.whenReady().then(() => {
         if (files && isDevType(worker.type) && (handoff || changed)) { try { sessionFiles.appendChange(thread, payload.role, handoff?.status || (run.message.error ? 'lỗi' : 'không có handoff'), handoff?.summary || '', changed); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } }
         let proposalApplied = false, planBlocked = '';
         if (worker.type === po.PO && !run.message.error) proposePoPlan(thread, run.message.text);
+        if (worker.type === fixer.FIXER) applyFix(thread, run.message);
         // Lead (pha planning/triage) và Art Director (khi có khối tasks) giao việc; lý do kế hoạch bị từ chối được lưu và chèn vào
         // prompt lượt kế tiếp của người giao (prompt.cjs), xoá khi kế hoạch hợp lệ.
         // Bạn gõ tay cho Lead khi Lead đang ở pha review (sau review không đạt, QA hết vòng…) và Lead xuất khối tasks: đó là giao lại việc
@@ -508,7 +580,8 @@ app.whenReady().then(() => {
     flushPersist();
   });
   window.loadFile(path.join(__dirname, 'dashboard.html'));
-  const usageTimer = setInterval(() => publish(), 10000); usageTimer.unref(); window.on('closed', () => clearInterval(usageTimer));
+  const usageTimer = setInterval(() => publish(), 10000); usageTimer.unref();
+  const watchTimer = setInterval(() => { try { watch(); } catch {} }, 60000); watchTimer.unref(); window.on('closed', () => clearInterval(watchTimer)); window.on('closed', () => clearInterval(usageTimer));
 });
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => { if (root) flushPersist(); });

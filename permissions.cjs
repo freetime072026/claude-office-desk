@@ -52,6 +52,8 @@ const WEB = ['WebFetch', 'WebSearch'];
 function roleScope(type, files, devFiles = [], folder = '', assigner = 'Lead') {
   if (!files) return null;
   if (type === 'GD') return { paths: [files.gdd], bash: false, label: 'GD chỉ ghi GDD.md' };
+  // Fixer: chạy lệnh kiểm tra để chẩn đoán, không sửa code; chỉ ghi FIXES.md.
+  if (type === 'Fixer') return { paths: [files.fixes], bash: true, label: 'Fixer chỉ ghi FIXES.md' };
   if (type === 'Lead Dev') return { paths: [files.project], bash: true, label: 'Lead Dev chỉ ghi PROJECT.md' };
   if (type === 'QA') return { paths: [files.issues, files.perf], bash: true, label: 'QA chỉ ghi ISSUES.md và PERF.md' };
   if (type === 'UI/UX') return { paths: [files.uiux], bash: false, label: 'UI/UX chỉ ghi UIUX.md' };

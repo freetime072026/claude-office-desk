@@ -9,7 +9,7 @@ const fence = (name, value) => '```' + name + '\n' + JSON.stringify(value) + '\n
 const session = roles => { const team = initial(); const id = update(team, 'create', { request: 'Game' }); for (const type of roles) update(team, 'add-worker', { id, type }); return { team, id, thread: team.threads[0] }; };
 
 test('Art is a Dev-type role after VFX and before QA: Sonnet, edit mode, shell, 40 tool turns, works from .md files', () => {
-  assert.deepEqual(PIPELINE, ['PO', 'GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release']);
+  assert.deepEqual(PIPELINE, ['PO', 'GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release', 'Fixer']);
   const { team, id, thread } = session(['QA', 'Art', 'Dev', 'Lead Dev']);
   assert.deepEqual(thread.flow, ['Lead Dev', 'Dev', 'Art', 'QA']);
   assert.equal(worker(thread, 'Art').model, 'sonnet'); assert.equal(worker(thread, 'Art').mode, 'edit');

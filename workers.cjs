@@ -20,10 +20,10 @@ function misplacedIn(file, folders) {
 }
 const resolvedFiles = (folder, files) => files.map(file => path.resolve(folder || '.', file) + (/[\\/]$/.test(file) ? path.sep : ''));
 // Thứ tự pipeline chuẩn (PLAN L-4). Role tùy chỉnh luôn đứng sau QA.
-const PIPELINE = Object.freeze(['PO', 'GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release']);
+const PIPELINE = Object.freeze(['PO', 'GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release', 'Fixer']);
 const LEAD = 'Lead Dev';
 // Khối chỉ có một mỗi session: Lead/Art Director có pha là nút riêng trên sơ đồ (flowgraph.cjs); Release là bước cuối duy nhất.
-const SINGLE_TYPES = Object.freeze(['PO', LEAD, 'Art Director', 'Release']);
+const SINGLE_TYPES = Object.freeze(['Fixer', 'PO', LEAD, 'Art Director', 'Release']);
 const QA_ROUND_LIMIT = 3;
 // 'paused': task bị /role <tên> pause; vẫn tính là việc dở (không cho xóa role, không thay phân công mới).
 // 'pending': Lead đã giao nhưng nút Dev trên sơ đồ chưa tới lượt chạy (bộ chạy chuyển sang 'queued' khi tới lượt).
@@ -109,15 +109,16 @@ const ownedByAd = (thread, task) => task.by === ART_DIRECTOR && hasArtDirector(t
 // types: loại khối được nhận task; reserved: task của người giao khác đang giữ tệp (không được chồng).
 function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [] } = {}) {
   const fail = reason => { problems.push(reason); return null; };
-  const match = /```tasks\s*([\s\S]*?)```/.exec(text); if (!match) return fail('không có khối tasks');
+  const body = require('./fence.cjs').fenceBody(text, 'tasks'); if (body === null) return fail('không có khối tasks');
   try {
-    const plan = JSON.parse(match[1]); if (!Array.isArray(plan.tasks) || !plan.tasks.length || plan.tasks.length > 30) return fail('tasks phải là mảng 1–30 mục');
+    const plan = JSON.parse(body); if (!Array.isArray(plan.tasks) || !plan.tasks.length || plan.tasks.length > 30) return fail('tasks phải là mảng 1–30 mục');
     const owners = new Set(); for (const task of plan.tasks) {
       // Lead lập kế hoạch giao Art/Anim khi có Art Director: nói rõ luật thay vì lỗi chung "không phải Dev/VFX/Sound".
       if (thread.flow.includes(task.worker) && VISUAL_TYPES.includes(worker(thread, task.worker).type) && !types.includes(worker(thread, task.worker).type) && types.includes('Dev')) return fail(`${task.worker}: ở pha lập kế hoạch, Art/Anim do Art Director giao theo ART.md; bỏ task này khỏi khối tasks (pha triage thì Lead giao được Art/Anim)`);
       // Khối đang giữ task chưa xong của người giao kia (Art Director/Lead): không giao chồng thêm task thứ hai.
       const held = reserved.find(item => item.worker === task.worker);
       if (held) return fail(`${task.worker} đang có task ${held.by === ART_DIRECTOR ? 'Art Director' : 'Lead'} giao chưa xong (${held.status}); đợi xong hoặc giao khối khác`);
+      if (!thread.flow.includes(task.worker)) return fail(`không có khối "${String(task.worker).slice(0, 60)}" trong đội (khối nhận việc được: ${thread.flow.filter(label => types.includes(worker(thread, label).type)).join(', ') || 'không có'}); giao cho khối có sẵn hoặc báo người dùng cần thêm khối`);
       if (!thread.flow.includes(task.worker) || !types.includes(worker(thread, task.worker).type) || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return fail(`worker "${task.worker}" không phải ${types.join('/')} trong đội, bị trùng, hoặc task trống/quá dài`); owners.add(task.worker); }
     // files bắt buộc và không chồng nhau giữa các Dev: điều kiện để Dev sửa song song không ghi đè nhau.
     // Tối đa FILES_PER_TASK mục: task lớn làm lượt Dev dài, ngữ cảnh phình và chi phí tăng nhanh hơn số lượt.

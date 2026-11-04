@@ -84,7 +84,7 @@ test('a task may list at most 8 files, and every rejected plan says why', () => 
   const nine = Array.from({ length: 9 }, (_, index) => `src/F${index}.cs`);
   const big = plan([{ worker: 'Dev', task: 'x', files: nine }]); assert.equal(big.result, null); assert.match(big.problems[0], /Dev: 9 tệp, tối đa 8 mỗi task/);
   assert.equal(plan([{ worker: 'Dev', task: 'x', files: nine.slice(0, 8) }]).result.length, 1);
-  assert.match(plan([{ worker: 'Ghost', task: 'x', files: ['a'] }]).problems[0], /"Ghost" không phải Dev\/VFX/);
+  assert.match(plan([{ worker: 'Ghost', task: 'x', files: ['a'] }]).problems[0], /không có khối "Ghost" trong đội/);
   const none = []; assert.equal(taskPlan('no block', thread, none), null); assert.deepEqual(none, ['không có khối tasks']);
 });
 test('task files may be absolute inside a related session folder, never outside the session folders', () => {

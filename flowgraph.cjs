@@ -33,7 +33,7 @@ function defaultGraph(thread) {
   const pre = flow.filter(label => ['PO', 'GD', 'UI/UX'].includes(type(label)));
   const lead = flow.find(label => type(label) === LEAD), devs = flow.filter(label => isDevType(type(label)));
   const qas = flow.filter(label => type(label) === 'QA'), ad = flow.find(label => type(label) === ART_DIRECTOR), release = flow.find(label => type(label) === RELEASE);
-  const custom = flow.filter(label => !pre.includes(label) && label !== lead && label !== ad && label !== release && !devs.includes(label) && !qas.includes(label));
+  const custom = flow.filter(label => type(label) !== 'Fixer' && !pre.includes(label) && label !== lead && label !== ad && label !== release && !devs.includes(label) && !qas.includes(label));
   const nodes = [], edges = [], at = (column, row, rows) => ({ x: 40 + column * COLUMN, y: 180 + (row - (rows - 1) / 2) * 100 });
   let column = 0;
   const add = (id, label, phase, position) => { nodes.push({ id, label, ...(phase ? { phase } : {}), ...position }); return id; };
