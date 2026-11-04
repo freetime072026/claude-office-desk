@@ -136,7 +136,9 @@ function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [
 // giao; task của người giao kia được giữ và không được chồng tệp; khối của người giao đang chạy/tạm dừng thì chưa áp. Thuần, main.cjs ghi.
 function mergePlan(thread, planner, text) {
   const byAd = planner === ART_DIRECTOR, mine = task => byAd === ownedByAd(thread, task);
-  const others = (thread.dispatch || []).filter(task => !mine(task) && !['finished', 'cancelled'].includes(task.status));
+  // Task người dùng dừng giữa chừng (Stop → cancelled, không có lý do) vẫn là việc chưa xong của người giao kia: giữ để /role <khối> start
+  // chạy tiếp; chỉ bỏ task đã xong hoặc bị huỷ có lý do (ví dụ Lead lập lại kế hoạch).
+  const others = (thread.dispatch || []).filter(task => !mine(task) && task.status !== 'finished' && !(task.status === 'cancelled' && task.error));
   const problems = [], proposal = taskPlan(text, thread, problems, { types: byAd ? AD_TYPES : leadTypes(thread), reserved: others });
   if (!proposal) return { problems: problems.join('; ') };
   const busy = (thread.dispatch || []).filter(task => mine(task) && BUSY_TASK.includes(task.status)).map(task => task.worker);

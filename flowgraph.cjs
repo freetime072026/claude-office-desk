@@ -160,7 +160,7 @@ const entries = graph => graph.nodes.filter(node => node.id !== END && !incoming
 // Nút kết thúc với kết quả → kích hoạt các nút đích của cạnh khớp. Trả về id các nút vừa được kích hoạt.
 function finish(thread, id, outcome) {
   const graph = ensureGraph(thread), state = stateOf(thread, id);
-  state.status = outcome === 'blocked' ? 'blocked' : outcome === 'skipped' ? 'skipped' : 'done'; state.outcome = outcome;
+  state.status = outcome === 'blocked' ? 'blocked' : outcome === 'skipped' ? 'skipped' : 'done'; state.outcome = outcome; delete state.again;
   const targets = [...new Set(outgoing(graph, id).filter(edge => matches(edge.when, outcome)).map(edge => edge.to))];
   for (const target of targets) { const next = stateOf(thread, target); if (next.status !== 'running') next.status = 'queued'; else next.again = true; }
   return targets;
@@ -168,10 +168,19 @@ function finish(thread, id, outcome) {
 function queue(thread, id) { const state = stateOf(thread, id); if (state.status !== 'running') state.status = 'queued'; }
 // Nút đang chờ và không còn nút nối vào nó đang chờ/chạy. Nếu không có gì chạy được mà vẫn còn nút chờ (vòng chờ lẫn nhau),
 // chạy nút chờ đầu tiên theo thứ tự trong sơ đồ để luồng không đứng im.
+// Nút nằm sau id theo các cạnh đi tiếp (xong/pass/luôn), không tính cạnh quay về (issue/reject).
+function downstream(graph, id) {
+  const seen = new Set(), stack = [id];
+  while (stack.length) for (const edge of outgoing(graph, stack.pop())) if (['done', 'pass', 'always'].includes(edge.when) && !seen.has(edge.to)) { seen.add(edge.to); stack.push(edge.to); }
+  return seen;
+}
+// Nút chờ nằm phía sau (ví dụ Art Director · review chờ Art, nối ngược về Art bằng cạnh reject) không giữ nút phía trước,
+// nếu không hai bên chờ nhau và các Art/Anim chỉ được chạy lần lượt qua nhánh dự phòng bên dưới.
 function ready(thread) {
   const graph = ensureGraph(thread), status = id => stateOf(thread, id).status;
   const queued = graph.nodes.filter(node => status(node.id) === 'queued');
-  const free = queued.filter(node => !incoming(graph, node.id).some(edge => edge.from !== node.id && ['queued', 'running'].includes(status(edge.from))));
+  const holds = (edge, node) => edge.from !== node.id && (status(edge.from) === 'running' || status(edge.from) === 'queued' && !downstream(graph, node.id).has(edge.from));
+  const free = queued.filter(node => !incoming(graph, node.id).some(edge => holds(edge, node)));
   if (free.length || graph.nodes.some(node => status(node.id) === 'running')) return free;
   return queued.slice(0, 1);
 }

@@ -146,10 +146,27 @@ function createAutoRun(deps) {
       else if (result === false) block(thread, node, `Lượt ${node.label} bị hủy ở bước xác nhận; dùng /role ${node.label} start để chạy lại.`);
     } catch (error) { block(thread, node, `Không chạy được ${node.label}: ${error.message}`); }
   }
+  // Nút Dev/VFX/Art/Anim "running" mà khối không chạy và không còn task trong hàng (bị dừng giữa chừng, task bị kế hoạch mới bỏ,
+  // app đóng khi đang chạy) làm QA và các bước sau chờ mãi. Đưa nút về đúng trạng thái theo task của khối:
+  // còn task chờ hoặc vừa được kích hoạt lại → chờ chạy (không có task thì startNode bỏ qua); task xong → xong; bị chặn/lỗi/dừng → chặn.
+  function settleStale(thread) {
+    for (const node of graph.ensureGraph(thread).nodes) {
+      const state = graph.stateOf(thread, node.id);
+      if (state.status !== 'running' || !isDevType(labelType(thread, node.label)) || isRunning(thread, node.label)) continue;
+      const tasks = (thread.dispatch || []).filter(task => task.worker === node.label);
+      if (tasks.some(task => [...RUNNING_TASK, 'paused'].includes(task.status))) continue;
+      if (state.again || tasks.some(task => task.status === 'pending' && !task.artReject)) { state.status = 'queued'; delete state.again; continue; }
+      const stuck = tasks.find(task => ['blocked', 'failed', 'cancelled'].includes(task.status));
+      if (stuck) block(thread, node, `${node.label} ${{ failed: 'lỗi', blocked: 'bị chặn', cancelled: 'đã bị dừng' }[stuck.status]}${stuck.error ? ': ' + stuck.error : ''}. Xử lý rồi dùng /role ${node.label} start (chạy tiếp task) hoặc Thử lại task bị chặn.`);
+      else if (tasks.some(task => task.status === 'finished')) graph.finish(thread, node.id, 'done');
+      else block(thread, node, `${node.label} đã dừng giữa chừng, không còn task; dùng /role ${node.label} start để chạy lại.`);
+    }
+  }
   // Chạy mọi nút sẵn sàng cho tới khi không còn gì đổi (nút bị bỏ qua kích hoạt tiếp nút sau ngay trong vòng lặp).
   async function advance(thread) {
     let startedAny = false;
     for (let guard = 0; guard < 100 && active(thread); guard++) {
+      settleStale(thread);
       const next = graph.ready(thread); let moved = false;
       for (const node of next) { const before = graph.stateOf(thread, node.id).status; await startNode(thread, node); if (graph.stateOf(thread, node.id).status !== before) { moved = true; startedAny = true; } }
       if (!moved) break;

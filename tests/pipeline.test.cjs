@@ -260,6 +260,36 @@ test('a Lead replan queues the new task of a block whose node is still running f
   thread.dispatch = [{ worker: 'Dev', task: 'x', files: ['src/a/'], status: 'blocked' }, { worker: 'Dev #2', task: 'y', files: ['src/b/'], status: 'pending' }];
   const lead = graph.nodesFor(thread, 'Lead Dev').find(node => (node.phase || 'planning') === 'planning'); graph.stateOf(thread, lead.id).status = 'running';
   await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev #2']) }, { proposalApplied: true });
-  assert.equal(thread.dispatch.find(task => task.worker === 'Dev #2').status, 'queued', JSON.stringify(thread.dispatch));
+  assert.ok(['queued', 'running'].includes(thread.dispatch.find(task => task.worker === 'Dev #2').status), JSON.stringify(thread.dispatch));
   assert.ok(sent.includes('Dev #2'));
+});
+
+test('stale Dev nodes left "running" (stopped, or their task dropped by a Lead replan) no longer hold QA', async () => {
+  const { team, thread, sent, auto } = harness(); update(team, 'add-worker', { id: thread.id, type: 'Dev' }); update(team, 'add-worker', { id: thread.id, type: 'Dev' });
+  await auto.after(thread, 'GD', reply('done'));
+  leadPlans(thread, tasksText(['Dev', 'Dev #2'])); await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev', 'Dev #2']) }, { proposalApplied: true });
+  const graph = require('../flowgraph.cjs'), state = label => graph.stateOf(thread, graph.nodesFor(thread, label)[0].id);
+  // Dev #3 bị dừng ở kế hoạch trước, task bị kế hoạch mới bỏ: nút vẫn "running" (đã kích hoạt lại) nhưng không còn task.
+  Object.assign(state('Dev #3'), { status: 'running', again: true });
+  devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  assert.equal(state('Dev #3').status, 'skipped');
+  assert.ok(!sent.includes('QA'), 'QA waits for Dev #2');
+  devFinishes(thread, 'Dev #2'); await auto.after(thread, 'Dev #2', reply('done'));
+  assert.equal(sent.at(-1), 'QA');
+});
+
+test('a stopped Dev (task cancelled) is blocked instead of staying "running", and a pending task on a running node is started', async () => {
+  const { team, thread, sent, auto } = harness(); update(team, 'add-worker', { id: thread.id, type: 'Dev' });
+  await auto.after(thread, 'GD', reply('done'));
+  leadPlans(thread, tasksText(['Dev', 'Dev #2'])); await auto.after(thread, 'Lead Dev', { text: tasksText(['Dev', 'Dev #2']) }, { proposalApplied: true });
+  const graph = require('../flowgraph.cjs'), state = label => graph.stateOf(thread, graph.nodesFor(thread, label)[0].id);
+  thread.dispatch.find(task => task.worker === 'Dev #2').status = 'cancelled';
+  await auto.after(thread, 'Dev #2', { text: 'CLI dừng', error: true });
+  assert.equal(state('Dev #2').status, 'blocked');
+  assert.match(thread.messages.at(-1).text, /Dev #2 đã bị dừng/);
+  // Task mới của Dev #2 nằm "pending" trên nút đang running (không ai chạy): lượt kế tiếp đưa vào hàng và chạy.
+  state('Dev #2').status = 'running'; thread.dispatch.find(task => task.worker === 'Dev #2').status = 'pending';
+  const before = sent.length; devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  assert.deepEqual(sent.slice(before), ['Dev #2']);
+  assert.ok(!sent.includes('QA'));
 });

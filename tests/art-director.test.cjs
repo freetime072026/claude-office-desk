@@ -109,3 +109,27 @@ test('prompts: AD planning approves mockups and writes ART.md specs; review chec
   const art = rolePrompt({}, thread, 'Art', { content: 'x', files }).brief; assert.match(art, /STYLE\.md/); assert.match(art, /mục ART-… của task trong .*ART\.md/);
   assert.match(rolePrompt({}, thread, 'UI/UX', { content: 'x', files }).brief, /kích thước từng item \(px, anchor\) để Art Director duyệt/);
 });
+
+test('Art tasks the user stopped (cancelled) survive a Lead plan, and /role-style resume finds them; Lead replans still drop their own', () => {
+  const { thread } = session(ROLES);
+  thread.dispatch = mergePlan(thread, 'Art Director', tasks([['Art', ['assets/stage/']]])).dispatch;
+  thread.dispatch[0].status = 'cancelled'; // Stop giữa lượt
+  const merged = mergePlan(thread, 'Lead Dev', tasks([['Dev', ['src/']]])).dispatch;
+  assert.deepEqual(merged.map(task => `${task.worker}:${task.status}`), ['Art:cancelled', 'Dev:pending']);
+  assert.match(mergePlan(thread, 'Lead Dev', tasks([['Dev', ['assets/stage/x.png']]])).problems, /chồng tệp với task đang giao cho Art/);
+  // Task bị huỷ có lý do (Lead lập lại kế hoạch) thì bỏ như trước.
+  thread.dispatch[0].error = 'Lead lập lại kế hoạch';
+  assert.deepEqual(mergePlan(thread, 'Lead Dev', tasks([['Dev', ['src/']]])).dispatch.map(task => task.worker), ['Dev']);
+});
+
+test('Art/Anim start beside a running Dev even while Art Director review (which loops back to them by reject) is already queued', () => {
+  const { thread } = session(['GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'Art', 'Art', 'Anim', 'QA']);
+  const set = (id, status) => { graph.stateOf(thread, id).status = status; };
+  set('Dev', 'running'); for (const id of ['Art', 'Art #2', 'Anim', 'QA', 'Art Director@review']) set(id, 'queued');
+  assert.deepEqual(graph.ready(thread).map(node => node.id), ['Art', 'Art #2', 'Anim']);
+  // Art Director review đang chạy (có thể trả ảnh về) thì Art vẫn chờ; Lead triage đang chờ vẫn giữ Dev như trước.
+  set('Art', 'idle'); set('Art #2', 'idle'); set('Anim', 'idle'); set('Art Director@review', 'running'); set('Art', 'queued');
+  assert.deepEqual(graph.ready(thread).map(node => node.id), []);
+  set('Art Director@review', 'idle'); set('Dev', 'queued'); set('Lead Dev@triage', 'queued');
+  assert(!graph.ready(thread).some(node => node.id === 'Dev'));
+});

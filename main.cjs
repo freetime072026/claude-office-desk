@@ -409,7 +409,10 @@ app.whenReady().then(() => {
         chats.delete(activeKey);
         if (compactOnly) { persist(); publish(); return; }
         const handoff = pipeline.parseHandoff(run.message.text);
-        const assigned = (thread.dispatch || []).find(task => task.worker === payload.role && ['running', 'starting'].includes(task.status));
+        // Bấm chạy tay khối Dev/VFX/Art/Anim đang có task chờ (prompt đã kèm đúng task đó ở "Task của khối") và lượt xuất handoff:
+        // tính là lượt làm task, nếu không task nằm chờ mãi và sơ đồ không đi tiếp (pipeline.cjs chỉ chuyển bước theo task xong).
+        const manualTask = !payload.auto && !run.message.error && handoff && isDevType(worker.type) ? (thread.dispatch || []).find(task => task.worker === payload.role && ['pending', 'queued'].includes(task.status) && !task.artReject && task.task === worker.task) : null;
+        const assigned = (thread.dispatch || []).find(task => task.worker === payload.role && ['running', 'starting'].includes(task.status)) || manualTask;
         // Ghi phiên CLI của task (kể cả khi bị tạm dừng/huỷ giữa chừng) để lần chạy lại tiếp tục phiên này (sendTask).
         const ownTask = assigned || (thread.dispatch || []).find(task => task.worker === payload.role && ['paused', 'cancelled'].includes(task.status));
         if (ownTask && thread.cliSessions?.[sessionKey]) ownTask.session = taskSession(thread.cliSessions[sessionKey], sessionKey, run.message.usage);
