@@ -85,6 +85,9 @@ test('a task may list at most 8 files, and every rejected plan says why', () => 
   const big = plan([{ worker: 'Dev', task: 'x', files: nine }]); assert.equal(big.result, null); assert.match(big.problems[0], /Dev: 9 tệp, tối đa 8 mỗi task/);
   assert.equal(plan([{ worker: 'Dev', task: 'x', files: nine.slice(0, 8) }]).result.length, 1);
   assert.match(plan([{ worker: 'Ghost', task: 'x', files: ['a'] }]).problems[0], /không có khối "Ghost" trong đội/);
+  // Nhiều task cho cùng một khối: lý do riêng, chỉ cách gộp (Art Director từng giao 3 task cho "Art" và nhận lỗi chung).
+  const twice = plan([{ worker: 'Dev', task: 'a', files: ['a'] }, { worker: 'Dev', task: 'b', files: ['b'] }]);
+  assert.equal(twice.result, null); assert.match(twice.problems[0], /"Dev" được giao nhiều hơn 1 task; .*gộp/);
   const none = []; assert.equal(taskPlan('no block', thread, none), null); assert.deepEqual(none, ['không có khối tasks']);
 });
 test('task files may be absolute inside a related session folder, never outside the session folders', () => {

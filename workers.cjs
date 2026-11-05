@@ -119,7 +119,9 @@ function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [
       const held = reserved.find(item => item.worker === task.worker);
       if (held) return fail(`${task.worker} đang có task ${held.by === ART_DIRECTOR ? 'Art Director' : 'Lead'} giao chưa xong (${held.status}); đợi xong hoặc giao khối khác`);
       if (!thread.flow.includes(task.worker)) return fail(`không có khối "${String(task.worker).slice(0, 60)}" trong đội (khối nhận việc được: ${thread.flow.filter(label => types.includes(worker(thread, label).type)).join(', ') || 'không có'}); giao cho khối có sẵn hoặc báo người dùng cần thêm khối`);
-      if (!thread.flow.includes(task.worker) || !types.includes(worker(thread, task.worker).type) || owners.has(task.worker) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return fail(`worker "${task.worker}" không phải ${types.join('/')} trong đội, bị trùng, hoặc task trống/quá dài`); owners.add(task.worker); }
+      // Trùng khối báo riêng: lỗi chung "không phải…, bị trùng, hoặc…" khiến Art Director lặp lại đúng kế hoạch giao 3 task cho "Art".
+      if (owners.has(task.worker)) return fail(`"${task.worker}" được giao nhiều hơn 1 task; mỗi khối nhận tối đa một task mỗi kế hoạch: gộp các việc của "${task.worker}" thành một task (files dùng thư mục nếu quá ${FILES_PER_TASK} tệp) hoặc chia cho khối khác cùng loại trong đội`);
+      if (!thread.flow.includes(task.worker) || !types.includes(worker(thread, task.worker).type) || typeof task.task !== 'string' || !task.task.trim() || task.task.length > 11800) return fail(`worker "${task.worker}" không phải ${types.join('/')} trong đội, bị trùng, hoặc task trống/quá dài`); owners.add(task.worker); }
     // files bắt buộc và không chồng nhau giữa các Dev: điều kiện để Dev sửa song song không ghi đè nhau.
     // Tối đa FILES_PER_TASK mục: task lớn làm lượt Dev dài, ngữ cảnh phình và chi phí tăng nhanh hơn số lượt.
     const folders = sessionFolders(thread);

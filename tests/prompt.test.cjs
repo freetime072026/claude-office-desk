@@ -24,6 +24,16 @@ test('TC-PROMPT-02 / AC-PROMPT-01.1 / AC-LOOP-01.7 / AC-REVIEW-01.1: Lead prompt
   assert.match(review, /pha review/); assert.match(review, TASK_BLOCK);
   for (const item of [/1\. Code clean: tên rõ nghĩa, hàm ngắn một nhiệm vụ, không code chết, không magic value\./, CHECKLIST, /3\. Phạm vi diff khớp task và AC/, /file:line/]) assert.match(review, item);
 });
+test('Lead review: code clean / duplicate are warnings in ISSUES.md, fixed once per milestone after Dev planning', () => {
+  const fresh = rolePrompt({}, thread({ leadPhase: 'review' }), 'Lead Dev', { content: 'Review' }).text;
+  for (const item of [/Mục 1 và 2 là warning, không tự là lý do reject/, /W-n · warning/, /1 lần duy nhất, ở pha cuối cùng của mốc/, /lập kế hoạch \(planning\)/, /Lần sửa duy nhất của mốc này chưa dùng\./]) assert.match(fresh, item);
+  const used = rolePrompt({}, thread({ leadPhase: 'review', reviewRejects: 1 }), 'Lead Dev', { content: 'Review' }).text;
+  assert.match(used, /Lần sửa duy nhất của mốc này đã dùng: không reject vì warning/);
+  assert.doesNotMatch(rolePrompt({}, thread({ leadPhase: 'planning', reviewRejects: 1 }), 'Lead Dev', { content: 'Plan' }).text, /Lần sửa duy nhất của mốc/);
+  const files = { project: 'P.md', issues: 'I.md', changes: 'C.md', perf: 'F.md', gdd: 'G.md' };
+  const scope = require('../permissions.cjs').roleScope('Lead Dev', files);
+  assert.deepEqual(scope.paths, ['P.md', 'I.md']);
+});
 test('AC-PROMPT-01.2: empty fields are dropped, no blank lines', () => {
   const { text } = rolePrompt({}, thread(), 'QA', { content: 'Kiểm thử' });
   assert.doesNotMatch(text, /Yêu cầu riêng của session|Task của khối|Riêng session/); assert(text.split('\n').every(line => line.trim()));

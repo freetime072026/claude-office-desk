@@ -18,7 +18,7 @@ function describeTool(tool, input = {}) {
   return clip(text, TEXT_LIMIT);
 }
 // ---- Phạm vi ghi theo role (app thực thi, không chỉ dặn trong prompt).
-// GD chỉ ghi GDD và không chạy shell; Lead chỉ ghi PROJECT.md; QA chỉ ghi ISSUES/PERF; Dev chỉ ghi các tệp Lead giao.
+// GD chỉ ghi GDD và không chạy shell; Lead chỉ ghi PROJECT.md và ISSUES.md (warning review); QA chỉ ghi ISSUES/PERF; Dev chỉ ghi các tệp Lead giao.
 // UI/UX chỉ ghi UIUX.md, không chạy shell.
 // null = không giới hạn (role tùy chỉnh, chat thường, Dev chưa có danh sách tệp).
 const path = require('node:path');
@@ -54,7 +54,8 @@ function roleScope(type, files, devFiles = [], folder = '', assigner = 'Lead') {
   if (type === 'GD') return { paths: [files.gdd], bash: false, label: 'GD chỉ ghi GDD.md' };
   // Fixer: chạy lệnh kiểm tra để chẩn đoán, không sửa code; chỉ ghi FIXES.md.
   if (type === 'Fixer') return { paths: [files.fixes], bash: true, label: 'Fixer chỉ ghi FIXES.md' };
-  if (type === 'Lead Dev') return { paths: [files.project], bash: true, label: 'Lead Dev chỉ ghi PROJECT.md' };
+  // ISSUES.md: Lead review ghi warning code clean (prompt.cjs REVIEW_CHECKLIST) thay vì reject.
+  if (type === 'Lead Dev') return { paths: [files.project, files.issues], bash: true, label: 'Lead Dev chỉ ghi PROJECT.md và ISSUES.md' };
   if (type === 'QA') return { paths: [files.issues, files.perf], bash: true, label: 'QA chỉ ghi ISSUES.md và PERF.md' };
   if (type === 'UI/UX') return { paths: [files.uiux], bash: false, label: 'UI/UX chỉ ghi UIUX.md' };
   // Release: chạy lệnh build/đóng gói của project (shell), không sửa code; chỉ ghi kết quả và Issue.
