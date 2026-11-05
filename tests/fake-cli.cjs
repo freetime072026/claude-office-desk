@@ -20,6 +20,7 @@ function handle(message) {
   if (prompt.includes('[linger]')) linger = true;
   const ask = /\[ask:([\w]+)\]/.exec(prompt);
   if (prompt.includes('[args]')) { reply(JSON.stringify(process.argv.slice(2))); return; }
+  if (prompt.includes('[env]')) { reply(JSON.stringify({ BASH_DEFAULT_TIMEOUT_MS: process.env.BASH_DEFAULT_TIMEOUT_MS, BASH_MAX_TIMEOUT_MS: process.env.BASH_MAX_TIMEOUT_MS })); return; }
   if (!ask) { reply('Echo: ' + prompt.trim()); return; }
   waiting.set('req-1', response => { const decision = response.response; reply(`${ask[1]} ${decision.behavior}` + (decision.behavior === 'allow' ? ' ' + JSON.stringify(decision.updatedInput) : ': ' + decision.message)); });
   out({ type: 'control_request', request_id: 'req-1', request: { subtype: 'can_use_tool', tool_name: ask[1], input: { command: 'echo hi' }, tool_use_id: 'tool-1' } });

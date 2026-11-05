@@ -98,6 +98,9 @@ function decide({ scope, mode, tool, input = {}, cwd = '' }) {
   if (tool === 'Bash') {
     const scan = wholeDiskScan(input.command);
     if (scan) return { action: 'deny', message: `Không quét cả ổ đĩa (${scan}): lệnh chạy hàng chục phút và treo lượt. Tìm công cụ bằng \`command -v ffmpeg\` / \`where ffmpeg\`; tìm tệp trong thư mục của session (đường dẫn cụ thể, có -maxdepth).` };
+    // /tmp trong lệnh của QA: Git Bash hiểu là thư mục tạm của Windows, node hiểu là \tmp ở gốc ổ, nên script ghi được mà đọc lại lỗi
+    // "Cannot find module '/tmp/…'". Chặn trước để QA đổi sang đường dẫn tương đối ngay trong lượt.
+    if (scope?.noBackground && /(^|[\s'"=(<>|;&:])\/tmp(\/|\b)/.test(String(input.command || ''))) return { action: 'deny', message: 'Không dùng /tmp: Git Bash và node hiểu khác nhau (bash là thư mục tạm của Windows, node là \\tmp ở gốc ổ). Ghi kết quả/ảnh vào .office-desk/qa/out/ bằng đường dẫn tương đối rồi chạy lại lệnh.' };
     if (scope?.noBackground && input.run_in_background) return { action: 'deny', message: 'Không chạy lệnh nền (run_in_background). Bật dev server và chạy kiểm trong cùng một lệnh Bash rồi tắt server ở cuối lệnh (vd. `node scripts/build.cjs dev --port 3311 > log 2>&1 & PID=$!; …; kill $PID`), bọc lệnh dài bằng timeout.' };
     const verdict = bashVerdict(scope, mode), command = withCurlTimeout(input.command);
     return command === input.command || verdict.action === 'deny' ? verdict : { ...verdict, updatedInput: { ...input, command } };

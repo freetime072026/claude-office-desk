@@ -4,6 +4,10 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { usageEvent } = require('./usage.cjs');
 const { cleanEnv, sessionArgs, psLiteral } = require('./core.cjs');
+// Giới hạn thời gian lệnh Bash của CLI (mặc định chỉ 2 phút): script kiểm Playwright/đo FPS của QA, build, Unity compile chạy 2–5 phút
+// bị CLI chuyển sang chạy nền, khối phải dò lại kết quả và hay treo. Nâng mặc định 10 phút, tối đa 30 phút (bộ canh treo dừng lệnh
+// quá 40 phút).
+const BASH_TIMEOUTS = { BASH_DEFAULT_TIMEOUT_MS: String(10 * 60 * 1000), BASH_MAX_TIMEOUT_MS: String(30 * 60 * 1000) };
 const { foldersOf, extraFolderArgs } = require('./usage.cjs');
 const { cliMode, cliTools, allowedFor } = require('./modes.cjs');
 const { agentsArg } = require('./subagent.cjs');
@@ -158,7 +162,7 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
   // Không pipe qua biến PowerShell: CLI nhận thẳng stdin của tiến trình để app trả lời yêu cầu duyệt trong lúc chạy.
   const script = '$ProgressPreference = \'SilentlyContinue\'; [Console]::InputEncoding = New-Object Text.UTF8Encoding($false); [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false); $OutputEncoding = [Console]::OutputEncoding; & ' + [executable, ...args].map(psLiteral).join(' ') + '; exit $LASTEXITCODE';
   const powershell = path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { cwd: thread.folder, env: { ...cleanEnv(process.env, directory), OFFICE_USAGE_FILE: path.join(directory, 'usage.json') }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { cwd: thread.folder, env: { ...cleanEnv(process.env, directory), ...BASH_TIMEOUTS, OFFICE_USAGE_FILE: path.join(directory, 'usage.json') }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let pending = '', errors = '', ended = false;
   const send = line => { if (!child.stdin.destroyed && child.stdin.writable) child.stdin.write(line); };
   async function control(event) {
@@ -179,4 +183,4 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
   child.on('error', error => { errors = error.message; finish(1); }); child.on('close', finish); closeAfterExit(child);
   return { child, cancel: () => { if (child.pid && !ended) execFile(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); }, message };
 }
-module.exports = { consume, launch, closeAfterExit, targetOf, usageOf, turnUsage, cleanStderr, permissionResult, userLine, CLI_FAILED_TEXT, CLI_EMPTY_TEXT };
+module.exports = { BASH_TIMEOUTS, consume, launch, closeAfterExit, targetOf, usageOf, turnUsage, cleanStderr, permissionResult, userLine, CLI_FAILED_TEXT, CLI_EMPTY_TEXT };

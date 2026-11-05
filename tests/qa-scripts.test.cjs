@@ -38,11 +38,24 @@ test('shell blocks may write helper scripts in the system temp folder; it does n
   assert.equal(decide({ scope: roleScope('GD', files), mode: 'edit', tool: 'Write', input: { file_path: tmp }, cwd: 'E:\\game' }).action, 'deny');
 });
 
+test('QA Bash commands using /tmp are refused with a hint; other paths and other blocks are not affected', () => {
+  const qa = roleScope('QA', files), dev = roleScope('Dev', files, ['src/a.ts'], 'E:\\game');
+  for (const command of ['node a.cjs > /tmp/acA.json', 'cat /tmp/x.log', 'node -e "require(\'/tmp/acA.json\')"', 'OUT=/tmp node a.cjs']) {
+    const verdict = decide({ scope: qa, mode: 'bypass', tool: 'Bash', input: { command } });
+    assert.equal(verdict.action, 'deny', command); assert.match(verdict.message, /\.office-desk\/qa\/out\//);
+  }
+  for (const command of ['node .office-desk/qa/m1_ac.cjs > .office-desk/qa/out/ac.json', 'ls src/tmpl/x', 'cat "$TEMP/pa0034_qa/a.json"', 'echo /tmpfile']) {
+    assert.equal(decide({ scope: qa, mode: 'bypass', tool: 'Bash', input: { command } }).action, 'allow', command);
+  }
+  assert.equal(decide({ scope: dev, mode: 'bypass', tool: 'Bash', input: { command: 'cat /tmp/x' } }).action, 'allow');
+});
+
 test('QA prompt points at the reusable script folder and asks for a short reading list', () => {
   const text = buildPrompt({ label: 'QA', type: 'QA', files, content: 'kiểm' }).text;
   assert.ok(text.includes(qaDir(files)));
   assert.match(text, /dùng lại\/sửa script có sẵn/);
   assert.match(text, /không nhét script dài vào heredoc/);
+  assert.match(text, /không dùng \/tmp/); assert.match(text, /mỗi lệnh chạy một khung hình/);
 });
 
 test('QA, Art Director, Lead and Release share ISSUES.md: parallel reviews no longer wait for each other', () => {

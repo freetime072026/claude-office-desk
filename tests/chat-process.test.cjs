@@ -120,3 +120,9 @@ test('a CLI that does not exit after its result (leftover background task) is ki
   assert.notEqual(message.error, true);
   assert.equal(message.streaming, false);
 });
+test('the CLI gets long Bash timeouts so 2–5 minute checks are not moved to the background', { skip, timeout: 20000 }, async () => {
+  const thread = { folder: __dirname, messages: [], mode: 'read', model: 'sonnet' };
+  const started = launch({ executable: path.join(__dirname, 'fake-cli.cmd'), directory: __dirname, settings: 'unused.json', mcp: 'unused.json', thread, profileId: 'test-profile', prompt: '[env]', save: () => {}, publish: () => {} });
+  await new Promise((resolve, reject) => { started.child.once('error', reject); started.child.once('close', resolve); });
+  assert.deepEqual(JSON.parse(thread.messages[0].text), { BASH_DEFAULT_TIMEOUT_MS: '600000', BASH_MAX_TIMEOUT_MS: '1800000' });
+});
