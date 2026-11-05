@@ -25,7 +25,10 @@ test('QA cannot start background shell commands; foreground commands still run',
   assert.equal(bg.action, 'deny'); assert.match(bg.message, /cùng một lệnh Bash/);
   assert.equal(decide({ scope, mode: 'bypass', tool: 'Bash', input: { command: 'npx tsc --noEmit' } }).action, 'allow');
   const dev = roleScope('Dev', files, ['src/a.ts'], 'E:\\game');
-  assert.equal(decide({ scope: dev, mode: 'bypass', tool: 'Bash', input: { command: 'npm run dev', run_in_background: true } }).action, 'allow');
+  // Every shell block: a background dev server left running kept the CLI from exiting (Dev #2 hang).
+  assert.equal(decide({ scope: dev, mode: 'bypass', tool: 'Bash', input: { command: 'npm run dev', run_in_background: true } }).action, 'deny');
+  assert.equal(decide({ scope: roleScope('Lead Dev', files), mode: 'bypass', tool: 'Bash', input: { command: 'npm run build', run_in_background: true } }).action, 'deny');
+  assert.equal(decide({ scope: null, mode: 'bypass', tool: 'Bash', input: { command: 'npm run dev', run_in_background: true } }).action, 'allow');
 });
 
 test('shell blocks may write helper scripts in the system temp folder; it does not make parallel blocks overlap', () => {
@@ -48,6 +51,12 @@ test('QA Bash commands using /tmp are refused with a hint; other paths and other
     assert.equal(decide({ scope: qa, mode: 'bypass', tool: 'Bash', input: { command } }).action, 'allow', command);
   }
   assert.equal(decide({ scope: dev, mode: 'bypass', tool: 'Bash', input: { command: 'cat /tmp/x' } }).action, 'allow');
+  // Other shell blocks: /tmp is refused only when node/python reads it (the failing case), with a cygpath hint.
+  for (const command of ["python - <<'E'\np='/tmp/gen/g.py'\nE", 'node /tmp/run.cjs', 'cd x; python3 /tmp/a.py']) {
+    const verdict = decide({ scope: dev, mode: 'bypass', tool: 'Bash', input: { command } });
+    assert.equal(verdict.action, 'deny', command); assert.match(verdict.message, /cygpath -m/);
+  }
+  assert.equal(decide({ scope: roleScope('Art', files, ['art/'], 'E:\\game'), mode: 'bypass', tool: 'Bash', input: { command: 'ls /tmp/a4; cp a.md /tmp/a4/old.md' } }).action, 'allow');
 });
 
 test('QA prompt points at the reusable script folder and asks for a short reading list', () => {
