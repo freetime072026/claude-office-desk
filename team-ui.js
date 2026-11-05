@@ -11,6 +11,7 @@
   const TAKES_ARGS = ['/role', '/auto'];
   const CHAT_SKILLS = '*chat'; // skills.CHAT_KEY
   // Thứ tự role, giới hạn vòng QA và quyền xóa đều lấy từ backend (snapshot), UI không tự tính.
+  let devServers = {};
   let removal = {}, qaRoundLimit, roleTypes = [], mcpNames = [], skillCatalog = {}, releaseFiles = {}, releaseNetworks = [], knownProfiles = [], defaultRoles = {}, presets = {};
   const isLead = (thread, role) => (thread.workers?.[role]?.type || role) === 'Lead Dev';
   const current = () => team?.threads.find(thread => thread.id === selected);
@@ -280,6 +281,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     paintSessionFiles(thread, role);
     for (const field of document.querySelectorAll('#panel select, #panel textarea')) field.disabled = !thread || thread.archived;
     paintRelease(thread, role, force);
+    paintDev(thread, role);
     setField(get('#chat-mode'), config.mode || thread?.mode || 'read', force); setField(get('#worker-shell'), config.shell || 'once', force); setField(get('#chat-model'), config.model || thread?.model || 'claude-opus-5-5', force);
     if (force) get('#panel-saved').textContent = '';
     paintRoleSkills(thread, role ? roleType(thread, role) : CHAT_SKILLS);
@@ -333,6 +335,38 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   }
   for (const [id] of RELEASE_FIELDS) get(id).onchange = saveRelease;
   get('#release-reset').onclick = async () => { if (await act('release-config', { role: selectedWorker, config: null })) get('#panel-saved').textContent = '✓ ' + selectedWorker + ' build theo build.json của project'; };
+  // Khối PO của session PLA (preset PLA hoặc kế hoạch PO loại pla): Run dev (chọn script/cổng, bấm lại để dừng) và Mở localhost.
+  const isPla = thread => thread.preset === 'PLA' || thread.poPlan?.plan?.product === 'pla';
+  function paintDev(thread, role) {
+    const box = get('#dev-field'), show = Boolean(role) && roleType(thread, role) === 'PO' && isPla(thread) && Boolean(thread.folder);
+    box.hidden = !show; if (!show) return;
+    const run = devServers[thread.id], running = Boolean(run?.running);
+    get('#dev-run').textContent = running ? 'Dừng dev' : 'Run dev';
+    get('#dev-run').disabled = thread.archived;
+    get('#dev-open').disabled = !running || !run.url;
+    get('#dev-open').title = run?.url || 'Chưa có dev server đang chạy';
+    get('#dev-status').textContent = running ? `Đang chạy npm run ${run.script}${run.url ? ' · ' + run.url : ' · chờ địa chỉ…'}` : run ? `Đã dừng (npm run ${run.script}${run.code !== null && run.code !== undefined ? ', mã ' + run.code : ''})${run.code ? ' · ' + (run.log || '').trim().split('\n').slice(-2).join(' ') : ''}` : '';
+  }
+  let devScripts = [];
+  const showDevCommand = () => { const item = devScripts.find(entry => entry.name === get('#dev-script').value); get('#dev-command').textContent = item ? item.command : ''; };
+  get('#dev-run').onclick = async () => {
+    const thread = current(); if (!thread) return;
+    if (devServers[thread.id]?.running) { try { await window.office.run('dev-server', { id: thread.id, op: 'stop' }); } catch (error) { showError(error); } return; }
+    try { devScripts = await window.office.run('dev-server', { id: thread.id, op: 'scripts' }); } catch (error) { showError(error); return; }
+    if (!devScripts.length) { showStatus('package.json của thư mục chính không có script dev/serve/start'); return; }
+    get('#dev-script').replaceChildren(...devScripts.map(item => make('option', { value: item.name, textContent: item.name })));
+    showDevCommand(); get('#dev-dialog').showModal();
+  };
+  get('#dev-script').onchange = showDevCommand;
+  get('#dev-cancel').onclick = () => get('#dev-dialog').close();
+  get('#dev-start').onclick = async () => {
+    const thread = current(); if (!thread) return;
+    const port = get('#dev-port').value.trim();
+    if (port && !/^\d{4,5}$/.test(port)) { showStatus('Cổng là số từ 1024 đến 65535'); return; }
+    get('#dev-dialog').close();
+    try { await window.office.run('dev-server', { id: thread.id, op: 'start', script: get('#dev-script').value, port }); } catch (error) { showError(error); }
+  };
+  get('#dev-open').onclick = async () => { const thread = current(); if (!thread) return; try { await window.office.run('dev-server', { id: thread.id, op: 'open' }); } catch (error) { showError(error); } };
   // Nút Build preview/production: chọn network cho riêng lần build này rồi gửi /build_<chế độ> [network…] cho khối Release.
   // Giữ đúng network đích thì gửi lệnh không kèm network, skill build theo build.json.
   const BUILD_MODES = ['preview', 'production'];
@@ -651,7 +685,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   get('#usage-viewer').addEventListener('close', () => { if (usageId) window.office.run('close', { id: usageId }).catch(() => {}); usageId = undefined; usageTerm?.dispose(); usageTerm = undefined; get('#usage-terminal').replaceChildren(); });
 
   // ---- Trạng thái từ main.
-  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; skillCatalog = state.skills || {}; releaseFiles = state.releaseFiles || {}; releaseNetworks = state.releaseNetworks || []; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
+  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; skillCatalog = state.skills || {}; releaseFiles = state.releaseFiles || {}; releaseNetworks = state.releaseNetworks || []; devServers = state.devServers || {}; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
   window.office.onState(applyState);
   get('#search').oninput = sidebar;
   get('#new-thread').onclick = async () => { const id = await act('create', { project: current()?.archived ? '' : current()?.project || '' }); if (id) { select(id); get('#message').focus(); } };

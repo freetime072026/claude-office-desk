@@ -53,3 +53,48 @@ test('auto run reports a stopped block as an incident; a graphless Fixer turn is
   assert.equal(graph.stateOf(thread, 'GD').status, 'blocked');
   await auto.after(thread, 'Fixer', { text: 'xong' }); assert.equal(incidents.length, 1);
 });
+test('a non-Dev block left "running" without a chat session is blocked and reported after the grace period', async () => {
+  const { createAutoRun } = require('../pipeline.cjs');
+  const setup = () => {
+    const team = initial(), id = update(team, 'create', { request: 'x' }); for (const type of ['GD', 'QA', 'Fixer']) update(team, 'add-worker', { id, type });
+    const thread = team.threads.find(item => item.id === id), incidents = [];
+    const auto = createAutoRun({ update: (item, action, payload) => update(team, action, { ...payload, id: item.id }), send: async () => true, pump: async () => {}, log: (item, role, text) => item.messages.push({ role, text }), changed: () => {}, approve: async () => true, isRunning: () => false, incident: (item, value) => incidents.push(value) });
+    return { thread, incidents, auto };
+  };
+  const stale = setup(); await stale.auto.enable(stale.thread, 'test');
+  Object.assign(graph.stateOf(stale.thread, 'QA'), { status: 'running', startedAt: 0 });
+  await stale.auto.runStage(stale.thread);
+  assert.equal(graph.stateOf(stale.thread, 'QA').status, 'blocked');
+  assert.equal(stale.incidents.filter(item => item.label === 'QA').length, 1);
+  const fresh = setup(); await fresh.auto.enable(fresh.thread, 'test');
+  Object.assign(graph.stateOf(fresh.thread, 'QA'), { status: 'running', startedAt: Date.now() });
+  await fresh.auto.runStage(fresh.thread);
+  assert.equal(graph.stateOf(fresh.thread, 'QA').status, 'running');
+  assert.equal(fresh.incidents.filter(item => item.label === 'QA').length, 0);
+});
+test('Fixer can mark a block that finished its work but never handed off as done (complete + status)', () => {
+  const flow = ['GD', 'Art Director', 'QA', 'Fixer'];
+  const ok = fixer.parseFix(fence({ cause: 'CLI dừng trước handoff', action: 'complete', target: 'Art Director', status: 'pass', message: 'ART-06, ART-07 đạt' }), flow);
+  assert.equal(ok.action, 'complete'); assert.equal(ok.status, 'pass'); assert.equal(ok.target, 'Art Director');
+  const problems = []; assert.equal(fixer.parseFix(fence({ action: 'complete', target: 'QA' }), flow, problems), null); assert.match(problems[0], /status/);
+  assert.match(fixer.GUIDE, /KHÔNG cần tự chạy khối/); assert.match(fixer.GUIDE, /complete = /);
+});
+test('the run is not finished while a parallel branch is still blocked, and a finished run reopens when that branch hands off', async () => {
+  const { createAutoRun } = require('../pipeline.cjs');
+  const team = initial(), id = update(team, 'create', { request: 'x' }); update(team, 'select-roles', { id, roles: ['GD', 'Art Director', 'Lead Dev', 'Dev', 'Art'] });
+  const thread = team.threads.find(item => item.id === id), sent = [];
+  const auto = createAutoRun({ update: (item, action, payload) => update(team, action, { ...payload, id: item.id }), send: async (item, label) => { sent.push(label); return true; }, pump: async () => {}, log: (item, role, text) => item.messages.push({ role, text }), changed: () => {}, approve: async () => true, isRunning: () => false });
+  await auto.enable(thread, 'test');
+  const nodes = graph.ensureGraph(thread).nodes, art = nodes.find(node => node.label === 'Art');
+  for (const node of nodes) graph.stateOf(thread, node.id).status = 'done';
+  Object.assign(graph.stateOf(thread, art.id), { status: 'blocked', outcome: 'blocked' });
+  Object.assign(graph.stateOf(thread, graph.END), { status: 'queued' });
+  await auto.runStage(thread);
+  assert.notEqual(thread.status, 'done'); assert.match(thread.messages.at(-1).text, /Chưa Hoàn tất: còn Art/);
+  thread.status = 'done'; // an older run that finished while Art was blocked
+  thread.dispatch = [{ worker: 'Art', status: 'finished', by: 'Art Director', task: 'x', files: ['a/'] }];
+  await auto.after(thread, 'Art', { text: '```handoff\n{"status":"done","summary":"25/25 ảnh"}\n```' });
+  assert.equal(thread.status, 'working');
+  assert.equal(graph.stateOf(thread, art.id).status, 'done');
+  assert.ok(sent.includes('Art Director'), 'Art Director review runs after Art');
+});

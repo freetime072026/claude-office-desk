@@ -78,4 +78,7 @@ function writeTasks(thread, tasks, reason) {
 // PO.md: kế hoạch đội đã duyệt, đánh dấu mốc đang chạy (po.planMarkdown).
 function writePlan(thread, markdown) { const files = ensureFiles(thread); if (files) fs.writeFileSync(files.po, markdown); }
 function appendFix(thread, markdown) { const files = ensureFiles(thread); if (files) fs.appendFileSync(files.fixes, markdown); }
-module.exports = { DIR, filesOf, ensureFiles, writePlan, appendFix, appendChange, appendRound, writeTasks, TEMPLATES };
+// Thư mục script kiểm của QA (.office-desk/qa/, chung cho mọi session của project): script Playwright/đo được giữ lại để lượt sau
+// dùng lại thay vì viết lại từ đầu. Có dấu / cuối để là mục thư mục trong phạm vi ghi.
+const qaDir = files => path.join(files.project ? path.dirname(files.project) : path.dirname(path.dirname(files.issues || '.')), 'qa') + path.sep;
+module.exports = { DIR, qaDir, filesOf, ensureFiles, writePlan, appendFix, appendChange, appendRound, writeTasks, TEMPLATES };

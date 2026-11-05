@@ -7,6 +7,7 @@ const { isDevType, ART_DIRECTOR, RELEASE, ART_REJECT_REASONS } = require('./role
 const { foldersOf } = require('./usage.cjs');
 const graph = require('./flowgraph.cjs');
 const { RETRY } = require('./dispatch.cjs');
+const RETRY_WAIT_MS = 30 * 1000; // nút chờ vì lỗi tạm thời (trùng tệp đang ghi, đủ phiên chat) tự thử lại sau khoảng này
 const PO_TYPE = 'PO';
 const HANDOFF_STATUSES = Object.freeze(['done', 'blocked', 'issue', 'pass', 'reject']);
 const ROLE_VERBS = Object.freeze(['start', 'pause']);
@@ -85,6 +86,8 @@ const openTask = (thread, label) => (thread.dispatch || []).find(task => task.wo
 // recordTasks(thread, tasks, reason), newRound(thread, round, summary).
 function createAutoRun(deps) {
   const { update, send, pump, log, changed, approve, isRunning, recordTasks = () => {}, newRound = () => {}, nextMilestone = () => false, incident = () => {} } = deps;
+  // Khối không phải Dev "running" lâu hơn mức này mà không có phiên chat thì coi là kẹt (xem settleStale).
+  const STALE_RUN_MS = 60 * 1000;
   // Xoá trạng thái của vòng trước (dùng khi GD mở vòng mới và khi kế hoạch PO sang mốc mới); giữ phiên CLI của các khối.
   function resetRound(thread) {
     graph.resetRun(thread); thread.leadPhase = 'planning'; thread.qaFailRounds = 0; delete thread.tweak;
@@ -115,6 +118,11 @@ function createAutoRun(deps) {
   async function startNode(thread, node) {
     const state = graph.stateOf(thread, node.id);
     if (node.id === graph.END) {
+      // Nhánh song song chưa xong (khối khác đang chạy, đang chờ hoặc bị chặn, ví dụ Art chờ ảnh trong lúc Lead review đã đạt): chưa
+      // Hoàn tất, nếu không session thành "xong", tắt chạy tự động và bàn giao sau đó của nhánh kia bị bỏ qua. Bước kết thúc được kích
+      // hoạt lại khi nhánh đó đi tới nó.
+      const open = graph.ensureGraph(thread).nodes.find(item => item.id !== graph.END && ['running', 'queued', 'blocked'].includes(graph.stateOf(thread, item.id).status));
+      if (open) { state.status = 'idle'; log(thread, 'Tự động', `Chưa Hoàn tất: còn ${graph.nodeLabel(open)} (${graph.stateOf(thread, open.id).status === 'blocked' ? 'bị chặn' : 'đang chạy/chờ'}).`); return; }
       // Kế hoạch PO đã duyệt còn mốc sau: app áp mốc (thêm/xoá/tạm nghỉ khối, giao GD) rồi chạy tiếp từ GD, không dừng ở Hoàn tất.
       if (!thread.tweak && nextMilestone(thread)) return startMilestone(thread);
       state.status = 'done'; thread.status = 'done'; delete thread.tweak; note(thread, 'Hoàn tất theo sơ đồ.'); return;
@@ -146,7 +154,7 @@ function createAutoRun(deps) {
       if (task.status === 'pending') task.status = 'queued';
       state.status = 'running'; focus(thread, node); changed(); await pump(thread); return;
     }
-    state.status = 'running'; focus(thread, node);
+    state.status = 'running'; state.startedAt = Date.now(); focus(thread, node);
     if (!state.waitNoted) log(thread, 'Tự động', 'Bắt đầu ' + graph.nodeLabel(node)); changed();
     try {
       const result = await send(thread, node.label, stageText(thread, node.label));
@@ -158,6 +166,8 @@ function createAutoRun(deps) {
       if (error.code === RETRY) {
         state.status = 'queued';
         if (!state.waitNoted) { state.waitNoted = true; log(thread, 'Tự động', `${graph.nodeLabel(node)} chờ lượt đang chạy xong rồi chạy: ${error.message}`); }
+        // Tự thử lại: lượt kia xong nhưng CLI chưa thoát hẳn thì lần advance lúc đó vẫn gặp lỗi tạm thời và không còn sự kiện nào gọi lại.
+        if (!state.retryTimer) { const timer = setTimeout(() => { delete state.retryTimer; if (active(thread) && graph.stateOf(thread, node.id).status === 'queued') advance(thread).catch(() => {}); }, RETRY_WAIT_MS); timer.unref?.(); Object.defineProperty(state, 'retryTimer', { value: timer, enumerable: false, configurable: true, writable: true }); }
         changed(); return;
       }
       block(thread, node, `Không chạy được ${node.label}: ${error.message}`);
@@ -175,6 +185,14 @@ function createAutoRun(deps) {
       if (state.status === 'idle' && isDevType(labelType(thread, node.label)) && !isRunning(thread, node.label)
         && (thread.dispatch || []).some(task => task.worker === node.label && task.status === 'pending' && !task.artReject)
         && graph.incoming(graphNow, node.id).some(edge => { const from = graph.stateOf(thread, edge.from); return from.status === 'done' && graph.matches(edge.when, from.outcome); })) { graph.queue(thread, node.id); continue; }
+      // Khối không phải Dev (QA, Lead, Art Director, Release…) "running" mà không còn phiên chat: CLI chết/lỗi trước khi bàn giao
+      // (main.cjs handler 'error' chỉ xoá chats, hoặc handler 'close' ném lỗi trước after()). Chặn để Fixer xử lý thay vì đứng mãi.
+      // Chờ STALE_RUN_MS: giữa lúc đặt running (startNode) và lúc chat mở thật (chats.set) có khoảng async.
+      if (state.status === 'running' && !isDevType(labelType(thread, node.label)) && !isRunning(thread, node.label)
+        && Date.now() - (state.startedAt || 0) > STALE_RUN_MS) {
+        block(thread, node, `${node.label} dừng giữa chừng: phiên CLI đã kết thúc mà không bàn giao. Dùng /role ${node.label} start để chạy lại.`);
+        continue;
+      }
       if (state.status !== 'running' || !isDevType(labelType(thread, node.label)) || isRunning(thread, node.label)) continue;
       const tasks = (thread.dispatch || []).filter(task => task.worker === node.label);
       if (tasks.some(task => [...RUNNING_TASK, 'paused'].includes(task.status))) continue;
@@ -365,10 +383,17 @@ function createAutoRun(deps) {
   }
   // Gọi sau mỗi lượt chat của một khối (main.cjs, sự kiện close).
   // planBlocked: kế hoạch Lead hợp lệ nhưng main.cjs chưa áp vì còn Dev đang chạy/tạm dừng (lý do để báo đúng).
+  // Session đã Hoàn tất (sơ đồ cũ có thể đã tới bước kết thúc khi nhánh khác còn dở) mà khối đó vẫn có nút chưa xong: mở lại.
+  function reopen(thread, label) {
+    if (thread.status !== 'done' || !thread.auto?.enabled) return;
+    if (!graph.nodesFor(thread, label).some(node => ['running', 'queued', 'blocked'].includes(graph.stateOf(thread, node.id).status))) return;
+    thread.status = 'working'; const end = graph.stateOf(thread, graph.END); end.status = 'idle'; delete end.outcome;
+    note(thread, `Mở lại chạy tự động: ${label} còn bước chưa xong trên sơ đồ.`);
+  }
   async function after(thread, label, message, { proposalApplied = false, planBlocked = '' } = {}) {
     if (!label || !thread.flow.includes(label)) return;
     if (!graph.nodesFor(thread, label).length) return; // khối không có nút trên sơ đồ (Fixer)
-    graph.ensureGraph(thread);
+    graph.ensureGraph(thread); reopen(thread, label);
     const handoff = parseHandoff(message.text), type = labelType(thread, label); let node = nodeOfRun(thread, label);
     const status = graph.stateOf(thread, node.id).status, gdDone = type === 'GD' && handoff?.status === 'done' && !message.error;
     if (gdDone && status !== 'running' && started(thread)) return newRoundFromGd(thread, node, handoff);
@@ -419,6 +444,7 @@ function createAutoRun(deps) {
   // Chạy tiếp theo sơ đồ. label: khối người dùng muốn chạy lại (/role X start) → đưa nút bị chặn/chưa chạy của khối vào hàng chờ.
   // Không có gì để chạy mà luồng chưa xong thì chạy nút của bước hiện tại.
   async function runStage(thread, label = '') {
+    if (label) reopen(thread, label);
     if (!active(thread)) return false;
     graph.ensureGraph(thread);
     if (!started(thread)) for (const node of graph.entries(graph.ensureGraph(thread))) graph.queue(thread, node.id);

@@ -130,6 +130,8 @@ test('Release in the run: Lead review pass → Release; issue → Lead triage wi
   await auto.after(thread, 'Lead Dev', { text: handoff('pass') }); assert.equal(sent.at(-1), 'Release');
   await auto.after(thread, 'Release', { text: handoff('issue', 'meta 2,3 MB > 2 MB') });
   assert.equal(sent.at(-1), 'Lead Dev@triage'); assert(thread.issues.some(issue => issue.text === '[Release] meta 2,3 MB > 2 MB'));
+  // The fix round ran; the run only finishes once no branch is left running, queued or blocked.
+  for (const node of graph.ensureGraph(thread).nodes) if (['running', 'queued'].includes(graph.stateOf(thread, node.id).status)) Object.assign(graph.stateOf(thread, node.id), { status: 'done', outcome: 'done' });
   graph.stateOf(thread, 'Release').status = 'running';
   await auto.after(thread, 'Release', { text: handoff('pass', 'PLA-01 6 network') }); assert.equal(thread.status, 'done');
 });

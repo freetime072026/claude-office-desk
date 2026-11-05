@@ -39,7 +39,8 @@ test('shared note files (MISSING_SOUNDS.md, ART_PROMPTS.md) do not make two bloc
   assert.equal(scopesOverlap(exclusivePaths(dev), exclusivePaths(dev2)), false);
   assert.equal(scopesOverlap(exclusivePaths(art), exclusivePaths(art2)), false);
   assert.equal(scopesOverlap(exclusivePaths(roleScope('Dev', files, ['src/'], 'D:/p')), exclusivePaths(dev)), true);
-  assert.deepEqual(exclusivePaths(roleScope('QA', { ...files, issues: 'I', perf: 'P' })), ['I', 'P']);
+  // ISSUES.md is a shared note file too (QA, Art Director, Lead, Release only add their own entries).
+  assert.deepEqual(exclusivePaths(roleScope('QA', { ...files, issues: 'I', perf: 'P' })), ['P']);
 });
 
 test('a write outside an Anim task from the Art Director names the Art Director, the allowed folders, and not a Sound role', () => {

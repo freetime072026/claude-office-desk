@@ -48,6 +48,9 @@ function wholeDiskScan(command) {
   return '';
 }
 const WEB = ['WebFetch', 'WebSearch'];
+// Thư mục tạm của hệ thống: khối có shell (Dev, Art, Anim, Sound, VFX, QA) hay ghi script phụ (python/node sinh ảnh, sửa tệp, chụp
+// màn hình) ở đây. Chặn thì khối nhét script vào heredoc, lỗi cú pháp và tốn lượt; cho ghi như tệp chung (không tính chồng phạm vi).
+const TEMP = require('node:os').tmpdir() + path.sep;
 // assigner: người giao task của khối (Lead hoặc Art Director), để lời từ chối ghi chỉ đúng người cần bổ sung files.
 function roleScope(type, files, devFiles = [], folder = '', assigner = 'Lead') {
   if (!files) return null;
@@ -55,18 +58,21 @@ function roleScope(type, files, devFiles = [], folder = '', assigner = 'Lead') {
   // Fixer: chạy lệnh kiểm tra để chẩn đoán, không sửa code; chỉ ghi FIXES.md.
   if (type === 'Fixer') return { paths: [files.fixes], bash: true, label: 'Fixer chỉ ghi FIXES.md' };
   // ISSUES.md: Lead review ghi warning code clean (prompt.cjs REVIEW_CHECKLIST) thay vì reject.
-  if (type === 'Lead Dev') return { paths: [files.project, files.issues], bash: true, label: 'Lead Dev chỉ ghi PROJECT.md và ISSUES.md' };
-  if (type === 'QA') return { paths: [files.issues, files.perf], bash: true, label: 'QA chỉ ghi ISSUES.md và PERF.md' };
+  // ISSUES.md là tệp chung (shared): QA, Art Director · review, Lead review, Release mỗi khối chỉ thêm/sửa mục của mình. Tính là phạm vi
+  // riêng thì QA và Art Director · review (chạy song song) luôn bắt nhau chờ; QA chạy liền nhiều lượt nên Art Director chờ mãi rồi bị bỏ qua.
+  if (type === 'Lead Dev') return { paths: [files.project, files.issues], shared: [files.issues], bash: true, label: 'Lead Dev chỉ ghi PROJECT.md và ISSUES.md' };
+  // QA: ghi Issue/PERF và script kiểm trong .office-desk/qa/ (dùng lại qua các lượt); không chạy lệnh nền (server bỏ lại giữ cổng, CLI không thoát).
+  if (type === 'QA') return { paths: [files.issues, files.perf, require('./session-files.cjs').qaDir(files), TEMP], shared: [files.issues, require('./session-files.cjs').qaDir(files), TEMP], bash: true, noBackground: true, label: 'QA chỉ ghi ISSUES.md, PERF.md, script kiểm trong .office-desk/qa/ và tệp tạm' };
   if (type === 'UI/UX') return { paths: [files.uiux], bash: false, label: 'UI/UX chỉ ghi UIUX.md' };
   // Release: chạy lệnh build/đóng gói của project (shell), không sửa code; chỉ ghi kết quả và Issue.
-  if (type === 'Release') return { paths: [files.release, files.issues], bash: true, label: 'Release chỉ ghi RELEASE.md và ISSUES.md' };
+  if (type === 'Release') return { paths: [files.release, files.issues], shared: [files.issues], bash: true, label: 'Release chỉ ghi RELEASE.md và ISSUES.md' };
   // Art Director: shell để chụp màn hình/kiểm import qua Unity; không sửa ảnh, chỉ ghi tài liệu art và Issue.
-  if (type === 'Art Director') return { paths: [files.style, files.assets, files.art, files.issues], bash: true, label: 'Art Director chỉ ghi STYLE.md, ASSETS.md, ART.md và ISSUES.md' };
+  if (type === 'Art Director') return { paths: [files.style, files.assets, files.art, files.issues], shared: [files.issues], bash: true, label: 'Art Director chỉ ghi STYLE.md, ASSETS.md, ART.md và ISSUES.md' };
   // Giữ dấu / cuối để mục thư mục vẫn là thư mục sau khi resolve.
   // MISSING_SOUNDS.md luôn ghi được: code cần âm thanh chưa có thì dùng sound tạm và ghi yêu cầu vào đây (prompt.cjs SOUND_GUIDE).
   // shared: tệp ghi chú chung mọi khối được thêm mục (MISSING_SOUNDS.md, ART_PROMPTS.md); không tính khi xét hai lượt có chồng
   // phạm vi (exclusivePaths), nếu không mọi Dev/Art/Anim đều "chồng" nhau qua tệp này và chạy lần lượt thay vì song song.
-  if (isDevType(type) && devFiles.length) return { paths: [...devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : [])], shared: [files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : [])], bash: true, assigner, label: `${type} chỉ ghi các tệp trong files của task ${assigner} giao; ngoài ra mọi khối ghi thêm được MISSING_SOUNDS.md (báo âm thanh còn thiếu)${type === 'Art' ? ' và ART_PROMPTS.md' : ''}` };
+  if (isDevType(type) && devFiles.length) return { paths: [...devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : []), TEMP], shared: [files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : []), TEMP], bash: true, assigner, label: `${type} chỉ ghi các tệp trong files của task ${assigner} giao; ngoài ra mọi khối ghi thêm được MISSING_SOUNDS.md (báo âm thanh còn thiếu)${type === 'Art' ? ' và ART_PROMPTS.md' : ''}` };
   return null;
 }
 const norm = value => path.resolve(value).toLowerCase();
@@ -92,6 +98,7 @@ function decide({ scope, mode, tool, input = {}, cwd = '' }) {
   if (tool === 'Bash') {
     const scan = wholeDiskScan(input.command);
     if (scan) return { action: 'deny', message: `Không quét cả ổ đĩa (${scan}): lệnh chạy hàng chục phút và treo lượt. Tìm công cụ bằng \`command -v ffmpeg\` / \`where ffmpeg\`; tìm tệp trong thư mục của session (đường dẫn cụ thể, có -maxdepth).` };
+    if (scope?.noBackground && input.run_in_background) return { action: 'deny', message: 'Không chạy lệnh nền (run_in_background). Bật dev server và chạy kiểm trong cùng một lệnh Bash rồi tắt server ở cuối lệnh (vd. `node scripts/build.cjs dev --port 3311 > log 2>&1 & PID=$!; …; kill $PID`), bọc lệnh dài bằng timeout.' };
     const verdict = bashVerdict(scope, mode), command = withCurlTimeout(input.command);
     return command === input.command || verdict.action === 'deny' ? verdict : { ...verdict, updatedInput: { ...input, command } };
   }

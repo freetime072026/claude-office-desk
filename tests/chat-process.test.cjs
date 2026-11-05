@@ -110,3 +110,13 @@ test('a background process that inherits the CLI pipes (e.g. `node serve.js &`) 
   try { assert(Date.now() - started < 10000, 'close fired soon after exit'); assert.match(out, /^\d+/); }
   finally { const pid = Number.parseInt(out, 10); if (pid) try { process.kill(pid); } catch {} }
 });
+test('a CLI that does not exit after its result (leftover background task) is killed and the turn still counts as done', { skip, timeout: 20000 }, async () => {
+  const thread = { folder: __dirname, messages: [], mode: 'read', model: 'sonnet' };
+  const started = launch({ executable: path.join(__dirname, 'fake-cli.cmd'), directory: __dirname, settings: 'unused.json', mcp: 'unused.json', thread, profileId: 'test-profile', prompt: 'xong [linger]', save: () => {}, publish: () => {}, resultExitMs: 500 });
+  await new Promise((resolve, reject) => { started.child.once('error', reject); started.child.once('close', resolve); });
+  const message = thread.messages[0];
+  assert.equal(message.text, 'Echo: xong [linger]');
+  assert.equal(message.killedAfterResult, true);
+  assert.notEqual(message.error, true);
+  assert.equal(message.streaming, false);
+});

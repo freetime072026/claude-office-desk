@@ -24,6 +24,9 @@ const po = require('./po.cjs');
 const fixer = require('./fixer.cjs');
 const flowgraphLib = require('./flowgraph.cjs');
 const penpot = require('./penpot.cjs');
+// Dev server PLA (nút ở khối PO): chạy script dev của project, mở localhost; tắt khi app thoát.
+const devServer = require('./devserver.cjs');
+const devServers = devServer.createDevServers({ changed: () => publishSoon() });
 const skills = require('./skills.cjs');
 const skillImport = require('./skill-import.cjs');
 const releaseConfig = require('./release-config.cjs');
@@ -127,7 +130,7 @@ function publish() { clearTimeout(publishTimer); publishTimer = null; if (window
 // Luồng stream gọi mỗi chunk; gửi trạng thái tối đa ~10 lần/giây thay vì mỗi chunk.
 let publishTimer = null;
 function publishSoon() { publishTimer ||= setTimeout(publish, 100); }
-function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, mcpServers: safeMcpNames(), skills: skillCatalog(), releaseFiles: releaseFiles(), releaseNetworks: releaseConfig.NETWORKS, profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
+function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, mcpServers: safeMcpNames(), skills: skillCatalog(), releaseFiles: releaseFiles(), releaseNetworks: releaseConfig.NETWORKS, devServers: devServers.all(), profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
 function requireTrusted(event) { const allowed = [entry, pathToFileURL(path.join(__dirname, 'dashboard.html')).href]; if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !allowed.includes(event.senderFrame.url)) throw Error('Unauthorized'); }
 function start(profileId, kind, task) {
   const item = profile(profileId);
@@ -234,19 +237,29 @@ app.whenReady().then(() => {
   }
   function takeFixNote(thread, label) { const note = thread.fixNotes?.[label] || ''; if (note) delete thread.fixNotes[label]; return note; }
   function applyFix(thread, message) {
-    const incident = thread.fixing; delete thread.fixing; if (!incident) return;
+    let incident = thread.fixing; delete thread.fixing;
     const next = thread.fixQueue?.shift(); if (next) setImmediate(() => scheduleFix(thread, next));
     const problems = [], result = message.error ? null : fixer.parseFix(message.text, thread.flow, problems);
+    // Lượt Fixer bạn chat tay (không có sự cố mở) mà vẫn xuất khối fix hợp lệ: làm theo, không bỏ qua kết luận.
+    if (!incident) { if (!result || result.action === 'user') return; incident = { label: result.target, kind: 'bạn gọi Fixer', manual: true }; }
     if (!result) { say(thread, 'Tự động', `Fixer chưa đưa ra kết luận dùng được (${message.error ? 'lượt lỗi' : problems.join('; ')}); ${incident.label} vẫn dừng, chờ bạn.`); return; }
     try { sessionFiles.appendFix(thread, fixer.entryMarkdown(incident, result)); } catch {}
     const target = result.target || incident.label;
     say(thread, 'Fixer · kết luận', `${incident.label}: ${result.cause}${result.fix ? ' · Khắc phục: ' + result.fix : ''} → ${fixer.ACTION_NAMES[result.action]}${result.action === 'user' ? '' : ' ' + target}${result.action === 'user' && result.message ? ': ' + result.message : ''}`);
     if (result.action === 'user') return;
     if (result.action === 'reassign') { background(thread, () => autoRun.reassignFor(thread, target, result.cause + (result.message ? ' · ' + result.message : ''))); return; }
+    // complete: khối đã xong mà thiếu bàn giao → app bàn giao thay (task Dev đánh dấu xong) rồi luồng đi tiếp như thường.
+    if (result.action === 'complete') {
+      for (const item of thread.dispatch || []) if (item.worker === target && !['finished', 'cancelled'].includes(item.status)) { item.status = 'finished'; item.finishedAt = new Date().toISOString(); delete item.error; }
+      const handoff = '```handoff\n' + JSON.stringify({ status: result.status, summary: `Fixer ghi nhận: ${result.message || result.cause}` }) + '\n```';
+      persist(); publish(); background(thread, () => autoRun.after(thread, target, { text: handoff })); return;
+    }
     (thread.fixNotes ||= {})[target] = `${result.cause}. ${result.message || result.fix}`;
     const task = (thread.dispatch || []).find(item => item.worker === target && ['blocked', 'failed', 'cancelled', 'queued'].includes(item.status));
     if (result.action === 'restart') { for (const key of Object.keys(thread.cliSessions || {})) if (key.endsWith(':' + target)) delete thread.cliSessions[key]; if (task) delete task.session; }
     if (task) { task.status = 'pending'; delete task.error; }
+    // Nút của khối còn "đang chạy" mà khối không còn phiên (CLI chết trước bàn giao): đưa về bị chặn để runStage chạy lại ngay.
+    for (const node of flowgraphLib.ensureGraph(thread).nodes) if (node.label === target && flowgraphLib.stateOf(thread, node.id).status === 'running' && !isRunning(thread, target) && !isDevType(getWorker(thread, target).type)) flowgraphLib.stateOf(thread, node.id).status = 'blocked';
     persist(); publish(); background(thread, () => autoRun.runStage(thread, target));
   }
   // ---- Bộ canh: lượt treo (không có tiến độ quá lâu) bị dừng để Fixer xử lý; luồng tự động đứng yên (task/nút chờ mãi vì
@@ -267,6 +280,9 @@ app.whenReady().then(() => {
       const running = [...chats.keys()].some(key => key.startsWith(thread.id + ':'));
       const waiting = (thread.dispatch || []).filter(task => ['queued', 'pending'].includes(task.status)).map(task => task.worker);
       const queued = Object.entries(thread.graphRun?.nodes || {}).filter(([, state]) => state.status === 'queued').map(([id]) => id);
+      const orphan = flowgraphLib.ensureGraph(thread).nodes.some(node => thread.graphRun?.nodes?.[node.id]?.status === 'running'
+        && !isDevType(getWorker(thread, node.label).type) && !isRunning(thread, node.label));
+      if (orphan) background(thread, () => autoRun.runStage(thread));
       if (running || (!waiting.length && !queued.length)) { stuck.delete(thread.id); continue; }
       const snapshot = waiting.join(',') + '|' + queued.join(','), seen = stuck.get(thread.id);
       const ticks = seen?.snapshot === snapshot ? seen.ticks + 1 : 1; stuck.set(thread.id, { snapshot, ticks });
@@ -343,8 +359,17 @@ app.whenReady().then(() => {
     if (action === 'role-defaults') return roleDefaults;
     if (action === 'role-presets') return Object.fromEntries(Object.entries(PRESETS).map(([key, preset]) => [key, { name: preset.name, roles: preset.roles, config: Object.fromEntries(Object.entries(preset.config).map(([type, config]) => [type, { responsibility: config.responsibility, output: config.output }])), engines: Object.fromEntries(Object.entries(preset.engines || {}).map(([id, engine]) => [id, engine.name])), spine: Object.fromEntries(Object.entries(preset.spine || {}).map(([id, choice]) => [id, choice.name])) }]));
     if (action === 'copy-text') { if (typeof payload.text !== 'string' || payload.text.length > 2 * 1024 * 1024) throw Error('Nội dung copy quá dài'); clipboard.writeText(payload.text); return true; }
+    // Dev server của session (khối PO, project PLA): scripts = script dev trong package.json; start/stop; open = mở localhost đang chạy.
+    if (action === 'dev-server') {
+      const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại');
+      if (payload.op === 'scripts') return devServer.scripts(thread.folder || '');
+      if (payload.op === 'start') return devServers.start(thread.id, thread.folder, String(payload.script || ''), payload.port === '' ? '' : payload.port);
+      if (payload.op === 'stop') return devServers.stop(thread.id);
+      if (payload.op === 'open') { const run = devServers.state(thread.id); if (!run?.running || !run.url) throw Error('Chưa có dev server đang chạy cho session này'); await shell.openExternal(run.url); return true; }
+      throw Error('Thao tác dev server không hợp lệ');
+    }
     if (action === 'open-url') { let url; try { url = new URL(String(payload.url || '')); } catch { throw Error('Link không hợp lệ'); } if (!['http:', 'https:'].includes(url.protocol)) throw Error('Chỉ mở link http/https'); await shell.openExternal(url.href); return true; }
-    if (action === 'file-read') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); return require('./files.cjs').readProjectFile(payload.path, foldersOf(thread)); }
+    if (action === 'file-read') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); return require('./files.cjs').readProjectFile(payload.path, foldersOf(thread), { sessionId: thread.id, readOnlyRoots: [require('node:os').tmpdir()] }); }
     if (action === 'chat-stop') { const thread = metadata.team.threads.find(item => item.id === payload.id); for (const task of thread?.dispatch || []) if (task.worker === payload.role && ACTIVE_TASK.includes(task.status)) task.status = 'cancelled'; chats.get(runKey(payload.id, payload.role))?.cancel(); persist(); publish(); return true; }
     if (action === 'dispatch-retry') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); for (const task of thread.dispatch || []) if (['blocked', 'failed', 'cancelled'].includes(task.status)) { task.status = 'queued'; delete task.error; } await pumpThread(thread); return true; }
     if (action === 'chat-send') {
@@ -427,7 +452,7 @@ app.whenReady().then(() => {
       const scope = payload.role ? withShell(roleScope(worker.type, files, worker.files || [], thread.folder, assigner), worker.shell) : null;
       const writes = worker.mode !== 'read' || Boolean(scope);
       // Đọc & sửa/Auto không hỏi trước cả lượt nữa: từng thao tác ghi/sửa/shell/web được duyệt riêng (askPermission bên dưới).
-      if (writes) { if (editOverlap(thread, exclusivePaths(scope))) throw retryable('Có Dev đang sửa cùng thư mục. Đợi lượt đó xong để tránh ghi đè; các lượt chỉ đọc vẫn chạy song song.'); if (needsTurnConfirm(worker.mode, foldersOf(thread)) && !autoApproved) { const answer = await dialog.showMessageBox(window, { type: 'warning', message: 'Bypass trên ổ hệ thống hoặc thư mục mạng: bỏ duyệt thao tác tệp và lệnh shell trong lượt này?', detail: foldersOf(thread).join('\n'), buttons: ['Hủy', 'Cho phép lần này'], defaultId: 0, cancelId: 0 }); if (answer.response !== 1) return false; } }
+      if (writes) { if (editOverlap(thread, exclusivePaths(scope))) throw retryable('Khối khác đang sửa cùng tệp/thư mục. Đợi lượt đó xong để tránh ghi đè; các lượt chỉ đọc vẫn chạy song song.'); if (needsTurnConfirm(worker.mode, foldersOf(thread)) && !autoApproved) { const answer = await dialog.showMessageBox(window, { type: 'warning', message: 'Bypass trên ổ hệ thống hoặc thư mục mạng: bỏ duyệt thao tác tệp và lệnh shell trong lượt này?', detail: foldersOf(thread).join('\n'), buttons: ['Hủy', 'Cho phép lần này'], defaultId: 0, cancelId: 0 }); if (answer.response !== 1) return false; } }
       if (chats.has(activeKey)) throw retryable('Khối đang trả lời');
       if (writes && editOverlap(thread, exclusivePaths(scope))) throw retryable('Một lượt sửa đã bắt đầu trong lúc xác nhận; hãy đợi để tránh ghi đè.');
       // US-08: khối trong luồng chỉ nạp MCP server bật cho loại role của nó (team.roleMcp); chat thường nạp tất cả.
@@ -584,5 +609,5 @@ app.whenReady().then(() => {
   const watchTimer = setInterval(() => { try { watch(); } catch {} }, 60000); watchTimer.unref(); window.on('closed', () => clearInterval(watchTimer)); window.on('closed', () => clearInterval(usageTimer));
 });
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => { if (root) flushPersist(); });
+app.on('will-quit', () => { devServers.stopAll(); if (root) flushPersist(); });
 }

@@ -4,7 +4,10 @@
 // hoặc dừng chờ người dùng. Thuần: không đọc tệp, không Electron.
 const { fenceBody } = require('./fence.cjs');
 const FIXER = 'Fixer';
-const ACTIONS = Object.freeze(['continue', 'restart', 'reassign', 'user']);
+// complete: khối đã làm xong việc nhưng không bàn giao (CLI dừng/lỗi trước handoff, chạm giới hạn lượt sau khi xong) → app ghi bàn giao
+// thay khối (status + message) và luồng chạy tiếp như khối vừa bàn giao.
+const ACTIONS = Object.freeze(['continue', 'restart', 'complete', 'reassign', 'user']);
+const COMPLETE_STATUSES = Object.freeze(['done', 'pass', 'issue', 'reject']);
 const ATTEMPTS = 2; // mỗi khối tối đa 2 lần Fixer can thiệp trong một vòng; quá thì dừng chờ người dùng
 const clip = (value, limit) => { const text = String(value ?? '').trim(); return text.length > limit ? text.slice(0, limit) + '…' : text; };
 // Câu trả lời dài: giữ đầu (tóm tắt) và đuôi (khối tasks/handoff nằm cuối); lược ở giữa để Fixer không tưởng khối bị cụt.
@@ -53,16 +56,18 @@ function parseFix(text, flow, problems = []) {
   if (!ACTIONS.includes(data.action)) return fail(`action phải là một trong ${ACTIONS.join(', ')}`);
   const target = String(data.target || '');
   if (data.action !== 'user' && (!flow.includes(target) || target === FIXER)) return fail(`target "${target}" không phải khối trong session`);
-  return { cause: clip(data.cause, 2000) || '(không ghi)', fix: clip(data.fix, 2000), action: data.action, target, message: clip(data.message, 4000) };
+  if (data.action === 'complete' && !COMPLETE_STATUSES.includes(data.status)) return fail(`complete cần status là một trong ${COMPLETE_STATUSES.join(', ')} (kết quả khối đã làm xong)`);
+  return { cause: clip(data.cause, 2000) || '(không ghi)', fix: clip(data.fix, 2000), action: data.action, target, message: clip(data.message, 4000), ...(data.action === 'complete' ? { status: data.status } : {}) };
 }
-const ACTION_NAMES = { continue: 'chạy tiếp', restart: 'làm lại phiên mới', reassign: 'giao lại Lead triage', user: 'cần người dùng' };
+const ACTION_NAMES = { continue: 'chạy tiếp', restart: 'làm lại phiên mới', complete: 'ghi nhận đã xong', reassign: 'giao lại Lead triage', user: 'cần người dùng' };
 function entryMarkdown(incident, result) {
   return `\n## ${new Date().toISOString()} · ${incident.label} · ${incident.kind} → ${ACTION_NAMES[result.action]}${result.target && result.action !== 'user' ? ' ' + result.target : ''}\nNguyên nhân: ${result.cause}\n${result.fix ? 'Cách khắc phục: ' + result.fix + '\n' : ''}${result.message ? 'Hướng dẫn: ' + result.message + '\n' : ''}`;
 }
 const GUIDE = [
   'Bạn là Fixer: luồng tự động vừa dừng ở một khối. Tìm nguyên nhân thật (đọc nhật ký bước, tệp liên quan, chạy lệnh kiểm tra như git status/diff, xem log, bash .office-desk/unity.sh wait-compile nếu là project Unity) và cách khắc phục. Không sửa code, không chạy lệnh làm thay đổi project; ghi chẩn đoán vào FIXES.md nếu cần ghi dài.',
-  'Cách chọn hành động: continue = khối làm tiếp phiên đang dở theo hướng dẫn của bạn (ví dụ chạm giới hạn lượt khi việc gần xong, lỗi compile đã rõ cách sửa, lệnh treo cần đổi cách gọi); restart = mở phiên mới cho khối (phiên cũ rối hoặc ngữ cảnh quá lớn); reassign = phương án/AC sai, cần tệp ngoài phạm vi hoặc cần khối khác làm → Lead triage lập lại; user = chỉ khi cần người dùng thật (đăng nhập, quyền, cài đặt máy/Unity, quyết định thiết kế), ghi rõ người dùng cần làm gì.',
+  'Bạn KHÔNG cần tự chạy khối hay sửa trạng thái app: app làm đúng hành động trong khối fix ngay khi bạn trả lời (chạy lại khối đang dừng/lỗi/kẹt, mở phiên mới, ghi nhận xong, giao lại Lead). Tiến trình bị bỏ lại (dev server, trình duyệt) giữ cổng/tệp thì tự tắt bằng lệnh (taskkill /PID … /T /F, kill) trước khi chọn hành động.',
+  'Cách chọn hành động: complete = khối thật ra đã làm xong (kết quả đã ghi vào tệp, chỉ thiếu bàn giao vì CLI dừng/lỗi/chạm giới hạn lượt) → thêm "status" là kết quả khối đó lẽ ra bàn giao (done cho Dev/Lead/Art Director lập kế hoạch, pass hoặc issue cho QA/review, reject cho review không đạt) và message là tóm tắt kết quả; continue = khối làm tiếp phiên đang dở theo hướng dẫn của bạn (ví dụ chạm giới hạn lượt khi việc gần xong, lỗi compile đã rõ cách sửa, lệnh treo cần đổi cách gọi); restart = mở phiên mới cho khối (phiên cũ rối hoặc ngữ cảnh quá lớn); reassign = phương án/AC sai, cần tệp ngoài phạm vi hoặc cần khối khác làm → Lead triage lập lại; user = chỉ khi cần người dùng thật (đăng nhập, quyền, cài đặt máy/Unity, quyết định thiết kế), ghi rõ người dùng cần làm gì.',
   'message là hướng dẫn gửi thẳng khối target: cụ thể, làm được ngay (tệp, dòng, lệnh nên dùng/tránh). Không lặp lại cách đã thất bại.',
-  `Cuối câu trả lời xuất khối fenced code nhãn fix chứa JSON {"cause":"nguyên nhân","fix":"cách khắc phục","action":"${ACTIONS.join('|')}","target":"tên khối chạy tiếp (thường là khối bị dừng; reassign thì là khối bị dừng)","message":"hướng dẫn cho khối target"}.`
+  `Cuối câu trả lời xuất khối fenced code nhãn fix chứa JSON {"cause":"nguyên nhân","fix":"cách khắc phục","action":"${ACTIONS.join('|')}","target":"tên khối chạy tiếp (thường là khối bị dừng; reassign thì là khối bị dừng)","message":"hướng dẫn cho khối target (complete: tóm tắt kết quả)","status":"chỉ với complete: done|pass|issue|reject"}.`
 ].join('\n');
-module.exports = { FIXER, ACTIONS, ATTEMPTS, BRIEF_LIMIT, currentIncident, canFix, count, attempts, brief, parseFix, entryMarkdown, GUIDE, ACTION_NAMES };
+module.exports = { FIXER, ACTIONS, COMPLETE_STATUSES, ATTEMPTS, BRIEF_LIMIT, currentIncident, canFix, count, attempts, brief, parseFix, entryMarkdown, GUIDE, ACTION_NAMES };
