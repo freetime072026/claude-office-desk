@@ -476,7 +476,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     const steps = message.steps || []; let log = card.querySelector('.step-log'); if (!steps.length) { log?.remove(); return; }
     if (!log) {
       log = make('details', { className: 'step-log' }); log.open = openLogs.has(message.id);
-      log.ontoggle = () => { if (log.open) openLogs.add(message.id); else openLogs.delete(message.id); updateSteps(card, message); };
+      log.ontoggle = () => { if (log.open) openLogs.add(message.id); else openLogs.delete(message.id); const owner = log.closest('article') || card; updateSteps(owner, owner.message || message); };
       log.append(make('summary'), make('ol')); const anchor = card.querySelector('.run-progress'); if (anchor) anchor.after(log); else card.append(log);
     }
     const live = Boolean(message.streaming), failed = steps.filter(step => step.end && !step.ok).length;
@@ -487,7 +487,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     const card = make('article'), header = make('header');
     header.append(make('b', { textContent: message.profileId ? `${message.role} · ${profileName(message.profileId)} · ${message.model || ''}` : message.role }), make('time', { textContent: new Date(message.time).toLocaleString() }));
     card.append(header, window.renderChatText ? window.renderChatText(message.text) : make('p', { textContent: message.text }));
-    if (message.attachments?.length) { const row = make('div', { className: 'message-images' }); row.append(...message.attachments.map(image => thumbnail(image))); card.append(row); }
+    if (message.attachments?.length) { const row = make('div', { className: 'message-images' }); row.dataset.md = message.attachments.map(image => image.path).join('|'); row.append(...message.attachments.map(image => thumbnail(image))); card.append(row); }
     if (message.progress) { const progress = make('small', { className: 'run-progress' }); progress.setAttribute('aria-live', 'polite'); card.append(progress); updateProgress(card, message); } else updateSteps(card, message);
     if (message.streaming) card.classList.add('streaming'); if (message.error) card.classList.add('chat-error');
     if (message.tools?.length) card.append(make('small', { textContent: 'Công cụ: ' + message.tools.join(', ') }));
@@ -520,8 +520,11 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     const used = new Set();
     const cards = thread.messages.map((message, index) => {
       const key = messageKey(message, index), sig = signature(message), hit = cardCache.get(key); used.add(key);
-      if (hit && hit.sig === sig) { updateProgress(hit.card, message); if (!message.progress) updateSteps(hit.card, message); return hit.card; }
-      const card = buildCard(message); cardCache.set(key, { sig, card }); return card;
+      if (hit && hit.sig === sig) { hit.card.message = message; updateProgress(hit.card, message); if (!message.progress) updateSteps(hit.card, message); return hit.card; }
+      const fresh = buildCard(message);
+      // Tin đã có thẻ (đang stream, thêm bước, có usage): sửa tại chỗ thay vì thay cả thẻ, để chữ/ảnh đã vẽ không bị vẽ lại.
+      if (hit && window.morphChildren) { hit.card.className = fresh.className; window.morphChildren(hit.card, fresh); hit.sig = sig; hit.card.message = message; return hit.card; }
+      fresh.message = message; cardCache.set(key, { sig, card: fresh }); return fresh;
     });
     for (const key of [...cardCache.keys()]) if (!used.has(key)) cardCache.delete(key);
     // Chỉ thay phần đuôi khác nhau; các thẻ cũ không bị gỡ khỏi DOM.

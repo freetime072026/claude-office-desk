@@ -56,13 +56,28 @@ function inline(element, value) {
   if (last < value.length) element.append(document.createTextNode(value.slice(last)));
 }
 window.renderChatText = text => {
-  const root = document.createElement('div'); root.className = 'chat-text';
+  const root = document.createElement('div'); root.className = 'chat-text'; root.dataset.morph = '1';
   let code, list;
   for (const line of text.split('\n')) {
-    if (line.startsWith('```')) { if (code) code = undefined; else { const pre = document.createElement('pre'); code = document.createElement('code'); const body = code; const copy = document.createElement('button'); copy.className = 'copy-code'; copy.textContent = 'Copy'; copy.type = 'button'; copy.onclick = async () => { try { await window.office.run('copy-text', { text: body.textContent }); copy.textContent = '✓ Copied'; } catch { copy.textContent = 'Không copy được'; } }; pre.append(copy, code); root.append(pre); } list = undefined; continue; }
+    if (line.startsWith('```')) { if (code) code = undefined; else { const pre = document.createElement('pre'); code = document.createElement('code'); const body = code; const copy = document.createElement('button'); copy.className = 'copy-code'; copy.textContent = 'Copy'; copy.type = 'button'; copy.onclick = async () => { try { await window.office.run('copy-text', { text: body.textContent }); copy.textContent = '✓ Copied'; } catch { copy.textContent = 'Không copy được'; } }; pre.dataset.md = ''; pre.append(copy, code); root.append(pre); } list = undefined; continue; }
     if (code) { code.textContent += line + '\n'; continue; }
-    if (/^\s*[-*] /.test(line)) { if (!list) { list = document.createElement('ul'); root.append(list); } const item = document.createElement('li'); inline(item, line.replace(/^\s*[-*] /, '')); list.append(item); continue; }
-    list = undefined; const heading = /^(#{1,4})\s+(.+)$/.exec(line); const element = document.createElement(heading ? 'h' + Math.min(heading[1].length + 1, 5) : 'p'); inline(element, heading ? heading[2] : line); root.append(element);
+    if (/^\s*[-*] /.test(line)) { if (!list) { list = document.createElement('ul'); list.dataset.morph = '1'; root.append(list); } const item = document.createElement('li'); item.dataset.md = line; inline(item, line.replace(/^\s*[-*] /, '')); list.append(item); continue; }
+    list = undefined; const heading = /^(#{1,4})\s+(.+)$/.exec(line); const element = document.createElement(heading ? 'h' + Math.min(heading[1].length + 1, 5) : 'p'); element.dataset.md = line; inline(element, heading ? heading[2] : line); root.append(element);
   }
   return root;
+};
+
+// Cập nhật tại chỗ: giữ nguyên nút cũ còn giống (khối chữ so theo nguồn markdown data-md, vì ảnh nhúng nạp bất đồng bộ nên nút
+// mới chưa có src), chỉ thay nút khác. Tin đang stream không bị dựng lại cả thẻ nên ảnh không tải lại, chữ không nhảy.
+const sameNode = (a, b) => a.nodeType === b.nodeType && (a.nodeType !== 1 ? a.nodeValue === b.nodeValue : a.tagName === b.tagName && (a.dataset.md !== undefined || b.dataset.md !== undefined ? a.dataset.md === b.dataset.md && a.className === b.className : a.isEqualNode(b)));
+window.morphChildren = function morph(old, fresh) {
+  const next = [...fresh.childNodes];
+  next.forEach((node, index) => {
+    const current = old.childNodes[index];
+    if (!current) old.append(node);
+    else if (sameNode(current, node)) return;
+    else if (current.nodeType === 1 && node.nodeType === 1 && current.tagName === node.tagName && node.dataset.morph && current.dataset.morph) { current.className = node.className; morph(current, node); }
+    else current.replaceWith(node);
+  });
+  while (old.childNodes.length > next.length) old.lastChild.remove();
 };
