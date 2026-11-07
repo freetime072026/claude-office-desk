@@ -32,7 +32,7 @@ test('only Bypass on a protected drive still asks before the whole turn', () => 
 });
 test('shared note files (MISSING_SOUNDS.md, ART_PROMPTS.md) do not make two blocks with separate files overlap', () => {
   const { roleScope, scopesOverlap, exclusivePaths } = require('../permissions.cjs');
-  const files = { missingSounds: 'D:/p/.office-desk/MISSING_SOUNDS.md', artPrompts: 'D:/p/.office-desk/s/ART_PROMPTS.md' };
+  const files = { missingSounds: 'D:/p/.office-desk/MISSING_SOUNDS.md', artPrompts: 'D:/p/.office-desk/s/ART_PROMPTS.md', artLessons: 'D:/p/.office-desk/ART_LESSONS.md' };
   const dev = roleScope('Dev', files, ['src/a/'], 'D:/p'), dev2 = roleScope('Dev', files, ['src/b/'], 'D:/p');
   const art = roleScope('Art', files, ['assets/x/'], 'D:/p'), art2 = roleScope('Art', files, ['assets/y/'], 'D:/p');
   assert.equal(scopesOverlap(dev.paths, dev2.paths), true); // vẫn cùng được ghi tệp chung
