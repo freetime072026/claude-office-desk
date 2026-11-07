@@ -88,12 +88,12 @@ function roleScope(type, files, devFiles = [], folder = '', assigner = 'Lead') {
   // Release: chạy lệnh build/đóng gói của project (shell), không sửa code; chỉ ghi kết quả và Issue.
   if (type === 'Release') return { paths: [files.release, files.issues], shared: [files.issues], bash: true, label: 'Release chỉ ghi RELEASE.md và ISSUES.md' };
   // Art Director: shell để chụp màn hình/kiểm import qua Unity; không sửa ảnh, chỉ ghi tài liệu art và Issue.
-  if (type === 'Art Director') return { paths: [files.style, files.assets, files.art, files.issues], shared: [files.issues], bash: true, label: 'Art Director chỉ ghi STYLE.md, ASSETS.md, ART.md và ISSUES.md' };
+  if (type === 'Art Director') return { paths: [files.style, files.assets, files.art, files.issues, files.artLessons], shared: [files.issues, files.artLessons], bash: true, label: 'Art Director chỉ ghi STYLE.md, ASSETS.md, ART.md, ISSUES.md và ART_LESSONS.md' };
   // Giữ dấu / cuối để mục thư mục vẫn là thư mục sau khi resolve.
   // MISSING_SOUNDS.md luôn ghi được: code cần âm thanh chưa có thì dùng sound tạm và ghi yêu cầu vào đây (prompt.cjs SOUND_GUIDE).
   // shared: tệp ghi chú chung mọi khối được thêm mục (MISSING_SOUNDS.md, ART_PROMPTS.md); không tính khi xét hai lượt có chồng
   // phạm vi (exclusivePaths), nếu không mọi Dev/Art/Anim đều "chồng" nhau qua tệp này và chạy lần lượt thay vì song song.
-  if (isDevType(type) && devFiles.length) return { paths: [...devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : []), tmpOf(files)], shared: [files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : []), tmpOf(files)], bash: true, assigner, label: `${type} chỉ ghi các tệp trong files của task ${assigner} giao; ngoài ra mọi khối ghi thêm được MISSING_SOUNDS.md (báo âm thanh còn thiếu)${type === 'Art' ? ' và ART_PROMPTS.md' : ''}` };
+  if (isDevType(type) && devFiles.length) return { paths: [...devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), files.missingSounds, ...(type === 'Art' ? [files.artPrompts, files.artLessons] : []), tmpOf(files)], shared: [files.missingSounds, ...(type === 'Art' ? [files.artPrompts, files.artLessons] : []), tmpOf(files)], bash: true, assigner, label: `${type} chỉ ghi các tệp trong files của task ${assigner} giao; ngoài ra mọi khối ghi thêm được MISSING_SOUNDS.md (báo âm thanh còn thiếu)${type === 'Art' ? ', ART_PROMPTS.md và ART_LESSONS.md' : ''}` };
   return null;
 }
 const norm = value => path.resolve(value).toLowerCase();

@@ -2,6 +2,7 @@
 //   .office-desk/PROJECT.md                 bản đồ project, Lead cập nhật, Dev đọc (dùng chung mọi session của project)
 //   .office-desk/STYLE.md                   style guide, ngân sách texture; Art Director ghi, Art/UI/UX đọc (dùng chung project)
 //   .office-desk/MISSING_SOUNDS.md          âm thanh GDD cần mà project chưa có; Dev ghi khi dùng sound tạm, Sound làm và đánh dấu (dùng chung project)
+//   .office-desk/ART_LESSONS.md             lỗi art đã gặp (ảnh / sheet sai, pipeline dựng ảnh sai) + cách tránh; Art và Art Director ghi, đọc trước khi viết prompt (dùng chung project)
 //   .office-desk/ASSETS.md                  tài nguyên common và quy ước thư mục theo feature; Art Director ghi
 //   .office-desk/<session>/ART_PROMPTS.md   prompt sinh ảnh Art viết để người dùng dán vào ChatGPT; ảnh lưu vào <session>/inbox/
 //   .office-desk/<session>/ART.md           đặc tả từng ảnh (ART-…); Art Director ghi, Art đọc mục của task
@@ -20,6 +21,7 @@ const SUMMARY_LIMIT = 1500;
 const TEMPLATES = {
   gdd: '# GDD\n\n## Mục tiêu\n\n## Phạm vi / ngoài phạm vi\n\n## User Stories và AC\n<!-- US-1 … / AC-1.1 … có ID để QA kiểm -->\n\n## Phân việc theo khối\n<!-- UI/UX, Dev, VFX, Art, Anim, Sound, QA nhận gì -->\n\n## VFX\n<!-- Hiệu ứng nào, cho sự kiện nào, cảm giác mong muốn, ảnh tham chiếu; "Không có" nếu không cần -->\n\n## Art\n<!-- Sprite/icon/ảnh UI cần làm: ID, kích thước, phong cách, ảnh tham chiếu; "Không có" nếu không cần -->\n\n## Anim\n<!-- Animation nào, cho unit/sự kiện nào, cảm giác, timing, tham chiếu; "Không có" nếu không cần -->\n\n## Sound\n<!-- SFX/nhạc nào, cho sự kiện nào, cảm giác, độ dài, loop, tham chiếu; "Không có" nếu không cần -->\n\n## Ngân sách performance\n<!-- GC Alloc, CPU, GPU, frame time; ghi "Không áp dụng" nếu không cần -->\n\n## Câu hỏi mở\n',
   style: '# STYLE\n<!-- Art Director ghi. Style guide đo được: bảng màu (hex), tỉ lệ nhân vật/cỡ sprite theo ô, nét viền, ánh sáng, đổ bóng; UI: font, cỡ chữ, khoảng cách, trạng thái nút; ảnh tham chiếu chuẩn. Ngân sách: kích thước texture tối đa, nén, atlas. -->\n',
+  artLessons: '# ART LESSONS\n<!-- Art và Art Director ghi khi ảnh bị trượt, phải vẽ lại, hoặc pipeline dựng ảnh sai. Đọc hết trước khi viết prompt mới. Mỗi lỗi một mục:\n## Loại ảnh (sprite sheet, chibi, icon, UI part…) · lỗi ngắn gọn\nSai gì (đo được): …\nNguyên nhân: prompt thiếu gì / cách làm sai\nCách tránh: câu thêm vào prompt / brief, hoặc đổi cách làm\nNgày · ảnh liên quan: … -->\n',
   assets: '# ASSETS\n<!-- Art Director ghi. Tài nguyên dùng chung (UI/icon common): đường dẫn, dùng ở đâu. Quy ước: common ở thư mục chung, tài nguyên theo feature ở thư mục của feature; đặt tên; atlas. -->\n',
   art: '# ART\n<!-- Art Director ghi. Mỗi ảnh/màn một mục:\n## ART-1 · Tên (SCR-… / item trong GDD)\nCách vẽ, khung, decor, hoạ tiết, bảng màu: …\nKích thước px, pivot, 9-slice, trạng thái: …\nDùng lại (ASSETS.md) hay mới, đường dẫn tệp: …\nẢnh tham chiếu: …\nAnimation một mục ANIM-…: clip, số frame, fps, thời lượng, pose chính, frame có event, loop, tham chiếu.\n-->\n',
   missingSounds: '# MISSING SOUNDS\n<!-- Dev/VFX/Anim ghi khi code cần âm thanh mà project chưa có tệp; Sound làm rồi đổi trạng thái. Mẫu:\n## SND-1 · thiếu · Tên âm thanh\nKey/đường dẫn đích: sfx_tower_shoot → Assets/Audio/SFX/tower_shoot.wav\nĐang dùng tạm: Assets/Audio/Default/click.wav\nChỗ gọi: Scripts/Tower.cs:42 (sự kiện bắn)\nYêu cầu: cảm giác, độ dài, loop, mono/stereo, âm lượng tương đối, tham chiếu\nSession: … · ngày: …\n-->\n',
@@ -38,7 +40,7 @@ const NAMES = { fixes: 'FIXES.md', po: 'PO.md', artPrompts: 'ART_PROMPTS.md', ar
 function filesOf(thread) {
   if (!thread.folder) return null;
   const base = path.join(thread.folder, DIR), own = path.join(base, thread.id);
-  return { project: path.join(base, 'PROJECT.md'), style: path.join(base, 'STYLE.md'), assets: path.join(base, 'ASSETS.md'), missingSounds: path.join(base, 'MISSING_SOUNDS.md'), ...Object.fromEntries(Object.entries(NAMES).map(([key, name]) => [key, path.join(own, name)])) };
+  return { project: path.join(base, 'PROJECT.md'), style: path.join(base, 'STYLE.md'), assets: path.join(base, 'ASSETS.md'), missingSounds: path.join(base, 'MISSING_SOUNDS.md'), artLessons: path.join(base, 'ART_LESSONS.md'), ...Object.fromEntries(Object.entries(NAMES).map(([key, name]) => [key, path.join(own, name)])) };
 }
 // Đổi thư mục chính (ví dụ từ kho tài nguyên sang project game) thì tài liệu đã viết vẫn nằm ở .office-desk của thư mục cũ, nay là
 // thư mục liên quan. Tệp còn thiếu, hoặc vẫn đúng mẫu trống (chưa ai ghi), được lấy từ cùng vị trí ở thư mục khác của session có

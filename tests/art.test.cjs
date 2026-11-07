@@ -1,3 +1,4 @@
+const path = require('node:path');
 const { test } = require('node:test'); const assert = require('node:assert/strict');
 const { initial, update } = require('../team.cjs');
 const { taskPlan, worker, PIPELINE } = require('../workers.cjs');
@@ -43,6 +44,12 @@ test('ChatGPT mode (default): Art writes detailed English prompts from STYLE.md 
   assert.match(brief, /tách nền hoặc chroma key, cắt viền thừa/); assert.match(brief, /viết lại prompt cụ thể hơn/);
   // Lệnh dán nguyên khối: dòng Skip ghi đủ, bước SAVE copy + kiểm tệp, ghi đường dẫn thật vào IMAGE INFO.
   for (const item of [/Skip these items \(already done\)/, /Only make these items/, /output\/imagegen\/<mã nhóm>\/<tên tệp>\.png/, /Get-Item/, /không ghi đường dẫn chưa kiểm/]) assert.match(brief, item);
+  // Lệnh chi tiết theo loại ảnh (sprite sheet từng frame) + ghi lỗi đã gặp vào ART_LESSONS.md (dùng chung project).
+  for (const item of [/ART_LESSONS\.md/, /số frame chính xác, lưới cột × hàng/, /tay cầm vẽ ĐÈ lên cán vũ khí/, /cùng một nhân vật mọi frame/, /ghi một mục vào ART_LESSONS\.md/]) assert.match(brief, item);
+  assert.equal(path.basename(path.dirname(files.artLessons)), '.office-desk');
+  const artScope = roleScope('Art', files, ['ArtGen/ui/'], 'E:\\game'), adScope = roleScope('Art Director', files);
+  assert(artScope.paths.includes(files.artLessons) && artScope.shared.includes(files.artLessons) && adScope.paths.includes(files.artLessons));
+  assert.match(rolePrompt({}, { flow: ['Art Director', 'Art'], workers: { 'Art Director': { type: 'Art Director' } }, messages: [], attachments: [], adPhase: 'review' }, 'Art Director', { content: 'x', files }).brief, /ART_LESSONS\.md/);
   assert.doesNotMatch(brief, /tool MCP sinh ảnh nếu role được bật/);
   const { initial, update } = require('../team.cjs'); const team = initial(); const id = update(team, 'create', { request: 'x' });
   update(team, 'art-generator', { id, mode: 'tool' }); assert.equal(team.artGenerator, 'tool');
