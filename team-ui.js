@@ -345,16 +345,19 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     get('#dev-run').disabled = thread.archived;
     get('#dev-open').disabled = !running || !run.url;
     get('#dev-open').title = run?.url || 'Chưa có dev server đang chạy';
-    get('#dev-status').textContent = running ? `Đang chạy npm run ${run.script}${run.url ? ' · ' + run.url : ' · chờ địa chỉ…'}` : run ? `Đã dừng (npm run ${run.script}${run.code !== null && run.code !== undefined ? ', mã ' + run.code : ''})${run.code ? ' · ' + (run.log || '').trim().split('\n').slice(-2).join(' ') : ''}` : '';
+    get('#dev-status').textContent = running ? `Đang chạy npm run ${run.script}${run.folder && run.folder !== thread.folder ? ' (' + run.folder + ')' : ''}${run.url ? ' · ' + run.url : ' · chờ địa chỉ…'}` : run ? `Đã dừng (npm run ${run.script}${run.code !== null && run.code !== undefined ? ', mã ' + run.code : ''})${run.code ? ' · ' + (run.log || '').trim().split('\n').slice(-2).join(' ') : ''}` : '';
   }
+  // Lựa chọn: mọi script dev của mọi thư mục session có package.json (thư mục chính trước); value = vị trí trong danh sách.
   let devScripts = [];
-  const showDevCommand = () => { const item = devScripts.find(entry => entry.name === get('#dev-script').value); get('#dev-command').textContent = item ? item.command : ''; };
+  const showDevCommand = () => { const item = devScripts[Number(get('#dev-script').value)]; get('#dev-command').textContent = item ? item.folder + ' › ' + item.command : ''; };
   get('#dev-run').onclick = async () => {
     const thread = current(); if (!thread) return;
     if (devServers[thread.id]?.running) { try { await window.office.run('dev-server', { id: thread.id, op: 'stop' }); } catch (error) { showError(error); } return; }
-    try { devScripts = await window.office.run('dev-server', { id: thread.id, op: 'scripts' }); } catch (error) { showError(error); return; }
-    if (!devScripts.length) { showStatus('package.json của thư mục chính không có script dev/serve/start'); return; }
-    get('#dev-script').replaceChildren(...devScripts.map(item => make('option', { value: item.name, textContent: item.name })));
+    let found; try { found = await window.office.run('dev-server', { id: thread.id, op: 'scripts' }); } catch (error) { showError(error); return; }
+    devScripts = found.flatMap(project => project.scripts.map(item => ({ ...item, folder: project.folder })));
+    if (!devScripts.length) { showStatus('Không thư mục nào của session có package.json với script dev/serve/start'); return; }
+    const many = found.length > 1;
+    get('#dev-script').replaceChildren(...devScripts.map((item, index) => make('option', { value: String(index), textContent: many ? item.name + ' · ' + item.folder : item.name })));
     showDevCommand(); get('#dev-dialog').showModal();
   };
   get('#dev-script').onchange = showDevCommand;
@@ -364,7 +367,8 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     const port = get('#dev-port').value.trim();
     if (port && !/^\d{4,5}$/.test(port)) { showStatus('Cổng là số từ 1024 đến 65535'); return; }
     get('#dev-dialog').close();
-    try { await window.office.run('dev-server', { id: thread.id, op: 'start', script: get('#dev-script').value, port }); } catch (error) { showError(error); }
+    const item = devScripts[Number(get('#dev-script').value)]; if (!item) return;
+    try { await window.office.run('dev-server', { id: thread.id, op: 'start', folder: item.folder, script: item.name, port }); } catch (error) { showError(error); }
   };
   get('#dev-open').onclick = async () => { const thread = current(); if (!thread) return; try { await window.office.run('dev-server', { id: thread.id, op: 'open' }); } catch (error) { showError(error); } };
   // Nút Build preview/production: chọn network cho riêng lần build này rồi gửi /build_<chế độ> [network…] cho khối Release.

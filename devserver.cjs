@@ -13,10 +13,16 @@ const plain = text => String(text).replace(/\x1b\[[0-9;]*m/g, '');
 
 // Script chạy được: mục trong package.json "scripts" có tên gợi ý dev server (dev, serve, start, preview, watch); dev đứng đầu.
 function scripts(folder) {
+  if (!folder) return [];
   let pkg; try { pkg = JSON.parse(fs.readFileSync(path.join(folder, 'package.json'), 'utf8')); } catch { return []; }
   return Object.entries(pkg.scripts || {}).filter(([name]) => SCRIPT_HINT.test(name))
     .map(([name, command]) => ({ name, command: String(command).slice(0, 300) }))
     .sort((a, b) => (b.name === 'dev') - (a.name === 'dev'));
+}
+// Thư mục của session có script dev (thư mục chính trước, rồi thư mục liên quan): project có thể nằm ở thư mục liên quan khi thư
+// mục chính là kho tài nguyên (input/, assets/stage/).
+function projects(folders) {
+  return [...new Set(folders.filter(Boolean))].map(folder => ({ folder, scripts: scripts(folder) })).filter(item => item.scripts.length);
 }
 // Địa chỉ mở trong trình duyệt: URL đầu tiên server in ra (0.0.0.0 đổi thành localhost); chưa in thì localhost:<cổng đã chọn>.
 function urlOf(log, port) {
@@ -34,7 +40,7 @@ function commandOf(script, port) {
 
 function createDevServers({ changed = () => {} } = {}) {
   const runs = new Map(); // threadId -> { child, script, port, url, log, startedAt, running, code }
-  const state = id => { const run = runs.get(id); if (!run) return null; const { script, port, url, startedAt, running, code } = run; return { script, port, url, startedAt, running, code, log: run.log.slice(-1200) }; };
+  const state = id => { const run = runs.get(id); if (!run) return null; const { folder, script, port, url, startedAt, running, code } = run; return { folder, script, port, url, startedAt, running, code, log: run.log.slice(-1200) }; };
   function start(id, folder, script, port) {
     if (!folder) throw Error('Session chưa có thư mục chính');
     if (!scripts(folder).some(item => item.name === script)) throw Error(`package.json không có script "${script}"`);
@@ -42,7 +48,7 @@ function createDevServers({ changed = () => {} } = {}) {
     if (runs.get(id)?.running) throw Error('Dev server của session này đang chạy; dừng trước khi chạy lại');
     const { command, args } = commandOf(script, port ? Number(port) : 0);
     const child = spawn(command, args, { cwd: folder, env: { ...process.env, ...(port ? { PORT: String(port) } : {}), BROWSER: 'none', FORCE_COLOR: '0' }, shell: process.platform === 'win32', windowsHide: true });
-    const run = { child, script, port: port ? Number(port) : 0, url: port ? `http://localhost:${port}/` : '', log: '', startedAt: new Date().toISOString(), running: true, code: null };
+    const run = { child, folder, script, port: port ? Number(port) : 0, url: port ? `http://localhost:${port}/` : '', log: '', startedAt: new Date().toISOString(), running: true, code: null };
     const take = chunk => { run.log = (run.log + plain(chunk)).slice(-LOG_LIMIT); const found = urlOf(run.log, 0); if (found && found !== run.url) { run.url = found; changed(); } };
     child.stdout?.on('data', take); child.stderr?.on('data', take);
     child.on('exit', code => { run.running = false; run.code = code; changed(); });
@@ -62,4 +68,4 @@ function createDevServers({ changed = () => {} } = {}) {
   const all = () => Object.fromEntries([...runs.keys()].map(id => [id, state(id)]));
   return { start, stop, stopAll, state, all };
 }
-module.exports = { scripts, urlOf, commandOf, validPort, createDevServers };
+module.exports = { projects, scripts, urlOf, commandOf, validPort, createDevServers };

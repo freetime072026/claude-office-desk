@@ -45,3 +45,11 @@ test('starts the chosen script, picks up its address, serves it, and stops the w
   assert.equal(stillUp, false, 'server child is gone with the npm process');
   assert.ok(changes > 0);
 });
+
+test('finds the project in any session folder (main folder may be an asset folder without package.json)', () => {
+  const { projects } = require('../devserver.cjs');
+  const game = project({ dev: 'playable-scripts dev', build: 'x' }), input = fs.mkdtempSync(path.join(os.tmpdir(), 'devserver-input-'));
+  const found = projects([input, game, game, '']);
+  assert.equal(found.length, 1); assert.equal(found[0].folder, game); assert.deepEqual(found[0].scripts.map(item => item.name), ['dev']);
+  assert.deepEqual(scripts(''), [], 'no folder: never falls back to the app folder');
+});

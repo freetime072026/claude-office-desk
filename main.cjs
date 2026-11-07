@@ -365,8 +365,8 @@ app.whenReady().then(() => {
     // Dev server của session (khối PO, project PLA): scripts = script dev trong package.json; start/stop; open = mở localhost đang chạy.
     if (action === 'dev-server') {
       const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại');
-      if (payload.op === 'scripts') return devServer.scripts(thread.folder || '');
-      if (payload.op === 'start') return devServers.start(thread.id, thread.folder, String(payload.script || ''), payload.port === '' ? '' : payload.port);
+      if (payload.op === 'scripts') return devServer.projects(foldersOf(thread));
+      if (payload.op === 'start') { const folder = String(payload.folder || thread.folder || ''); if (!foldersOf(thread).includes(folder)) throw Error('Thư mục không thuộc session'); return devServers.start(thread.id, folder, String(payload.script || ''), payload.port === '' ? '' : payload.port); }
       if (payload.op === 'stop') return devServers.stop(thread.id);
       if (payload.op === 'open') { const run = devServers.state(thread.id); if (!run?.running || !run.url) throw Error('Chưa có dev server đang chạy cho session này'); await shell.openExternal(run.url); return true; }
       throw Error('Thao tác dev server không hợp lệ');
