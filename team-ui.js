@@ -496,10 +496,27 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     if (message.usage) { const usage = addUsage({}, message.usage); card.append(make('small', { className: 'run-usage', textContent: 'Token: ' + usageText(usage), title: usageDetail(usage) })); const warning = contextWarning(usage); if (warning) card.append(make('small', { className: 'run-warning', textContent: warning })); }
     return card;
   }
+  // Khung chat bám đáy: mở/đổi session luôn ở tin cuối; ảnh trong tin (thumbnail, ảnh nhúng) tải sau làm khung cao thêm thì cuộn
+  // theo, nếu không sau khi đổi session khung bị đẩy lên giữa/đầu. Bạn cuộn lên đọc tin cũ thì thôi bám cho tới khi cuộn lại xuống đáy.
+  let pinned = true;
+  const activityBox = get('#activity');
+  // lastTop: vị trí app vừa tự cuộn tới. Sự kiện scroll của chính lần tự cuộn đến sau khi khung đã thấp đi (Issue, ảnh vẽ sau) nên
+  // không dùng khoảng cách tới đáy để đoán bạn cuộn lên; chỉ thôi bám khi khung thật sự bị cuộn lên so với lần tự cuộn.
+  let lastTop = 0;
+  const toBottom = () => { if (!pinned) return; activityBox.scrollTop = activityBox.scrollHeight; lastTop = activityBox.scrollTop; };
+  activityBox.addEventListener('scroll', () => {
+    if (activityBox.scrollHeight - activityBox.scrollTop - activityBox.clientHeight < 80) pinned = true;
+    else if (activityBox.scrollTop < lastTop - 5) pinned = false;
+    if (pinned) toBottom();
+  });
+  activityBox.addEventListener('load', toBottom, true); // ảnh tải xong (sự kiện load của img không nổi bọt nên bắt ở pha capture)
+  // Khung chat thấp/cao lại sau khi vẽ (paint vẽ Issue, ảnh đang soạn, bản nháp, kế hoạch PO sau renderActivity; ô chat tự giãn):
+  // giữ tin cuối trong tầm nhìn.
+  new ResizeObserver(toBottom).observe(activityBox);
   function renderActivity(thread) {
-    const activity = get('#activity'), switched = cachedThread !== thread.id;
-    const atBottom = activity.scrollHeight - activity.scrollTop - activity.clientHeight < 80, top = activity.scrollTop;
-    if (switched) { cardCache.clear(); cachedThread = thread.id; }
+    const activity = activityBox, switched = cachedThread !== thread.id;
+    const atBottom = pinned || activity.scrollHeight - activity.scrollTop - activity.clientHeight < 80, top = activity.scrollTop;
+    if (switched) { cardCache.clear(); cachedThread = thread.id; pinned = true; }
     const used = new Set();
     const cards = thread.messages.map((message, index) => {
       const key = messageKey(message, index), sig = signature(message), hit = cardCache.get(key); used.add(key);
@@ -510,7 +527,8 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     // Chỉ thay phần đuôi khác nhau; các thẻ cũ không bị gỡ khỏi DOM.
     const children = [...activity.children]; let same = 0; while (same < cards.length && children[same] === cards[same]) same++;
     for (const child of children.slice(same)) child.remove(); activity.append(...cards.slice(same));
-    activity.scrollTop = switched || atBottom ? activity.scrollHeight : top;
+    if (switched || atBottom) { pinned = true; toBottom(); requestAnimationFrame(toBottom); setTimeout(toBottom, 300); }
+    else activity.scrollTop = top;
   }
   setInterval(() => {
     const thread = current(); if (!thread) return;

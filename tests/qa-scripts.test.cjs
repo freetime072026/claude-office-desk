@@ -159,3 +159,9 @@ test('a step queued by a temporary conflict retries by itself, without waiting f
   busy = false; t.mock.timers.tick(30 * 1000); await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(sent, ['QA']); assert.equal(graph.stateOf(thread, 'QA').status, 'running');
 });
+
+test('Dev-like blocks only run quick checks and leave the full multi-frame flow to QA', () => {
+  const dev = buildPrompt({ label: 'Dev', type: 'Dev', files, content: 'x', devFiles: ['src/a.ts'] }).text;
+  assert.match(dev, /Tự kiểm nhanh/); assert.match(dev, /QA chạy ngay sau bạn/);
+  assert.doesNotMatch(buildPrompt({ label: 'QA', type: 'QA', files, content: 'x' }).text, /Tự kiểm nhanh/);
+});
