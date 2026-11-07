@@ -105,7 +105,10 @@ function createAutoRun(deps) {
     if (index >= 0) thread.stage = index; if (node.phase) thread[phaseKey(thread, node.label)] = node.phase; if (status) thread.status = status;
   }
   // Dừng ở một khối: báo main.cjs (incident) để Fixer chẩn đoán và gọi đúng khối chạy tiếp, nếu session có Fixer.
-  function block(thread, node, text) { graph.finish(thread, node.id, 'blocked'); note(thread, text); if (active(thread)) incident(thread, { label: node.label, kind: 'bị chặn', reason: text }); }
+  // fix=false: dừng có chủ đích, chờ người dùng (khối cần ảnh/quyết định/đăng nhập, bạn bấm dừng hoặc tạm dừng, chạm giới hạn số vòng):
+  // không gọi Fixer, vì không có lỗi để chẩn đoán và Fixer chạy lại khối chỉ làm khối hỏi lại đúng câu đó.
+  function block(thread, node, text, fix = true) { graph.finish(thread, node.id, 'blocked'); note(thread, text); if (fix && active(thread) && !worker(thread, node.label).paused) incident(thread, { label: node.label, kind: 'bị chặn', reason: text }); }
+  const wait = (thread, node, text) => block(thread, node, text, false);
 
   async function enable(thread, reason) {
     if (!(await approve(thread))) { note(thread, reason + ' Người dùng không xác nhận; giữ chạy thủ công.'); return false; }
@@ -158,8 +161,8 @@ function createAutoRun(deps) {
     if (!state.waitNoted) log(thread, 'Tự động', 'Bắt đầu ' + graph.nodeLabel(node)); changed();
     try {
       const result = await send(thread, node.label, stageText(thread, node.label));
-      if (result?.loginStarted) block(thread, node, `${node.label} cần đăng nhập; đăng nhập rồi dùng /role ${node.label} start.`);
-      else if (result === false) block(thread, node, `Lượt ${node.label} bị hủy ở bước xác nhận; dùng /role ${node.label} start để chạy lại.`);
+      if (result?.loginStarted) wait(thread, node, `${node.label} cần đăng nhập; đăng nhập rồi dùng /role ${node.label} start.`);
+      else if (result === false) wait(thread, node, `Lượt ${node.label} bị hủy ở bước xác nhận; dùng /role ${node.label} start để chạy lại.`);
     } catch (error) {
       // Lỗi tạm thời (khối khác đang ghi cùng tệp, ví dụ QA và Art Director · review cùng ghi ISSUES.md; đủ phiên chat): nút về hàng chờ
       // và chạy khi lượt đang chạy xong (after → advance), thay vì bị chặn chờ người dùng.
@@ -198,7 +201,7 @@ function createAutoRun(deps) {
       if (tasks.some(task => [...RUNNING_TASK, 'paused'].includes(task.status))) continue;
       if (state.again || tasks.some(task => task.status === 'pending' && !task.artReject)) { state.status = 'queued'; delete state.again; continue; }
       const stuck = tasks.find(task => ['blocked', 'failed', 'cancelled'].includes(task.status));
-      if (stuck) block(thread, node, `${node.label} ${{ failed: 'lỗi', blocked: 'bị chặn', cancelled: 'đã bị dừng' }[stuck.status]}${stuck.error ? ': ' + stuck.error : ''}. Xử lý rồi dùng /role ${node.label} start (chạy tiếp task) hoặc Thử lại task bị chặn.`);
+      if (stuck) block(thread, node, `${node.label} ${{ failed: 'lỗi', blocked: 'bị chặn', cancelled: 'đã bị dừng' }[stuck.status]}${stuck.error ? ': ' + stuck.error : ''}. Xử lý rồi dùng /role ${node.label} start (chạy tiếp task) hoặc Thử lại task bị chặn.`, stuck.status === 'failed' || /giới hạn|lỗi|error|treo|timeout/i.test(stuck.error || ''));
       else if (tasks.some(task => task.status === 'finished')) graph.finish(thread, node.id, 'done');
       else block(thread, node, `${node.label} đã dừng giữa chừng, không còn task; dùng /role ${node.label} start để chạy lại.`);
     }
@@ -222,7 +225,7 @@ function createAutoRun(deps) {
 
   // Dev/QA bị chặn kèm reassign: ghi yêu cầu (prompt.cjs chèn vào lượt Lead) rồi chuyển sang Lead triage khi các Dev khác xong.
   function reassign(thread, node, label, handoff) {
-    if ((thread.reassignRounds || 0) >= REASSIGN_LIMIT) return block(thread, node, `${label} bị chặn và cần giao lại, nhưng đã tự chuyển Lead ${REASSIGN_LIMIT} lần trong vòng này; dừng để bạn quyết định. Lý do: ${handoff.summary || '(không ghi)'}`);
+    if ((thread.reassignRounds || 0) >= REASSIGN_LIMIT) return wait(thread, node, `${label} bị chặn và cần giao lại, nhưng đã tự chuyển Lead ${REASSIGN_LIMIT} lần trong vòng này; dừng để bạn quyết định. Lý do: ${handoff.summary || '(không ghi)'}`);
     graph.stateOf(thread, node.id).status = 'blocked'; graph.stateOf(thread, node.id).outcome = 'blocked';
     (thread.reassign ||= []).push({ worker: label, summary: handoff.summary || label + ' cần giao lại' });
     note(thread, `${label} bị chặn, cần khối khác làm tiếp · chuyển Lead triage để giao lại.`);
@@ -253,14 +256,14 @@ function createAutoRun(deps) {
     if (node.phase !== 'review') {
       if (proposalApplied) { graph.finish(thread, node.id, 'done'); queueStale(thread); return note(thread, 'Lead đã phân công; chạy Dev/VFX theo sơ đồ.'); }
       if (planBlocked) return block(thread, node, planBlocked);
-      if (handoff?.status === 'blocked') return block(thread, node, 'Lead Dev cần người dùng: ' + handoff.summary);
+      if (handoff?.status === 'blocked') return wait(thread, node, 'Lead Dev cần người dùng: ' + handoff.summary);
       if (!devLabels(thread).length && handoff?.status === 'done') { handedOff(thread, node.label, handoff.summary); return graph.finish(thread, node.id, 'done'); }
       return block(thread, node, `Lead Dev chưa xuất khối tasks hợp lệ${thread.planProblems ? ' (' + thread.planProblems + ')' : ''}; dừng tự động ở bước này.`);
     }
     if (!handoff) return block(thread, node, `${node.label} chưa xuất khối handoff hợp lệ; dừng tự động ở bước review.`);
     if (handoff.status === 'pass' || handoff.status === 'done') { handedOff(thread, node.label, handoff.summary || 'Review đạt'); note(thread, 'Lead review đạt.'); return graph.finish(thread, node.id, 'pass'); }
     if (handoff.status === 'reject') {
-      if ((thread.reviewRejects || 0) >= REVIEW_RETRY_LIMIT) return block(thread, node, `Review vẫn không đạt sau ${REVIEW_RETRY_LIMIT} lần sửa; dừng tự động để bạn quyết định. Mục chưa đạt: ${handoff.summary || '(không ghi)'}. Muốn sửa thêm một vòng: nhắn Lead Dev giao task sửa (Lead xuất khối tasks, app áp như triage rồi chạy tiếp); hoặc chấp nhận và chạy tiếp các bước sau.`);
+      if ((thread.reviewRejects || 0) >= REVIEW_RETRY_LIMIT) return wait(thread, node, `Review vẫn không đạt sau ${REVIEW_RETRY_LIMIT} lần sửa; dừng tự động để bạn quyết định. Mục chưa đạt: ${handoff.summary || '(không ghi)'}. Muốn sửa thêm một vòng: nhắn Lead Dev giao task sửa (Lead xuất khối tasks, app áp như triage rồi chạy tiếp); hoặc chấp nhận và chạy tiếp các bước sau.`);
       // Khối tasks có nhưng sai (định dạng, tệp…): không giao nguyên nhận xét cho mọi khối (fallback) và không tính lần sửa; Lead xuất lại.
       const problems = [], hasTasks = /```tasks/.test(message.text), planned = hasTasks ? taskPlan(message.text, thread, problems) : null;
       if (hasTasks && !planned) { thread.planProblems = problems.join('; '); return block(thread, node, `Lead review không đạt nhưng khối tasks không hợp lệ (${thread.planProblems}); chưa giao Dev và chưa tính lần sửa. Dùng /role ${node.label} start để Lead xuất lại tasks.`); }
@@ -272,7 +275,7 @@ function createAutoRun(deps) {
       thread.dispatch = tasks.map(task => ({ ...task, status: 'pending' })); recordTasks(thread, tasks, 'Review không đạt · sửa lần ' + thread.reviewRejects);
       return graph.finish(thread, node.id, 'reject');
     }
-    return block(thread, node, `Lead Dev cần người dùng: ${handoff.summary || handoff.status}`);
+    return wait(thread, node, `Lead Dev cần người dùng: ${handoff.summary || handoff.status}`);
   }
   // Issue từ QA / Art Director · review / Release: vòng sửa đã được tính khi Lead triage đang chờ hoặc đang chạy thì không đếm thêm vòng fail.
   function reportIssue(thread, payload) {
@@ -289,9 +292,9 @@ function createAutoRun(deps) {
   // trên phần dở (khối chạy lại xong sẽ kích hoạt lại chúng).
   function artRework(thread, node, label, task) {
     const { reason, art, summary } = task.artReject, why = `${label} báo ảnh không dùng được (${ART_REJECT_REASONS[reason]})${art.length ? ': ' + art.join(', ') : ''}`;
-    if (!hasArtDirector(thread)) return block(thread, node, `${why}, nhưng session không có Art Director. ${summary}`);
-    if ((thread.artReworks || 0) >= AD_REJECT_LIMIT) return block(thread, node, `${why}; đã trả Art Director ${AD_REJECT_LIMIT} lần trong vòng này, dừng để bạn quyết định. ${summary}`);
-    if (!graph.outgoing(graph.ensureGraph(thread), node.id).some(edge => edge.when === 'reject')) return block(thread, node, `${why}, nhưng sơ đồ chưa có cạnh ${label} —reject→ Art Director · review.`);
+    if (!hasArtDirector(thread)) return wait(thread, node, `${why}, nhưng session không có Art Director. ${summary}`);
+    if ((thread.artReworks || 0) >= AD_REJECT_LIMIT) return wait(thread, node, `${why}; đã trả Art Director ${AD_REJECT_LIMIT} lần trong vòng này, dừng để bạn quyết định. ${summary}`);
+    if (!graph.outgoing(graph.ensureGraph(thread), node.id).some(edge => edge.when === 'reject')) return wait(thread, node, `${why}, nhưng sơ đồ chưa có cạnh ${label} —reject→ Art Director · review.`);
     thread.artReworks = (thread.artReworks || 0) + 1; task.artRouted = true; (thread.artRework ||= []).push({ worker: label, reason, art, summary });
     for (const item of graph.ensureGraph(thread).nodes) if ((labelType(thread, item.label) === 'QA' || (item.phase === 'review' && labelType(thread, item.label) === LEAD)) && graph.stateOf(thread, item.id).status === 'queued') graph.stateOf(thread, item.id).status = 'idle';
     note(thread, why + ' · chuyển Art Director review lại.');
@@ -313,13 +316,13 @@ function createAutoRun(deps) {
     if (planBlocked) return block(thread, node, planBlocked);
     if (!handoff) return block(thread, node, `${node.label} chưa xuất khối handoff hợp lệ; dừng tự động. Trả lời ${node.label} hoặc dùng /role ${node.label} start.`);
     const summary = handoff.summary || handoff.status, tasksGiven = /```tasks/.test(message.text);
-    if (handoff.status === 'blocked') return handoff.reassign && hasLead(thread) ? reassign(thread, node, node.label, handoff) : block(thread, node, `${node.label} cần người dùng: ${summary}`);
+    if (handoff.status === 'blocked') return handoff.reassign && hasLead(thread) ? reassign(thread, node, node.label, handoff) : wait(thread, node, `${node.label} cần người dùng: ${summary}`);
     if (proposalApplied) queueStale(thread);
     if (tasksGiven && !proposalApplied) return block(thread, node, `${node.label} chưa xuất task Art hợp lệ (${thread.adPlanProblems || 'xem tin Điều phối'}); dừng tự động ở bước này.`);
     if (node.phase === 'planning') {
       if (handoff.status === 'reject') {
-        if (!thread.flow.some(label => labelType(thread, label) === 'UI/UX')) return block(thread, node, `${node.label} không duyệt mockup nhưng session không có UI/UX: ${summary}`);
-        if ((thread.uiuxRejects || 0) >= AD_REJECT_LIMIT) return block(thread, node, `${node.label} vẫn chưa duyệt mockup sau ${AD_REJECT_LIMIT} lần sửa; dừng để bạn quyết định. ${summary}`);
+        if (!thread.flow.some(label => labelType(thread, label) === 'UI/UX')) return wait(thread, node, `${node.label} không duyệt mockup nhưng session không có UI/UX: ${summary}`);
+        if ((thread.uiuxRejects || 0) >= AD_REJECT_LIMIT) return wait(thread, node, `${node.label} vẫn chưa duyệt mockup sau ${AD_REJECT_LIMIT} lần sửa; dừng để bạn quyết định. ${summary}`);
         thread.uiuxRejects = (thread.uiuxRejects || 0) + 1; thread.uiuxReview = summary; handedOff(thread, node.label, 'Chưa duyệt mockup: ' + summary);
         return graph.finish(thread, node.id, 'reject');
       }
@@ -334,7 +337,7 @@ function createAutoRun(deps) {
       if (handoff.status === 'issue') { delete thread.artRework; delete thread.artRedo; reportIssue(thread, { text: '[Visual · Art Director] ' + summary }); holdLeadReview(thread); return graph.finish(thread, node.id, 'issue'); }
       if (handoff.status === 'reject') {
         if (!tasksGiven) return block(thread, node, `${node.label} trả ảnh về nhưng không kèm khối tasks giao Art: ${summary}`);
-        if ((thread.adRejects || 0) >= AD_REJECT_LIMIT) return block(thread, node, `Ảnh vẫn chưa đạt sau ${AD_REJECT_LIMIT} lần Art làm lại; dừng để bạn quyết định. ${summary}`);
+        if ((thread.adRejects || 0) >= AD_REJECT_LIMIT) return wait(thread, node, `Ảnh vẫn chưa đạt sau ${AD_REJECT_LIMIT} lần Art làm lại; dừng để bạn quyết định. ${summary}`);
         thread.adRejects = (thread.adRejects || 0) + 1; handedOff(thread, node.label, 'Trả Art làm lại: ' + summary);
         if (thread.artRework?.length) thread.artRedo = true; // khối chờ art chạy lại khi Art xong phần làm lại này
         holdLeadReview(thread); return graph.finish(thread, node.id, 'reject');
@@ -345,7 +348,7 @@ function createAutoRun(deps) {
   // QA hai pha: chức năng (theo GDD/AC) → khi hết Issue và không có Issue mới mới sang performance (GC Alloc, CPU, GPU).
   function afterQa(thread, node, handoff) {
     if (handoff.status === 'issue') { reportIssue(thread, { text: handoff.summary || 'QA báo lỗi' }); holdLeadReview(thread); return graph.finish(thread, node.id, 'issue'); }
-    if (handoff.status !== 'pass') return block(thread, node, 'QA cần người dùng: ' + (handoff.summary || handoff.status));
+    if (handoff.status !== 'pass') return wait(thread, node, 'QA cần người dùng: ' + (handoff.summary || handoff.status));
     for (const item of handoff.retested) if (openIssues(thread).some(issue => issue.id === item.id)) update(thread, 'retest', { issue: item.id, text: item.evidence || handoff.summary || 'QA retest đạt' });
     if (openIssues(thread).length) return block(thread, node, `QA pass nhưng còn ${openIssues(thread).length} Issue chưa ghi retest; dừng tự động.`);
     if (thread.qaPhase !== 'performance' && !thread.tweak) { thread.qaPhase = 'performance'; graph.stateOf(thread, node.id).status = 'queued'; return note(thread, 'Hết Issue chức năng · QA chuyển sang kiểm performance.'); }
@@ -396,7 +399,10 @@ function createAutoRun(deps) {
     graph.ensureGraph(thread); reopen(thread, label);
     const handoff = parseHandoff(message.text), type = labelType(thread, label); let node = nodeOfRun(thread, label);
     const status = graph.stateOf(thread, node.id).status, gdDone = type === 'GD' && handoff?.status === 'done' && !message.error;
-    if (gdDone && status !== 'running' && started(thread)) return newRoundFromGd(thread, node, handoff);
+    // Sơ đồ vòng lặp (Lead review → GD): GD chạy sau khi review đạt cũng là mở vòng mới. Không xoá task của vòng trước thì task
+    // bị chặn còn sót (Dev hết lượt tool) giữ phạm vi tệp, Art Director giao vòng sau bị báo "chồng tệp" và tự động dừng.
+    const reviewPassed = Object.entries(graph.runOf(thread).nodes).some(([id, state]) => state.outcome === 'pass' && /@review$/.test(id) && labelType(thread, id.replace(/@review$/, '')) === LEAD);
+    if (gdDone && started(thread) && (status !== 'running' || reviewPassed)) return newRoundFromGd(thread, node, handoff);
     if (!thread.auto?.enabled) {
       // Chạy tay: Lead phân công thì Dev chạy ngay như trước; GD chốt thiết kế = điểm bắt đầu chạy tự động.
       if (type === LEAD && proposalApplied) { for (const task of thread.dispatch || []) if (task.status === 'pending') task.status = 'queued'; changed(); }
@@ -419,7 +425,7 @@ function createAutoRun(deps) {
         if (rework && !message.error) { artRework(thread, node, label, rework); return await advance(thread); }
         const task = (thread.dispatch || []).find(item => item.worker === label && item.status !== 'pending');
         if (task?.status === 'blocked' && handoff?.reassign && !message.error && hasLead(thread)) { reassign(thread, node, label, handoff); return await advance(thread); }
-        if (task && ['blocked', 'failed'].includes(task.status)) return block(thread, node, `${label} ${task.status === 'failed' ? 'lỗi' : 'bị chặn'}${task.error ? ': ' + task.error : ''}. Xử lý rồi dùng /role ${label} start hoặc Thử lại task bị chặn.`);
+        if (task && ['blocked', 'failed'].includes(task.status)) return block(thread, node, `${label} ${task.status === 'failed' ? 'lỗi' : 'bị chặn'}${task.error ? ': ' + task.error : ''}. Xử lý rồi dùng /role ${label} start hoặc Thử lại task bị chặn.`, !(handoff?.status === 'blocked' && !message.error && !message.maxTurns) && task.status !== 'cancelled');
         if (task?.status === 'finished') graph.finish(thread, node.id, 'done');
         // Art/Anim làm lại xong mọi task Art Director giao: khối đang chờ art chạy tiếp (ảnh mới xem trong ART.md, CHANGES.md).
         const artOpen = (thread.dispatch || []).some(item => ownedByAd(thread, item) && !['finished', 'cancelled'].includes(item.status));
@@ -427,13 +433,13 @@ function createAutoRun(deps) {
         routeReassign(thread);
         return await advance(thread);
       }
-      if (message.error) return block(thread, node, `${label} lỗi hoặc bị dừng; dùng /role ${label} start để chạy lại.`);
+      if (message.error) return block(thread, node, message.stopped ? `${label} đã bị bạn dừng; dùng /role ${label} start để chạy lại.` : `${label} lỗi hoặc bị dừng; dùng /role ${label} start để chạy lại.`, !message.stopped);
       focus(thread, node);
       if (type === LEAD) await afterLead(thread, node, message, handoff, proposalApplied, planBlocked);
       else if (type === ART_DIRECTOR) afterAd(thread, node, message, handoff, proposalApplied, planBlocked);
       else if (!handoff) block(thread, node, `${label} chưa xuất khối handoff hợp lệ; dừng tự động. Trả lời ${label} hoặc dùng /role ${label} start.`);
       else if (handoff.status === 'blocked' && handoff.reassign && type === 'QA' && hasLead(thread)) reassign(thread, node, label, handoff);
-      else if (handoff.status === 'blocked') block(thread, node, `${label} cần người dùng: ${handoff.summary}`);
+      else if (handoff.status === 'blocked') wait(thread, node, `${label} cần người dùng: ${handoff.summary}`);
       else if (type === 'QA') afterQa(thread, node, handoff);
       else if (type === RELEASE) afterRelease(thread, node, handoff);
       else if (['done', 'pass'].includes(handoff.status)) { if (type === 'UI/UX') delete thread.uiuxReview; handedOff(thread, label, handoff.summary); graph.finish(thread, node.id, handoff.status); }

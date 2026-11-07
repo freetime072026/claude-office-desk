@@ -38,7 +38,8 @@ const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor, ART_DIRE
 function permissionAsker(label, folders, autoApproved, policy, shellSession = null) {
   const always = new Set();
   return async ({ tool, input }) => {
-    const verdict = decide({ ...policy, tool, input });
+    // Khối của luồng chỉ làm việc trong thư mục session; chat thường (Claude) không bị giới hạn này.
+    const verdict = decide({ ...policy, folders: label === 'Claude' ? [] : folders, tool, input });
     // updatedInput: lệnh/tham số app đã chỉnh (Agent ép code-reader, curl tới Unity thêm --max-time) áp dụng cho mọi lần cho phép.
     const allowed = { allow: true, ...(verdict.updatedInput ? { updatedInput: verdict.updatedInput } : {}) };
     if (verdict.action === 'allow') return allowed;
@@ -226,6 +227,7 @@ app.whenReady().then(() => {
   const say = (thread, role, textValue) => thread.messages.push({ role, text: textValue, time: new Date().toISOString() });
   function scheduleFix(thread, incident) {
     const label = fixerOf(thread); if (!label || incident.label === label) return false;
+    if (getWorker(thread, incident.label)?.paused) return false; // bạn tạm dừng khối: không phải sự cố
     thread.lastIncident = incident; // bạn bấm chạy Fixer bằng tay sau đó vẫn có ngữ cảnh sự cố này
     // Fixer đang xử lý khối khác: xếp hàng, xử lý lần lượt sau khi Fixer xong.
     if (thread.fixing) { if (thread.fixing.label !== incident.label && !(thread.fixQueue ||= []).some(item => item.label === incident.label)) thread.fixQueue.push(incident); return false; }
@@ -268,7 +270,7 @@ app.whenReady().then(() => {
   function watch() {
     const now = Date.now();
     for (const [key, run] of chats) {
-      const message = run.message; if (!message?.streaming || message.hang) continue;
+      const message = run.message; if (!message?.streaming || message.hang || message.stopped) continue;
       const open = (message.steps || []).findLast(step => !step.end), last = Date.parse(message.progress?.updatedAt || message.time) || now;
       const limit = open ? Date.parse(open.at) + HANG_TOOL_MS : last + HANG_IDLE_MS; if (now < limit) continue;
       message.hang = true; message.text += `\n\n[App dừng lượt này: ${open ? 'lệnh ' + open.tool + ' chạy quá ' + HANG_TOOL_MS / 60000 + ' phút' : 'không có tiến độ ' + HANG_IDLE_MS / 60000 + ' phút'}; coi là treo.]`;
@@ -278,8 +280,9 @@ app.whenReady().then(() => {
     for (const thread of metadata.team.threads) {
       if (!thread.auto?.enabled || teamStore.isHalted(thread) || thread.status === 'done' || thread.fixing) { stuck.delete(thread.id); continue; }
       const running = [...chats.keys()].some(key => key.startsWith(thread.id + ':'));
-      const waiting = (thread.dispatch || []).filter(task => ['queued', 'pending'].includes(task.status)).map(task => task.worker);
-      const queued = Object.entries(thread.graphRun?.nodes || {}).filter(([, state]) => state.status === 'queued').map(([id]) => id);
+      const waiting = (thread.dispatch || []).filter(task => ['queued', 'pending'].includes(task.status) && !getWorker(thread, task.worker)?.paused).map(task => task.worker);
+      const pausedNode = id => getWorker(thread, flowgraphLib.ensureGraph(thread).nodes.find(node => node.id === id)?.label || '')?.paused;
+      const queued = Object.entries(thread.graphRun?.nodes || {}).filter(([id, state]) => state.status === 'queued' && !pausedNode(id)).map(([id]) => id);
       const orphan = flowgraphLib.ensureGraph(thread).nodes.some(node => thread.graphRun?.nodes?.[node.id]?.status === 'running'
         && !isDevType(getWorker(thread, node.label).type) && !isRunning(thread, node.label));
       if (orphan) background(thread, () => autoRun.runStage(thread));
@@ -316,7 +319,7 @@ app.whenReady().then(() => {
     const config = getWorker(thread, label), tasks = (thread.dispatch || []).filter(task => task.worker === label);
     if (verb === 'pause') {
       config.paused = true; for (const task of tasks) if (ACTIVE_TASK.includes(task.status)) task.status = 'paused';
-      chats.get(runKey(thread.id, label))?.cancel();
+      { const run = chats.get(runKey(thread.id, label)); if (run?.message) run.message.stopped = true; run?.cancel(); }
       return { text: label + ' đã tạm dừng. Bước tự động sẽ chờ tại khối này; dùng /role ' + label + ' start để tiếp tục.' };
     }
     delete config.paused;
@@ -370,7 +373,7 @@ app.whenReady().then(() => {
     }
     if (action === 'open-url') { let url; try { url = new URL(String(payload.url || '')); } catch { throw Error('Link không hợp lệ'); } if (!['http:', 'https:'].includes(url.protocol)) throw Error('Chỉ mở link http/https'); await shell.openExternal(url.href); return true; }
     if (action === 'file-read') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); return require('./files.cjs').readProjectFile(payload.path, foldersOf(thread), { sessionId: thread.id, readOnlyRoots: [require('node:os').tmpdir()] }); }
-    if (action === 'chat-stop') { const thread = metadata.team.threads.find(item => item.id === payload.id); for (const task of thread?.dispatch || []) if (task.worker === payload.role && ACTIVE_TASK.includes(task.status)) task.status = 'cancelled'; chats.get(runKey(payload.id, payload.role))?.cancel(); persist(); publish(); return true; }
+    if (action === 'chat-stop') { const thread = metadata.team.threads.find(item => item.id === payload.id); for (const task of thread?.dispatch || []) if (task.worker === payload.role && ACTIVE_TASK.includes(task.status)) task.status = 'cancelled'; { const run = chats.get(runKey(payload.id, payload.role)); if (run?.message) run.message.stopped = true; run?.cancel(); } persist(); publish(); return true; }
     if (action === 'dispatch-retry') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); for (const task of thread.dispatch || []) if (['blocked', 'failed', 'cancelled'].includes(task.status)) { task.status = 'queued'; delete task.error; } await pumpThread(thread); return true; }
     if (action === 'chat-send') {
       const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại');
@@ -501,7 +504,7 @@ app.whenReady().then(() => {
       const devRun = Boolean(files && payload.role && isDevType(worker.type) && scope?.paths?.length), gitBefore = devRun ? fileChanges.gitStatus(thread.folder, scope.paths, foldersOf(thread)) : null;
       const model = payload.role ? modelFor(worker.type, worker.model, thread.leadPhase) : worker.model;
       const runThread = { ...thread, mode: worker.mode, model, cliSessions: thread.cliSessions ||= {}, sessionTotals: thread.sessionTotals ||= {} };
-      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: [...(images.length ? [attachments.folderOf(root, thread.id)] : []), ...(compactOnly ? [] : skills.extraDirs(runSkills))], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder }, { approved: () => Boolean(thread.shellApproved?.[payload.role || 'Claude']), approve: () => { (thread.shellApproved ||= {})[payload.role || 'Claude'] = new Date().toISOString(); persist(); } }) }); run.mode = worker.mode; run.scope = exclusivePaths(scope); run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
+      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: [...(images.length ? [attachments.folderOf(root, thread.id)] : []), ...(compactOnly ? [] : skills.extraDirs(runSkills))], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder, readable: [attachments.folderOf(root, thread.id)], cliData: path.join(directory, 'projects') }, { approved: () => Boolean(thread.shellApproved?.[payload.role || 'Claude']), approve: () => { (thread.shellApproved ||= {})[payload.role || 'Claude'] = new Date().toISOString(); persist(); } }) }); run.mode = worker.mode; run.scope = exclusivePaths(scope); run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
       run.message.profileId = profileId; run.message.model = model; run.penpot = penpotRun;
       run.child.once('close', () => {
         chats.delete(activeKey);

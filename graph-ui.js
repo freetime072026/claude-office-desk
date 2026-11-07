@@ -38,8 +38,19 @@
   function loadDraft() { draft = structuredClone(thread?.graph || { nodes: [], edges: [] }); dirty = false; draftOf = thread?.id || ''; selected.clear(); get('#graph-save').disabled = get('#graph-cancel').disabled = true; get('#graph-state').textContent = ''; }
   window.graphView = {
     // Gọi từ team-ui.js mỗi lần vẽ lại. Bản nháp đang sửa không bị ghi đè bởi trạng thái mới từ main.
-    paint(next) { thread = next; if (!thread || draftOf !== thread.id || !dirty) loadDraft(); if (!get('#graph-view').hidden) render(); }
+    // Khối đang chạy thì main gửi trạng thái mới ~10 lần/giây (log, tiến độ, token) nhưng sơ đồ chỉ phụ thuộc vào sơ đồ đã lưu,
+    // danh sách khối và trạng thái từng nút: những thứ đó không đổi thì bỏ qua, không dựng lại DOM (vẽ lại sẽ đóng menu dây, cắt thao tác kéo).
+    // Có đổi thật mà menu đang mở/đang kéo (cùng session) thì hoãn tới khi đóng menu/thả chuột (flushPaint).
+    paint(next) {
+      const same = next && thread && next.id === thread.id, key = signature(next); thread = next;
+      if (same && key === painted) return;
+      if (same && (menu || tracking)) { pendingPaint = true; return; }
+      pendingPaint = false; painted = key; if (!thread || draftOf !== thread.id || !dirty) loadDraft(); if (!get('#graph-view').hidden) render();
+    }
   };
+  let pendingPaint = false, painted = null;
+  const signature = item => item ? JSON.stringify([item.id, Boolean(item.archived), item.flow, item.graph, Object.entries(item.graphRun?.nodes || {}).map(([id, state]) => id + ':' + state.status)]) : '';
+  const flushPaint = () => { if (pendingPaint && !menu && !tracking) setTimeout(() => { if (pendingPaint && !menu && !tracking) window.graphView.paint(thread); }); };
 
   // ---- Khung nhìn: canvas vẽ theo toạ độ sơ đồ (có thể âm), dời bằng pan và phóng bằng scale.
   const toWorld = (clientX, clientY) => { const box = viewport.getBoundingClientRect(); return { x: (clientX - box.left - panX) / scale, y: (clientY - box.top - panY) / scale }; };
@@ -236,6 +247,7 @@
       const held = dragEdge; dragEdge = null;
       if (!moved) onClick?.(); else onEnd?.(upEvent);
       if (held) paintFocus(); hoverAt(document.elementFromPoint(upEvent.clientX, upEvent.clientY)); // khối/dây vẽ lại khi kéo: cập nhật lại chỗ con trỏ
+      flushPaint();
     };
     document.addEventListener('pointermove', onMove); document.addEventListener('pointerup', onUp);
   }
@@ -367,7 +379,7 @@
     });
   }
   // ---- Menu cạnh: đổi điều kiện / đặt lại đường nối / xoá.
-  function closeMenu() { menu?.remove(); menu = null; if (activeEdge) { activeEdge = null; paintFocus(); } }
+  function closeMenu() { menu?.remove(); menu = null; if (activeEdge) { activeEdge = null; paintFocus(); } flushPaint(); }
   function openMenu(edge, x, y) {
     closeMenu(); if (thread.archived) return;
     activeEdge = edge; paintFocus();

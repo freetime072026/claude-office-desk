@@ -48,9 +48,30 @@ function wholeDiskScan(command) {
   return '';
 }
 const WEB = ['WebFetch', 'WebSearch'];
-// Thư mục tạm của hệ thống: khối có shell (Dev, Art, Anim, Sound, VFX, QA) hay ghi script phụ (python/node sinh ảnh, sửa tệp, chụp
-// màn hình) ở đây. Chặn thì khối nhét script vào heredoc, lỗi cú pháp và tốn lượt; cho ghi như tệp chung (không tính chồng phạm vi).
-const TEMP = require('node:os').tmpdir() + path.sep;
+// Thư mục tạm của khối có shell: .office-desk/tmp/ trong project (không dùng thư mục tạm của hệ thống: mọi khối chỉ làm việc trong
+// thư mục của session). Script phụ (python/node sinh ảnh, sửa tệp, chụp màn hình) ghi ở đây; tính là tệp chung (không tính chồng phạm vi).
+const tmpOf = files => require('./session-files.cjs').tmpDir(files);
+// ---- Chỉ làm việc trong thư mục của session (thư mục chính + thư mục liên quan). Đọc/tìm/ghi ngoài đó bị từ chối; README/tài liệu nhắc
+// tệp ở thư mục khác thì khối báo người dùng thêm thư mục đó (prompt.cjs folderRule). Ngoại lệ chỉ đọc: thư mục chương trình
+// (Program Files, Windows, nvm, Git) để chạy công cụ như trình duyệt, node, python.
+const READ_TOOLS = ['Read', 'Glob', 'Grep', 'LS', 'NotebookRead'];
+const SYSTEM_DIRS = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.SystemRoot, process.env.ProgramData && path.join(process.env.ProgramData, 'chocolatey'),
+  process.env.NVM_HOME, process.env.NVM_SYMLINK, process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs'), process.env.APPDATA && path.join(process.env.APPDATA, 'npm'),
+  path.dirname(process.execPath)].filter(Boolean);
+const under = (target, roots) => { const file = norm(target); return roots.some(root => { const base = norm(root).replace(/[\\/]+$/, ''); return file === base || file.startsWith(base + path.sep); }); };
+// Đường dẫn tuyệt đối trong một lệnh shell: C:\x, C:/x, Git Bash /c/x, ~/x, $HOME, $TEMP/$TMP/%TEMP%, /tmp.
+function outsidePaths(command, folders) {
+  let text = String(command || ''); const found = [];
+  // Đường dẫn trong nháy có thể chứa dấu cách ("C:/Program Files/…"): lấy nguyên chuỗi rồi bỏ khỏi lệnh trước khi quét phần còn lại.
+  text = text.replace(/(["'])([A-Za-z]:[\\/][^"'\n]*)\1/g, (all, quote, inner) => { found.push(inner); return ' '; });
+  for (const match of text.matchAll(/(?<![\w])([A-Za-z]):[\\/][^\s'"`|;&<>()]*/g)) found.push(match[0]);
+  for (const match of text.matchAll(/(?<![\w:.\/~-])\/([a-zA-Z])\/[^\s'"`|;&<>()]*/g)) found.push(match[1].toUpperCase() + ':' + match[0].slice(2));
+  const outside = found.map(item => item.replace(/[.,]+$/, '')).filter(item => !under(path.resolve(item), folders) && !under(path.resolve(item), SYSTEM_DIRS));
+  const special = /(^|[\s'"=(<>|;&:])(~\/|\$HOME\b|\$\{HOME\}|\$TEMP\b|\$\{TEMP\}|\$TMP\b|\$TMPDIR\b|%TEMP%|%TMP%|%USERPROFILE%|\/tmp(\/|\b))/i.exec(text);
+  if (special) outside.push(special[2]);
+  return outside;
+}
+const outsideMessage = (what, folders, extra = '') => `Ngoài thư mục của session: ${what}. Chỉ đọc, tìm và ghi trong: ${folders.join(', ')}${extra}. Tệp tạm/script phụ để trong .office-desk/tmp/ của project. Nếu README hoặc tài liệu nhắc tệp ở thư mục khác: không tự tìm, dừng và báo người dùng thêm thư mục đó vào session (ghi rõ đường dẫn).`;
 // assigner: người giao task của khối (Lead hoặc Art Director), để lời từ chối ghi chỉ đúng người cần bổ sung files.
 function roleScope(type, files, devFiles = [], folder = '', assigner = 'Lead') {
   if (!files) return null;
@@ -62,7 +83,7 @@ function roleScope(type, files, devFiles = [], folder = '', assigner = 'Lead') {
   // riêng thì QA và Art Director · review (chạy song song) luôn bắt nhau chờ; QA chạy liền nhiều lượt nên Art Director chờ mãi rồi bị bỏ qua.
   if (type === 'Lead Dev') return { paths: [files.project, files.issues], shared: [files.issues], bash: true, label: 'Lead Dev chỉ ghi PROJECT.md và ISSUES.md' };
   // QA: ghi Issue/PERF và script kiểm trong .office-desk/qa/ (dùng lại qua các lượt); không chạy lệnh nền (server bỏ lại giữ cổng, CLI không thoát).
-  if (type === 'QA') return { paths: [files.issues, files.perf, require('./session-files.cjs').qaDir(files), TEMP], shared: [files.issues, require('./session-files.cjs').qaDir(files), TEMP], bash: true, noBackground: true, label: 'QA chỉ ghi ISSUES.md, PERF.md, script kiểm trong .office-desk/qa/ và tệp tạm' };
+  if (type === 'QA') return { paths: [files.issues, files.perf, require('./session-files.cjs').qaDir(files), tmpOf(files)], shared: [files.issues, require('./session-files.cjs').qaDir(files), tmpOf(files)], bash: true, noBackground: true, label: 'QA chỉ ghi ISSUES.md, PERF.md, script kiểm trong .office-desk/qa/ và tệp tạm' };
   if (type === 'UI/UX') return { paths: [files.uiux], bash: false, label: 'UI/UX chỉ ghi UIUX.md' };
   // Release: chạy lệnh build/đóng gói của project (shell), không sửa code; chỉ ghi kết quả và Issue.
   if (type === 'Release') return { paths: [files.release, files.issues], shared: [files.issues], bash: true, label: 'Release chỉ ghi RELEASE.md và ISSUES.md' };
@@ -72,7 +93,7 @@ function roleScope(type, files, devFiles = [], folder = '', assigner = 'Lead') {
   // MISSING_SOUNDS.md luôn ghi được: code cần âm thanh chưa có thì dùng sound tạm và ghi yêu cầu vào đây (prompt.cjs SOUND_GUIDE).
   // shared: tệp ghi chú chung mọi khối được thêm mục (MISSING_SOUNDS.md, ART_PROMPTS.md); không tính khi xét hai lượt có chồng
   // phạm vi (exclusivePaths), nếu không mọi Dev/Art/Anim đều "chồng" nhau qua tệp này và chạy lần lượt thay vì song song.
-  if (isDevType(type) && devFiles.length) return { paths: [...devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : []), TEMP], shared: [files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : []), TEMP], bash: true, assigner, label: `${type} chỉ ghi các tệp trong files của task ${assigner} giao; ngoài ra mọi khối ghi thêm được MISSING_SOUNDS.md (báo âm thanh còn thiếu)${type === 'Art' ? ' và ART_PROMPTS.md' : ''}` };
+  if (isDevType(type) && devFiles.length) return { paths: [...devFiles.map(file => path.resolve(folder, file) + (/[\\/]$/.test(file) ? path.sep : '')), files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : []), tmpOf(files)], shared: [files.missingSounds, ...(type === 'Art' ? [files.artPrompts] : []), tmpOf(files)], bash: true, assigner, label: `${type} chỉ ghi các tệp trong files của task ${assigner} giao; ngoài ra mọi khối ghi thêm được MISSING_SOUNDS.md (báo âm thanh còn thiếu)${type === 'Art' ? ' và ART_PROMPTS.md' : ''}` };
   return null;
 }
 const norm = value => path.resolve(value).toLowerCase();
@@ -83,8 +104,21 @@ function exclusivePaths(scope) { if (!scope) return null; const shared = (scope.
 // Hai tập phạm vi có chạm nhau không (để cho Dev sửa song song khi tệp không trùng).
 function scopesOverlap(first, second) { return first.some(entry => inScope(entry, second)) || second.some(entry => inScope(entry, first)); }
 // Quyết định cho một yêu cầu duyệt: allow (không hỏi), deny (từ chối kèm lý do) hoặc ask (hiện hộp duyệt).
-function decide({ scope, mode, tool, input = {}, cwd = '' }) {
+// readable: thư mục chỉ đọc ngoài thư mục session mà khối vẫn cần (ảnh bạn dán/kéo vào tin: attachments/<session> của app).
+// cliData: thư mục projects/ trong hồ sơ CLI (CLAUDE_CONFIG_DIR). Kết quả lệnh quá dài, CLI lưu vào …/<session>/tool-results/
+// và bảo model đọc lại tệp đó ("Output too large… Full output saved to"); chặn thì khối mất kết quả. Chỉ mở tool-results, không mở transcript.
+const isToolResult = (target, cliData) => Boolean(cliData) && under(target, [cliData]) && /[\\/]tool-results[\\/]/i.test(target);
+function decide({ scope, mode, tool, input = {}, cwd = '', folders = [], readable = [], cliData = '' }) {
   if (WEB.includes(tool)) return { action: 'ask' };
+  // Đọc/tìm ngoài thư mục của session (CLI chỉ hỏi khi đường dẫn nằm ngoài thư mục làm việc).
+  if (folders.length && READ_TOOLS.includes(tool)) {
+    const target = input.file_path || input.notebook_path || input.path || '';
+    if (target && !under(path.resolve(cwd, target), [...folders, ...readable, ...SYSTEM_DIRS]) && !isToolResult(path.resolve(cwd, target), cliData)) return { action: 'deny', message: outsideMessage(path.resolve(cwd, target), folders) };
+  }
+  if (folders.length && WRITE_TOOLS.includes(tool)) {
+    const target = path.resolve(cwd, input.file_path || input.notebook_path || '');
+    if (!under(target, folders)) return { action: 'deny', message: outsideMessage(target, folders) };
+  }
   // Subagent chỉ dùng để dò/đọc code bằng model rẻ (subagent.cjs). App ép đúng loại agent, model và chạy chờ kết quả,
   // vì tham số model của Agent ghi đè được định nghĩa và mặc định Agent chạy nền.
   if (tool === 'Agent') return scope?.bash ? { action: 'allow', updatedInput: readerCall(input) } : { action: 'deny', message: 'Khối này không dùng subagent.' };
@@ -92,10 +126,15 @@ function decide({ scope, mode, tool, input = {}, cwd = '' }) {
     if (!scope) return { action: mode === 'bypass' ? 'allow' : 'ask' };
     const target = path.resolve(cwd, input.file_path || input.notebook_path || '');
     if (inScope(target, scope.paths)) return { action: 'allow' };
+    // Script phụ của khối có shell: .office-desk/tmp/ của bất kỳ thư mục nào của session (thư mục chính có thể là thư mục con như
+    // assets/stage, còn khối làm việc ở thư mục project liên quan).
+    if (scope.bash && folders.some(folder => under(target, [path.join(folder, '.office-desk', 'tmp')]))) return { action: 'allow' };
     const allowed = exclusivePaths(scope);
-    return { action: 'deny', message: `Ngoài phạm vi ghi (${scope.label}): ${target}.${scope.assigner && allowed.length ? ' Được ghi: ' + allowed.join(', ') + '.' : ''} Không ghi tệp khác; nếu cần ghi thêm, ghi rõ tệp đó trong handoff để ${scope.assigner || 'Lead'} giao lại.` };
+    return { action: 'deny', message: `Ngoài phạm vi ghi (${scope.label}): ${target}.${scope.assigner && allowed.length ? ' Được ghi: ' + allowed.join(', ') + '.' : ''} Không ghi tệp khác; nếu cần ghi thêm, ghi rõ tệp đó trong handoff để ${scope.assigner || 'Lead'} giao lại.${scope.bash ? ' Script phụ/tệp tạm ghi được trong .office-desk/tmp/ của thư mục session.' : ''}` };
   }
   if (tool === 'Bash') {
+    const away = folders.length ? outsidePaths(input.command, [...folders, ...readable]).filter(item => !isToolResult(path.resolve(item), cliData)) : [];
+    if (away.length) return { action: 'deny', message: outsideMessage(away.slice(0, 3).join(', '), folders, ' (công cụ trong Program Files/Windows/nvm vẫn chạy được)') };
     const scan = wholeDiskScan(input.command);
     if (scan) return { action: 'deny', message: `Không quét cả ổ đĩa (${scan}): lệnh chạy hàng chục phút và treo lượt. Tìm công cụ bằng \`command -v ffmpeg\` / \`where ffmpeg\`; tìm tệp trong thư mục của session (đường dẫn cụ thể, có -maxdepth).` };
     // /tmp: Git Bash hiểu là thư mục tạm của Windows, node/python hiểu là \tmp ở gốc ổ, nên script ghi được mà đọc lại lỗi
@@ -104,7 +143,7 @@ function decide({ scope, mode, tool, input = {}, cwd = '' }) {
     const command0 = String(input.command || ''), usesTmp = /(^|[\s'"=(<>|;&:])\/tmp(\/|\b)/.test(command0);
     if (scope?.bash && usesTmp && (scope.noBackground || /(^|[\s;&|(])(node|python3?|py)(\.exe)?(\s|$)/.test(command0))) {
       return { action: 'deny', message: 'Không dùng /tmp: Git Bash và node/python hiểu khác nhau (bash là thư mục tạm của Windows, node/python là \\tmp ở gốc ổ). '
-        + (scope.noBackground ? 'Ghi kết quả/ảnh vào .office-desk/qa/out/ bằng đường dẫn tương đối rồi chạy lại lệnh.' : 'Dùng đường dẫn tương đối, hoặc "$(cygpath -m "$TEMP")/…" để bash, node và python cùng hiểu, rồi chạy lại lệnh.') };
+        + (scope.noBackground ? 'Ghi kết quả/ảnh vào .office-desk/qa/out/ bằng đường dẫn tương đối rồi chạy lại lệnh.' : 'Dùng đường dẫn tương đối trong project, ví dụ .office-desk/tmp/, để bash, node và python cùng hiểu, rồi chạy lại lệnh.') };
     }
     // Lệnh chạy nền (run_in_background) bị bỏ lại (dev server giữ cổng) làm CLI không thoát và lượt bị coi là treo: mọi khối có shell.
     if (scope?.bash && input.run_in_background) return { action: 'deny', message: 'Không chạy lệnh nền (run_in_background). Bật dev server và chạy kiểm trong cùng một lệnh Bash rồi tắt server ở cuối lệnh (vd. `node scripts/build.cjs dev --port 3311 > log 2>&1 & PID=$!; …; kill $PID`), bọc lệnh dài bằng timeout (mỗi lệnh chạy được tối đa 10 phút).' };
@@ -127,4 +166,4 @@ function bashVerdict(scope, mode) {
   if (scope?.bash) return { action: mode === 'bypass' ? 'allow' : 'ask' };
   return { action: mode === 'bypass' ? 'allow' : mode === 'read' ? 'deny' : 'ask', ...(mode === 'read' ? { message: 'Mode Plan không chạy lệnh shell.' } : {}) };
 }
-module.exports = { SHELL_OPTIONS, withShell, describeTool, roleScope, decide, inScope, scopesOverlap, exclusivePaths, withCurlTimeout, wholeDiskScan };
+module.exports = { outsidePaths, SHELL_OPTIONS, withShell, describeTool, roleScope, decide, inScope, scopesOverlap, exclusivePaths, withCurlTimeout, wholeDiskScan };

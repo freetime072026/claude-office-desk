@@ -41,6 +41,8 @@ test('ChatGPT mode (default): Art writes detailed English prompts from STYLE.md 
   for (const item of [/bảng màu hex chủ đạo/, /góc nhìn và bố cục/, /kích thước tạo \(ví dụ 1024x1024\) và kích thước cuối/, /nền trong suốt PNG/, /không chữ, không watermark/, /biến thể\/trạng thái/, /ảnh tham chiếu trong project để người dùng upload kèm/, /Prompt viết bằng tiếng Anh/]) assert.match(brief, item);
   assert.match(brief, /[\\/]s[\\/]inbox[\\/]ART-….png/); assert.match(brief, /"status":"blocked","summary":"Chờ ảnh từ ChatGPT/);
   assert.match(brief, /tách nền hoặc chroma key, cắt viền thừa/); assert.match(brief, /viết lại prompt cụ thể hơn/);
+  // Lệnh dán nguyên khối: dòng Skip ghi đủ, bước SAVE copy + kiểm tệp, ghi đường dẫn thật vào IMAGE INFO.
+  for (const item of [/Skip these items \(already done\)/, /Only make these items/, /output\/imagegen\/<mã nhóm>\/<tên tệp>\.png/, /Get-Item/, /không ghi đường dẫn chưa kiểm/]) assert.match(brief, item);
   assert.doesNotMatch(brief, /tool MCP sinh ảnh nếu role được bật/);
   const { initial, update } = require('../team.cjs'); const team = initial(); const id = update(team, 'create', { request: 'x' });
   update(team, 'art-generator', { id, mode: 'tool' }); assert.equal(team.artGenerator, 'tool');

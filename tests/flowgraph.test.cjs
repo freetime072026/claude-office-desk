@@ -50,6 +50,22 @@ test('custom edges with conditions: QA issue goes straight back to Dev, QA pass 
   await auto.after(thread, 'QA', reply('pass')); assert.equal(thread.status, 'done');
 });
 
+test('loop graph (Lead review pass → GD): GD after the review opens a new round and drops leftover blocked tasks', async () => {
+  const { team, id, thread, sent, auto } = setup(['GD', 'Lead Dev', 'Dev']);
+  const nodes = thread.graph.nodes.filter(node => ['GD', 'Lead Dev@planning', 'Dev', 'Lead Dev@review', '@end'].includes(node.id));
+  update(team, 'graph-save', { id, graph: { nodes, edges: [{ from: 'GD', to: 'Lead Dev@planning', when: 'done' }, { from: 'Lead Dev@planning', to: 'Dev', when: 'done' }, { from: 'Dev', to: 'Lead Dev@review', when: 'always' }, { from: 'Lead Dev@review', to: 'GD', when: 'pass' }] } });
+  await auto.after(thread, 'GD', reply('done'));
+  plan(thread, ['Dev']); await auto.after(thread, 'Lead Dev', { text: '' }, { proposalApplied: true });
+  const task = thread.dispatch[0]; task.status = 'blocked'; task.error = 'Chạm giới hạn số lượt tool';
+  await auto.after(thread, 'Dev', { text: 'hết lượt', error: true });
+  graph.stateOf(thread, 'Lead Dev@review').status = 'running'; thread.leadPhase = 'review';
+  await auto.after(thread, 'Lead Dev', reply('pass')); assert.equal(sent.at(-1), 'GD');
+  const round = thread.round || 1;
+  await auto.after(thread, 'GD', reply('done'));
+  assert.deepEqual(thread.dispatch, [], 'blocked Dev task of the finished round is gone');
+  assert.equal(thread.round, round + 1); assert.equal(sent.at(-1), 'Lead Dev@planning');
+});
+
 test('a node waits for every connected node that is still pending, but not for sources that never ran', async () => {
   const { team, id, thread, sent, auto } = setup(['GD', 'UI/UX', 'Dev', 'QA']);
   update(team, 'graph-save', { id, graph: { nodes: thread.graph.nodes, edges: [{ from: 'GD', to: 'UI/UX' }, { from: 'GD', to: 'Dev' }, { from: 'UI/UX', to: 'QA' }, { from: 'Dev', to: 'QA' }, { from: 'QA', to: '@end', when: 'always' }] } });

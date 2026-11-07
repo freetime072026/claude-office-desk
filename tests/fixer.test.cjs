@@ -48,8 +48,9 @@ test('auto run reports a stopped block as an incident; a graphless Fixer turn is
   const thread = team.threads.find(item => item.id === id), incidents = [];
   const auto = createAutoRun({ update: (item, action, payload) => update(team, action, { ...payload, id: item.id }), send: async () => true, pump: async () => {}, log: (item, role, text) => item.messages.push({ role, text }), changed: () => {}, approve: async () => true, isRunning: () => false, incident: (item, value) => incidents.push(value) });
   await auto.enable(thread, 'test'); await auto.runStage(thread, 'GD');
-  await auto.after(thread, 'GD', { text: '```handoff\n{"status":"blocked","summary":"thiếu tài liệu"}\n```' });
-  assert.equal(incidents.length, 1); assert.equal(incidents[0].label, 'GD'); assert.match(incidents[0].reason, /thiếu tài liệu/);
+  // A turn that ends without a valid handoff is an error: Fixer is called.
+  await auto.after(thread, 'GD', { text: 'Đã chốt GDD nhưng quên khối handoff' });
+  assert.equal(incidents.length, 1); assert.equal(incidents[0].label, 'GD'); assert.match(incidents[0].reason, /chưa xuất khối handoff/);
   assert.equal(graph.stateOf(thread, 'GD').status, 'blocked');
   await auto.after(thread, 'Fixer', { text: 'xong' }); assert.equal(incidents.length, 1);
 });
@@ -97,4 +98,51 @@ test('the run is not finished while a parallel branch is still blocked, and a fi
   assert.equal(thread.status, 'working');
   assert.equal(graph.stateOf(thread, art.id).status, 'done');
   assert.ok(sent.includes('Art Director'), 'Art Director review runs after Art');
+});
+
+test('Fixer is not called for intended stops: a block waiting for the user, a run you stopped, a paused block', async () => {
+  const { createAutoRun } = require('../pipeline.cjs');
+  const setup = () => {
+    const team = initial(), id = update(team, 'create', { request: 'x' }); for (const type of ['GD', 'QA', 'Fixer']) update(team, 'add-worker', { id, type });
+    const thread = team.threads.find(item => item.id === id), incidents = [];
+    const auto = createAutoRun({ update: (item, action, payload) => update(team, action, { ...payload, id: item.id }), send: async () => true, pump: async () => {}, log: (item, role, text) => item.messages.push({ role, text }), changed: () => {}, approve: async () => true, isRunning: () => false, incident: (item, value) => incidents.push(value) });
+    return { team, thread, incidents, auto };
+  };
+  const blocked = '```handoff\n{"status":"blocked","summary":"Chờ ảnh C08: dán ảnh ChatGPT vào art/inbox"}\n```';
+  // 1) the block asks the user (Art waiting for images, GD needs a decision): stop and wait, no Fixer
+  { const { thread, incidents, auto } = setup(); await auto.enable(thread, 'test'); await auto.runStage(thread, 'GD');
+    await auto.after(thread, 'GD', { text: blocked });
+    assert.equal(graph.stateOf(thread, 'GD').status, 'blocked'); assert.equal(incidents.length, 0); assert.match(thread.messages.at(-1).text, /cần người dùng: Chờ ảnh C08/); }
+  // 2) you pressed stop: the run ends with an error marked stopped -> no Fixer; a real CLI error -> Fixer
+  { const { thread, incidents, auto } = setup(); await auto.enable(thread, 'test'); await auto.runStage(thread, 'GD');
+    await auto.after(thread, 'GD', { text: '', error: true, stopped: true });
+    assert.equal(incidents.length, 0); assert.match(thread.messages.at(-1).text, /đã bị bạn dừng/); }
+  { const { thread, incidents, auto } = setup(); await auto.enable(thread, 'test'); await auto.runStage(thread, 'GD');
+    await auto.after(thread, 'GD', { text: '', error: true });
+    assert.equal(incidents.length, 1); }
+  // 3) a paused block is never reported
+  { const { thread, incidents, auto } = setup(); await auto.enable(thread, 'test'); await auto.runStage(thread, 'GD');
+    thread.workers.GD.paused = true; graph.stateOf(thread, 'GD').status = 'running';
+    await auto.runStage(thread, 'QA');
+    assert.equal(incidents.length, 0); }
+});
+test('a Dev/Art task the block itself blocked to wait for the user is not sent to Fixer; one that hit the tool limit is', async () => {
+  const { createAutoRun } = require('../pipeline.cjs');
+  const run = async (message, task) => {
+    const team = initial(), id = update(team, 'create', { request: 'x' }); for (const type of ['GD', 'Art', 'QA', 'Fixer']) update(team, 'add-worker', { id, type });
+    const thread = team.threads.find(item => item.id === id), incidents = [];
+    const auto = createAutoRun({ update: (item, action, payload) => update(team, action, { ...payload, id: item.id }), send: async () => true, pump: async () => {}, log: (item, role, text) => item.messages.push({ role, text }), changed: () => {}, approve: async () => true, isRunning: () => false, incident: (item, value) => incidents.push(value) });
+    await auto.enable(thread, 'test');
+    for (const node of graph.ensureGraph(thread).nodes) graph.stateOf(thread, node.id).status = 'done';
+    graph.stateOf(thread, 'Art').status = 'running';
+    thread.dispatch = [{ worker: 'Art', task: 'C08', files: ['art/'], ...task }];
+    await auto.after(thread, 'Art', message);
+    return { incidents, state: graph.stateOf(thread, 'Art').status };
+  };
+  const waiting = await run({ text: '```handoff\n{"status":"blocked","summary":"Chờ ảnh C08"}\n```' }, { status: 'blocked', error: 'Chờ ảnh C08' });
+  assert.equal(waiting.state, 'blocked'); assert.equal(waiting.incidents.length, 0);
+  const limit = await run({ text: 'đang làm dở', maxTurns: true }, { status: 'blocked', error: 'Chạm giới hạn số lượt tool' });
+  assert.equal(limit.incidents.length, 1);
+  const stopped = await run({ text: '', error: true, stopped: true }, { status: 'cancelled' });
+  assert.equal(stopped.incidents.length, 0);
 });

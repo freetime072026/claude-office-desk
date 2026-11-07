@@ -8,6 +8,9 @@ const { cleanEnv, sessionArgs, psLiteral } = require('./core.cjs');
 // bị CLI chuyển sang chạy nền, khối phải dò lại kết quả và hay treo. Nâng mặc định 10 phút, tối đa 30 phút (bộ canh treo dừng lệnh
 // quá 40 phút).
 const BASH_TIMEOUTS = { BASH_DEFAULT_TIMEOUT_MS: String(10 * 60 * 1000), BASH_MAX_TIMEOUT_MS: String(30 * 60 * 1000) };
+// Python trên Windows in qua pipe bằng cp1252: lệnh `python -c "print(...)"` gặp chữ Việt trong dữ liệu (state.json, brief) chết
+// UnicodeEncodeError, khối ghi lỗi exit 1 dù script đúng. Ép UTF-8 cho mọi tiến trình Python con.
+const PYTHON_UTF8 = { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' };
 const { foldersOf, extraFolderArgs } = require('./usage.cjs');
 const { cliMode, cliTools, allowedFor } = require('./modes.cjs');
 const { agentsArg } = require('./subagent.cjs');
@@ -162,7 +165,7 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
   // Không pipe qua biến PowerShell: CLI nhận thẳng stdin của tiến trình để app trả lời yêu cầu duyệt trong lúc chạy.
   const script = '$ProgressPreference = \'SilentlyContinue\'; [Console]::InputEncoding = New-Object Text.UTF8Encoding($false); [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false); $OutputEncoding = [Console]::OutputEncoding; & ' + [executable, ...args].map(psLiteral).join(' ') + '; exit $LASTEXITCODE';
   const powershell = path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { cwd: thread.folder, env: { ...cleanEnv(process.env, directory), ...BASH_TIMEOUTS, OFFICE_USAGE_FILE: path.join(directory, 'usage.json') }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { cwd: thread.folder, env: { ...cleanEnv(process.env, directory), ...BASH_TIMEOUTS, ...PYTHON_UTF8, OFFICE_USAGE_FILE: path.join(directory, 'usage.json') }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let pending = '', errors = '', ended = false;
   const send = line => { if (!child.stdin.destroyed && child.stdin.writable) child.stdin.write(line); };
   async function control(event) {

@@ -107,6 +107,11 @@ app.whenReady().then(async () => {
       if (level() !== before) throw Error('Mouse wheel did not zoom back out');
       document.querySelector('#graph-edges .edge-tag').dispatchEvent(new MouseEvent('click', { bubbles: true }));
       const select = document.querySelector('.graph-edge-menu select'); if (!select) throw Error('Edge menu missing');
+      // Khối đang chạy: trạng thái mới tới liên tục (log/token đổi, sơ đồ không đổi) không được đóng menu dây đang mở.
+      const live = structuredClone((await window.office.run('state')).team.threads.find(item => item.title === 'Test request'));
+      live.messages = [...(live.messages || []), { role: 'Dev', text: 'đang chạy' }]; window.graphView.paint(live);
+      live.graphRun = { nodes: { GD: { status: 'running' } } }; window.graphView.paint(live);
+      if (!document.querySelector('.graph-edge-menu select')) throw Error('Edge menu closed by a live state update');
       select.value = 'always'; select.dispatchEvent(new Event('change'));
       if (document.querySelector('#graph-save').disabled) throw Error('Save not enabled after edit');
       document.querySelector('#graph-save').click(); await new Promise(resolve => setTimeout(resolve, 200));

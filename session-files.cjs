@@ -23,7 +23,7 @@ const TEMPLATES = {
   assets: '# ASSETS\n<!-- Art Director ghi. Tài nguyên dùng chung (UI/icon common): đường dẫn, dùng ở đâu. Quy ước: common ở thư mục chung, tài nguyên theo feature ở thư mục của feature; đặt tên; atlas. -->\n',
   art: '# ART\n<!-- Art Director ghi. Mỗi ảnh/màn một mục:\n## ART-1 · Tên (SCR-… / item trong GDD)\nCách vẽ, khung, decor, hoạ tiết, bảng màu: …\nKích thước px, pivot, 9-slice, trạng thái: …\nDùng lại (ASSETS.md) hay mới, đường dẫn tệp: …\nẢnh tham chiếu: …\nAnimation một mục ANIM-…: clip, số frame, fps, thời lượng, pose chính, frame có event, loop, tham chiếu.\n-->\n',
   missingSounds: '# MISSING SOUNDS\n<!-- Dev/VFX/Anim ghi khi code cần âm thanh mà project chưa có tệp; Sound làm rồi đổi trạng thái. Mẫu:\n## SND-1 · thiếu · Tên âm thanh\nKey/đường dẫn đích: sfx_tower_shoot → Assets/Audio/SFX/tower_shoot.wav\nĐang dùng tạm: Assets/Audio/Default/click.wav\nChỗ gọi: Scripts/Tower.cs:42 (sự kiện bắn)\nYêu cầu: cảm giác, độ dài, loop, mono/stereo, âm lượng tương đối, tham chiếu\nSession: … · ngày: …\n-->\n',
-  artPrompts: '# ART PROMPTS\n<!-- Art ghi. Đầu tệp: Style prompt chung (dán đầu mọi prompt để ảnh cùng style). Mỗi ảnh một mục:\n## ART-1 · chờ ảnh · Tên\nLưu ảnh vào: .office-desk/<session>/inbox/ART-1.png\nẢnh tham chiếu upload kèm: …\nPrompt (dán vào ChatGPT):\n…\nSau khi nhận: kích thước cuối, pivot, đường dẫn đích\n-->\n',
+  artPrompts: '# ART PROMPTS\n<!-- Art ghi. Đầu tệp: Style prompt chung (dán đầu mọi prompt để ảnh cùng style). Mỗi ảnh một mục:\n## ART-1 · chờ ảnh · Tên\nLưu ảnh vào: .office-desk/<session>/inbox/ART-1.png\nẢnh tham chiếu upload kèm: …\nPrompt (dán vào ChatGPT — mỗi tin một khối ```text dán nguyên văn; mục đã có ảnh: dòng Skip these items + Only make these items ghi đủ tên; có bước SAVE copy ảnh vào output/imagegen/<nhóm>/ + Get-Item, File: = đường dẫn vừa kiểm):\n…\nSau khi nhận: kích thước cuối, pivot, đường dẫn đích\n-->\n',
   project: '# PROJECT\n<!-- Lead cập nhật: thư mục, module, quy ước, tệp quan trọng. Ngắn gọn để Dev đọc thay vì dò cả project. -->\n',
   uiux: '# UIUX\n<!-- UI/UX ghi. Mỗi màn hình một mục có ID để Lead trích vào task Dev:\n## SCR-1 · Tên màn hình\nAC: AC-1.2\nLuồng vào/ra: …\nTrạng thái: bình thường, trống, lỗi, đang tải\nLayout và component: …\n-->\n',
   po: '# PO\n<!-- App ghi khi kế hoạch đội của PO được duyệt. -->\n',
@@ -80,5 +80,7 @@ function writePlan(thread, markdown) { const files = ensureFiles(thread); if (fi
 function appendFix(thread, markdown) { const files = ensureFiles(thread); if (files) fs.appendFileSync(files.fixes, markdown); }
 // Thư mục script kiểm của QA (.office-desk/qa/, chung cho mọi session của project): script Playwright/đo được giữ lại để lượt sau
 // dùng lại thay vì viết lại từ đầu. Có dấu / cuối để là mục thư mục trong phạm vi ghi.
+// Thư mục tạm trong project (.office-desk/tmp/): script phụ, tệp trung gian của mọi khối; các khối không ghi ra ngoài thư mục session.
+const tmpDir = files => path.join(files.project ? path.dirname(files.project) : path.dirname(path.dirname(files.issues || '.')), 'tmp') + path.sep;
 const qaDir = files => path.join(files.project ? path.dirname(files.project) : path.dirname(path.dirname(files.issues || '.')), 'qa') + path.sep;
-module.exports = { DIR, qaDir, filesOf, ensureFiles, writePlan, appendFix, appendChange, appendRound, writeTasks, TEMPLATES };
+module.exports = { DIR, qaDir, tmpDir, filesOf, ensureFiles, writePlan, appendFix, appendChange, appendRound, writeTasks, TEMPLATES };
