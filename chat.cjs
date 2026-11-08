@@ -135,10 +135,11 @@ function permissionResult(decision, input) { return decision?.allow ? { behavior
 // Khi đó 'close' của tiến trình không bao giờ đến: tin kẹt "đang chạy", task và nút sơ đồ đứng mãi. Tiến trình đã thoát thì chờ một
 // chút cho dữ liệu còn lại đọc xong, rồi đóng pipe phía app để 'close' (và mọi xử lý kết thúc lượt) chạy.
 const EXIT_GRACE_MS = 3000;
+const RESULT_EXIT_MS = 30000;
 function closeAfterExit(child, grace = EXIT_GRACE_MS) {
   child.once('exit', () => { const timer = setTimeout(() => { for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy(); }, grace); timer.unref?.(); child.once('close', () => clearTimeout(timer)); });
 }
-function launch({ brief = '', mcpConfig = null, executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [] }) {
+function launch({ brief = '', mcpConfig = null, executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [], resultExitMs = RESULT_EXIT_MS }) {
   const message = { id: randomUUID(), role: role || 'Claude', text: '', time: new Date().toISOString(), streaming: true };
   message.progress = { startedAt: message.time, steps: 0, lastTool: '', target: '' };
   thread.messages.push(message);
@@ -168,6 +169,9 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
   const powershell = path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { cwd: thread.folder, env: { ...cleanEnv(process.env, directory), ...BASH_TIMEOUTS, ...PYTHON_UTF8, OFFICE_USAGE_FILE: path.join(directory, 'usage.json') }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let pending = '', errors = '', ended = false;
+  // Đã có kết quả mà CLI không thoát (còn chờ tác vụ nền, vd dev server bỏ lại): tin kẹt "đang chạy", task và nút sơ đồ đứng mãi.
+  // Quá resultExitMs thì tắt cả cây tiến trình; lượt vẫn tính là xong vì kết quả đã về.
+  const afterResult = () => { const timer = setTimeout(() => { if (ended || !child.pid) return; message.killedAfterResult = true; execFile(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); }, resultExitMs); timer.unref?.(); child.once('close', () => clearTimeout(timer)); };
   const send = line => { if (!child.stdin.destroyed && child.stdin.writable) child.stdin.write(line); };
   async function control(event) {
     const requestId = event.request_id, request = event.request || {};
@@ -177,13 +181,13 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
     delete progress.waiting; if (!decision?.allow) message.denied = [...(message.denied || []), request.tool_name];
     send(controlReply(requestId, permissionResult(decision, request.input))); publish();
   }
-  const parse = line => { try { const event = JSON.parse(line); if (event.type === 'control_request') { control(event); return; } const id = consume(message, event, seen); if (id) thread.cliSessions[key] = id; if (event.type === 'result') { const turn = turnUsage(message.usage, totals[resumedId], Boolean(resumedId)); message.usage = turn.usage; if (id) recordTotal(totals, id, turn.total); child.stdin.end(); } if (event.type === 'rate_limit_event') { const usagePath = path.join(directory, 'usage.json'); let previous = {}; try { previous = JSON.parse(fs.readFileSync(usagePath, 'utf8')); } catch {} const usage = usageEvent(event, previous); if (usage) fs.writeFileSync(usagePath, JSON.stringify(usage)); } } catch {} };
+  const parse = line => { try { const event = JSON.parse(line); if (event.type === 'control_request') { control(event); return; } const id = consume(message, event, seen); if (id) thread.cliSessions[key] = id; if (event.type === 'result') { const turn = turnUsage(message.usage, totals[resumedId], Boolean(resumedId)); message.usage = turn.usage; if (id) recordTotal(totals, id, turn.total); child.stdin.end(); afterResult(); } if (event.type === 'rate_limit_event') { const usagePath = path.join(directory, 'usage.json'); let previous = {}; try { previous = JSON.parse(fs.readFileSync(usagePath, 'utf8')); } catch {} const usage = usageEvent(event, previous); if (usage) fs.writeFileSync(usagePath, JSON.stringify(usage)); } } catch {} };
   child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
   child.stdout.on('data', chunk => { pending += chunk; if (pending.length > 5 * 1024 * 1024) { pending = ''; errors = 'CLI xuất dữ liệu vượt giới hạn'; child.kill(); return; } const lines = pending.split(/\r?\n/); pending = lines.pop(); for (const line of lines) parse(line); publish(); });
   child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-6000); });
   // stdin giữ mở tới khi CLI trả event result (để trả lời yêu cầu duyệt), rồi đóng để CLI thoát.
   child.stdin.on('error', () => {}); send(userLine(prompt));
-  const finish = code => { if (ended) return; ended = true; for (const file of [briefFile, mcpFile]) if (file) fs.rm(file, { force: true }, () => {}); if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
+  const finish = code => { if (ended) return; ended = true; for (const file of [briefFile, mcpFile]) if (file) fs.rm(file, { force: true }, () => {}); if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0 && !message.killedAfterResult) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
   child.on('error', error => { errors = error.message; finish(1); }); child.on('close', finish); closeAfterExit(child);
   // CLI thoát: dọn dev server / trình duyệt mà lệnh Bash của lượt bỏ lại (proc-tree.cjs), để lượt sau không bị chiếm cổng.
   const launchedAt = Date.now(); child.once('exit', () => { killLeftovers(child.pid, launchedAt).catch(() => {}); });
