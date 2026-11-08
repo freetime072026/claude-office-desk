@@ -74,8 +74,19 @@
     const live = team.threads.filter(thread => !thread.archived);
     return [{ key: 'pinned', name: '★ Pinned', threads: live.filter(thread => thread.pinned) }, ...team.projects.map(project => ({ key: 'project:' + project.id, project: project.id, name: project.name, threads: live.filter(thread => thread.project === project.id) })), { key: 'project:', project: '', name: 'Không thuộc dự án', threads: live.filter(thread => !thread.project) }, { key: 'archived', name: '🗄 Đã lưu trữ', threads: team.threads.filter(thread => thread.archived), closed: true }];
   }
+  // Main gửi trạng thái ~10 lần/giây khi khối chạy; dựng lại danh sách mỗi lần thì nút bị thay giữa lúc nhấn và nhả chuột nên
+  // click bị mất (phải click nhiều lần mới đổi được session). Chỉ dựng lại khi nội dung đổi, và hoãn tới lúc nhả chuột.
+  let sidebarKey = '', pressing = false, sidebarPending = false;
+  get('#groups').addEventListener('pointerdown', () => { pressing = true; });
+  addEventListener('pointerup', () => { if (!pressing) return; pressing = false; if (sidebarPending) setTimeout(sidebar); }, true);
+  addEventListener('pointercancel', () => { pressing = false; if (sidebarPending) setTimeout(sidebar); }, true);
+  addEventListener('dragend', () => { pressing = false; if (sidebarPending) setTimeout(sidebar); }, true);
   function sidebar() {
     const query = get('#search').value.toLocaleLowerCase();
+    const key = JSON.stringify([query, selected, team.projects.map(project => [project.id, project.name]), team.threads.map(thread => [thread.id, thread.title, thread.archived, thread.pinned, thread.project, thread.flow[thread.stage] || '', thread.flow.length, thread.status])]);
+    if (key === sidebarKey) return;
+    if (pressing) { sidebarPending = true; return; }
+    sidebarPending = false; sidebarKey = key;
     get('#groups').replaceChildren(...groupsOf().filter(group => group.key !== 'archived' || group.threads.length).map(group => {
       const detail = make('details'); const stored = localStorage.getItem('group:' + group.name); detail.open = stored ? stored !== 'closed' : !group.closed; detail.ontoggle = () => localStorage.setItem('group:' + group.name, detail.open ? 'open' : 'closed');
       const summary = make('summary', { textContent: group.name + (group.key === 'archived' ? ` (${group.threads.length})` : '') }); detail.append(summary);
