@@ -15,6 +15,7 @@ const { foldersOf, extraFolderArgs } = require('./usage.cjs');
 const { cliMode, cliTools, allowedFor } = require('./modes.cjs');
 const { agentsArg } = require('./subagent.cjs');
 const { AUTOCOMPACT_WINDOW } = require('./roles.cjs');
+const { killLeftovers } = require('./proc-tree.cjs');
 const { resumeKey } = require('./workers.cjs');
 // Mô tả ngắn mục tiêu của một lượt gọi công cụ để hiển thị tiến độ (không lưu toàn bộ input).
 function targetOf(input = {}) {
@@ -184,6 +185,8 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
   child.stdin.on('error', () => {}); send(userLine(prompt));
   const finish = code => { if (ended) return; ended = true; for (const file of [briefFile, mcpFile]) if (file) fs.rm(file, { force: true }, () => {}); if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
   child.on('error', error => { errors = error.message; finish(1); }); child.on('close', finish); closeAfterExit(child);
+  // CLI thoát: dọn dev server / trình duyệt mà lệnh Bash của lượt bỏ lại (proc-tree.cjs), để lượt sau không bị chiếm cổng.
+  const launchedAt = Date.now(); child.once('exit', () => { killLeftovers(child.pid, launchedAt).catch(() => {}); });
   return { child, cancel: () => { if (child.pid && !ended) execFile(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); }, message };
 }
 module.exports = { BASH_TIMEOUTS, consume, launch, closeAfterExit, targetOf, usageOf, turnUsage, cleanStderr, permissionResult, userLine, CLI_FAILED_TEXT, CLI_EMPTY_TEXT };
