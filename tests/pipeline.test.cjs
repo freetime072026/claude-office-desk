@@ -337,6 +337,26 @@ test('Lead review does not run while Lead triage is still waiting or blocked (it
   assert.match(thread.messages.at(-1).text, /Lead Dev · review chờ vòng sửa \(Lead Dev · triage\) xong mới chạy/);
 });
 
+test('a blocked Lead triage that Lead re-planned past no longer holds the review; /role Lead Dev start runs the review, not planning', async () => {
+  const { thread, sent, auto } = harness(['GD', 'Lead Dev', 'Dev', 'QA']); const graph = require('../flowgraph.cjs');
+  await auto.after(thread, 'GD', reply('done'));
+  Object.assign(graph.stateOf(thread, 'Lead Dev@triage'), { status: 'blocked', outcome: 'blocked', startedAt: 1000 });
+  Object.assign(graph.stateOf(thread, 'Lead Dev@planning'), { status: 'done', outcome: 'done', startedAt: 2000 });
+  for (const id of ['Dev', 'QA']) Object.assign(graph.stateOf(thread, id), { status: 'done', outcome: 'done' });
+  Object.assign(graph.stateOf(thread, 'Lead Dev@review'), { status: 'idle', outcome: 'reject', startedAt: 900 });
+  thread.dispatch = [{ worker: 'Dev', task: 'x', status: 'finished', finishedAt: new Date().toISOString() }]; thread.leadPhase = 'planning';
+  const before = sent.length; await auto.runStage(thread, 'Lead Dev');
+  assert.deepEqual(sent.slice(before), ['Lead Dev'], 'the review runs once');
+  assert.equal(graph.stateOf(thread, 'Lead Dev@review').status, 'running'); assert.equal(graph.stateOf(thread, 'Lead Dev@planning').status, 'done', 'planning is not rerun');
+  assert.equal(graph.stateOf(thread, 'Lead Dev@triage').status, 'done');
+  // Triage bị chặn mà Lead chưa giao lại sau đó: review vẫn phải chờ như cũ.
+  const second = harness(['GD', 'Lead Dev', 'Dev', 'QA']); await second.auto.after(second.thread, 'GD', reply('done'));
+  Object.assign(graph.stateOf(second.thread, 'Lead Dev@planning'), { status: 'done', outcome: 'done', startedAt: 1000 });
+  Object.assign(graph.stateOf(second.thread, 'Lead Dev@triage'), { status: 'blocked', outcome: 'blocked', startedAt: 2000 });
+  graph.stateOf(second.thread, 'Lead Dev@review').status = 'queued'; const count = second.sent.length; await second.auto.runStage(second.thread);
+  assert.equal(second.sent.length, count); assert.equal(graph.stateOf(second.thread, 'Lead Dev@review').status, 'idle');
+});
+
 test('Lead review reject with a malformed tasks block neither sprays the review on every block nor spends the one retry', async () => {
   const { thread, sent, auto } = harness(); const graph = require('../flowgraph.cjs');
   await auto.after(thread, 'GD', reply('done'));

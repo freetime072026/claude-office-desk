@@ -144,8 +144,11 @@ function createAutoRun(deps) {
     // Lead review chỉ chạy khi việc sửa của vòng đã xong: Lead triage còn chờ/chạy/bị chặn (QA hoặc Art Director báo issue) thì review
     // sẽ chấm trên code chưa sửa và tốn lượt sửa duy nhất. Bỏ hàng chờ; review được kích hoạt lại khi QA/Art Director pass sau vòng sửa.
     if (node.phase === 'review' && labelType(thread, node.label) === LEAD) {
-      const triage = graph.nodesFor(thread, node.label).find(item => item.phase === 'triage');
-      if (triage && ['queued', 'running', 'blocked'].includes(graph.stateOf(thread, triage.id).status)) { state.status = 'idle'; log(thread, 'Tự động', `${graph.nodeLabel(node)} chờ vòng sửa (${graph.nodeLabel(triage)}) xong mới chạy.`); return; }
+      const triage = graph.nodesFor(thread, node.label).find(item => item.phase === 'triage'), held = triage && graph.stateOf(thread, triage.id);
+      if (staleTriage(thread, node.label)) {
+        Object.assign(held, { status: 'done', outcome: 'done' }); log(thread, 'Tự động', `${graph.nodeLabel(triage)} bị chặn trước đó đã được thay bằng lần giao việc mới của Lead · bỏ qua, chạy ${graph.nodeLabel(node)}.`);
+      } else if (held && ['queued', 'running', 'blocked'].includes(held.status)) { Object.assign(state, { status: 'idle', held: true }); log(thread, 'Tự động', `${graph.nodeLabel(node)} chờ vòng sửa (${graph.nodeLabel(triage)}) xong mới chạy.`); return; }
+      delete state.held;
     }
     if (worker(thread, node.label).paused) { if (!state.pausedNoted) { state.pausedNoted = true; focus(thread, node, ''); note(thread, `${node.label} đang tạm dừng; dùng /role ${node.label} start để tiếp tục.`); } return; }
     delete state.pausedNoted;
@@ -218,9 +221,17 @@ function createAutoRun(deps) {
     changed(); return startedAny;
   }
   // Nút ứng với lượt vừa xong của khối: nút đang chạy; nếu không (chạy tay), nút đang chờ/bị chặn/chưa chạy, ưu tiên đúng pha Lead.
+  // Triage bị chặn đã lỗi thời: sau đó Lead đã giao việc lại ở nút khác (vd planning) và không còn task Dev đang làm → triage không còn
+  // việc. Giữ "blocked" thì Lead review chờ mãi và /role Lead Dev start chỉ chạy lại planning (session 87b782bf vòng 22 kẹt như vậy).
+  function staleTriage(thread, label) {
+    const lead = graph.nodesFor(thread, label), triage = lead.find(item => item.phase === 'triage'), held = triage && graph.stateOf(thread, triage.id);
+    if (held?.status !== 'blocked' || !held.startedAt || (thread.dispatch || []).some(task => ACTIVE_TASK.includes(task.status))) return null;
+    return lead.some(item => item.phase !== 'triage' && item.phase !== 'review' && graph.stateOf(thread, item.id).status === 'done' && (graph.stateOf(thread, item.id).startedAt || 0) > (held.startedAt || 0)) ? triage : null;
+  }
   function nodeOfRun(thread, label) {
     const nodes = graph.nodesFor(thread, label), status = node => graph.stateOf(thread, node.id).status;
-    return nodes.find(node => status(node) === 'running') || nodes.find(node => ['queued', 'blocked', 'idle'].includes(status(node)) && (!node.phase || node.phase === (thread[phaseKey(thread, label)] || 'planning'))) || nodes[0];
+    // held: nút review đang đợi triage (xem guard Lead review) — /role <Lead> start chạy tiếp nút đó, không chạy lại planning.
+    return nodes.find(node => status(node) === 'running') || nodes.find(node => status(node) === 'idle' && node.phase === 'review' && (graph.stateOf(thread, node.id).held || staleTriage(thread, label))) || nodes.find(node => ['queued', 'blocked', 'idle'].includes(status(node)) && (!node.phase || node.phase === (thread[phaseKey(thread, label)] || 'planning'))) || nodes[0];
   }
 
   // Dev/QA bị chặn kèm reassign: ghi yêu cầu (prompt.cjs chèn vào lượt Lead) rồi chuyển sang Lead triage khi các Dev khác xong.

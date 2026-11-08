@@ -512,12 +512,14 @@ app.whenReady().then(() => {
         const handoff = pipeline.parseHandoff(run.message.text);
         // Bấm chạy tay khối Dev/VFX/Art/Anim đang có task chờ (prompt đã kèm đúng task đó ở "Task của khối") và lượt xuất handoff:
         // tính là lượt làm task, nếu không task nằm chờ mãi và sơ đồ không đi tiếp (pipeline.cjs chỉ chuyển bước theo task xong).
-        const manualTask = !payload.auto && !run.message.error && handoff && isDevType(worker.type) ? (thread.dispatch || []).find(task => task.worker === payload.role && ['pending', 'queued'].includes(task.status) && !task.artReject && task.task === worker.task) : null;
+        // Chat tay với khối đang bị chặn (vd bạn bảo Art bỏ qua ảnh đang chờ) mà khối trả handoff done: task đó xong, không giữ lý do chặn cũ
+        // (trước đây app ghi lại "Art bị chặn: Chờ ảnh …" dù Art đã báo xong).
+        const manualTask = !payload.auto && !run.message.error && handoff && isDevType(worker.type) ? (thread.dispatch || []).find(task => task.worker === payload.role && (['pending', 'queued'].includes(task.status) || (['blocked', 'failed'].includes(task.status) && handoff.status !== 'blocked' && !run.message.maxTurns)) && !task.artReject && task.task === worker.task) : null;
         const assigned = (thread.dispatch || []).find(task => task.worker === payload.role && ['running', 'starting'].includes(task.status)) || manualTask;
         // Ghi phiên CLI của task (kể cả khi bị tạm dừng/huỷ giữa chừng) để lần chạy lại tiếp tục phiên này (sendTask).
         const ownTask = assigned || (thread.dispatch || []).find(task => task.worker === payload.role && ['paused', 'cancelled'].includes(task.status));
         if (ownTask && thread.cliSessions?.[sessionKey]) ownTask.session = taskSession(thread.cliSessions[sessionKey], sessionKey, run.message.usage);
-        if (assigned) { assigned.status = run.message.error ? 'failed' : 'finished'; if (!run.message.error) assigned.finishedAt = new Date().toISOString(); if (!run.message.error && handoff?.status === 'blocked') { assigned.status = 'blocked'; assigned.error = handoff.summary || payload.role + ' báo bị chặn'; } if (run.message.maxTurns) { assigned.status = 'blocked'; assigned.error = 'Chạm giới hạn số lượt tool; kiểm tra rồi Thử lại task bị chặn'; } }
+        if (assigned) { assigned.status = run.message.error ? 'failed' : 'finished'; if (!run.message.error) { assigned.finishedAt = new Date().toISOString(); delete assigned.error; } if (!run.message.error && handoff?.status === 'blocked') { assigned.status = 'blocked'; assigned.error = handoff.summary || payload.role + ' báo bị chặn'; } if (run.message.maxTurns) { assigned.status = 'blocked'; assigned.error = 'Chạm giới hạn số lượt tool; kiểm tra rồi Thử lại task bị chặn'; } }
         // Dev/VFX/Anim trả ảnh đã duyệt về Art Director (handoff reject kèm reason): task giữ lại, chạy tiếp khi art được sửa (pipeline.cjs).
         if (assigned?.status === 'finished' && handoff?.reason && ART_CONSUMER_TYPES.includes(worker.type)) { assigned.status = 'pending'; delete assigned.finishedAt; assigned.artReject = { reason: handoff.reason, art: handoff.art, summary: handoff.summary || '' }; }
         // CHANGES.md do app ghi từ handoff của Dev (không tin model tự ghi), để QA và Lead review đọc.

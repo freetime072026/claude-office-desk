@@ -35,7 +35,7 @@ test('Fixer: one per session, runs checks in shell, writes only FIXES.md, has no
   assert.throws(() => update(team, 'add-worker', { id, type: 'Fixer' }), /đã có Fixer/);
   assert.equal(thread.graph.nodes.some(node => node.label === 'Fixer'), false);
   const files = filesOf({ id: 's', folder: 'E:\\game' }), scope = roleScope('Fixer', files);
-  assert.equal(scope.bash, true); assert.deepEqual(scope.paths, [files.fixes]);
+  assert.equal(scope.bash, true); assert.deepEqual(scope.paths, [files.fixes, files.decisions]);
   assert.equal(decide({ scope, mode: 'edit', tool: 'Edit', input: { file_path: 'E:\\game\\src\\a.cs' }, cwd: 'E:\\game' }).action, 'deny');
   assert.equal(decide({ scope, mode: 'edit', tool: 'Write', input: { file_path: files.fixes }, cwd: 'E:\\game' }).action, 'allow');
   const prompt = buildPrompt({ label: 'Fixer', type: 'Fixer', files, content: 'Sự cố ở Dev' }).text;

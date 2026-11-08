@@ -67,7 +67,7 @@ test('Release: one per session after QA, writes only RELEASE.md/ISSUES.md, runs 
   const { team, id, thread } = session(ROLES);
   assert.equal(thread.flow.at(-1), 'Release'); assert.throws(() => update(team, 'add-worker', { id, type: 'Release' }), /Session đã có Release/);
   const files = filesOf({ id: 's', folder: 'E:\\game' }), scope = roleScope('Release', files);
-  assert.deepEqual(scope.paths, [files.release, files.issues]); assert.equal(scope.bash, true); assert.match(files.release, /[\\/]s[\\/]RELEASE\.md$/);
+  assert.deepEqual(scope.paths, [files.release, files.issues, files.decisions]); assert.equal(scope.bash, true); assert.match(files.release, /[\\/]s[\\/]RELEASE\.md$/);
   const edges = graph.defaultGraph(thread).edges.map(edge => `${edge.from}>${edge.to}:${edge.when}`);
   for (const edge of ['Lead Dev@review>Release:pass', 'Release>@end:pass', 'Release>Lead Dev@triage:issue']) assert(edges.includes(edge), edge);
   assert(!edges.includes('Lead Dev@review>@end:pass'));

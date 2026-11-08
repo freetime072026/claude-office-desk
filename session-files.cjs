@@ -7,6 +7,7 @@
 //   .office-desk/<session>/ART_PROMPTS.md   prompt sinh ảnh Art viết để người dùng dán vào ChatGPT; ảnh lưu vào <session>/inbox/
 //   .office-desk/<session>/ART.md           đặc tả từng ảnh (ART-…); Art Director ghi, Art đọc mục của task
 //   .office-desk/<session>/PO.md            app ghi từ kế hoạch đội PO đã duyệt: các mốc, khối từng mốc, phần giao GD
+//   .office-desk/<session>/DECISIONS.md     quyết định của người dùng trong chat (bỏ qua / giữ / không kiểm mục nào); khối nhận lời ghi, mọi khối đọc và làm theo
 //   .office-desk/<session>/FIXES.md         app ghi chẩn đoán của Fixer mỗi lần luồng tự động dừng (nguyên nhân, cách khắc phục)
 //   .office-desk/<session>/GDD.md           GD ghi; Lead (phần Dev) và QA đọc
 //   .office-desk/<session>/UIUX.md          UI/UX ghi; Lead trích màn hình vào task Dev, QA đọc khi kiểm UI
@@ -22,6 +23,7 @@ const TEMPLATES = {
   gdd: '# GDD\n\n## Mục tiêu\n\n## Phạm vi / ngoài phạm vi\n\n## User Stories và AC\n<!-- US-1 … / AC-1.1 … có ID để QA kiểm -->\n\n## Phân việc theo khối\n<!-- UI/UX, Dev, VFX, Art, Anim, Sound, QA nhận gì -->\n\n## VFX\n<!-- Hiệu ứng nào, cho sự kiện nào, cảm giác mong muốn, ảnh tham chiếu; "Không có" nếu không cần -->\n\n## Art\n<!-- Sprite/icon/ảnh UI cần làm: ID, kích thước, phong cách, ảnh tham chiếu; "Không có" nếu không cần -->\n\n## Anim\n<!-- Animation nào, cho unit/sự kiện nào, cảm giác, timing, tham chiếu; "Không có" nếu không cần -->\n\n## Sound\n<!-- SFX/nhạc nào, cho sự kiện nào, cảm giác, độ dài, loop, tham chiếu; "Không có" nếu không cần -->\n\n## Ngân sách performance\n<!-- GC Alloc, CPU, GPU, frame time; ghi "Không áp dụng" nếu không cần -->\n\n## Câu hỏi mở\n',
   style: '# STYLE\n<!-- Art Director ghi. Style guide đo được: bảng màu (hex), tỉ lệ nhân vật/cỡ sprite theo ô, nét viền, ánh sáng, đổ bóng; UI: font, cỡ chữ, khoảng cách, trạng thái nút; ảnh tham chiếu chuẩn. Ngân sách: kích thước texture tối đa, nén, atlas. -->\n',
   artLessons: '# ART LESSONS\n<!-- Art và Art Director ghi khi ảnh bị trượt, phải vẽ lại, hoặc pipeline dựng ảnh sai. Đọc hết trước khi viết prompt mới. Mỗi lỗi một mục:\n## Loại ảnh (sprite sheet, chibi, icon, UI part…) · lỗi ngắn gọn\nSai gì (đo được): …\nNguyên nhân: prompt thiếu gì / cách làm sai\nCách tránh: câu thêm vào prompt / brief, hoặc đổi cách làm\nNgày · ảnh liên quan: … -->\n',
+  decisions: '# DECISIONS\n<!-- Quyết định người dùng nói trong chat, mọi khối làm theo (thắng brief, script, tiêu chí kiểm, task cũ). Khối nhận lời ghi ngay, mỗi quyết định một dòng:\n- 2026-11-08 · Art · bỏ qua anim_HR005_victory — không vẽ, không kiểm, không giao lại (lời người dùng: "skip anim victory")\nNgười dùng đổi ý thì sửa / xoá dòng đó. -->\n',
   assets: '# ASSETS\n<!-- Art Director ghi. Tài nguyên dùng chung (UI/icon common): đường dẫn, dùng ở đâu. Quy ước: common ở thư mục chung, tài nguyên theo feature ở thư mục của feature; đặt tên; atlas. -->\n',
   art: '# ART\n<!-- Art Director ghi. Mỗi ảnh/màn một mục:\n## ART-1 · Tên (SCR-… / item trong GDD)\nCách vẽ, khung, decor, hoạ tiết, bảng màu: …\nKích thước px, pivot, 9-slice, trạng thái: …\nDùng lại (ASSETS.md) hay mới, đường dẫn tệp: …\nẢnh tham chiếu: …\nAnimation một mục ANIM-…: clip, số frame, fps, thời lượng, pose chính, frame có event, loop, tham chiếu.\n-->\n',
   missingSounds: '# MISSING SOUNDS\n<!-- Dev/VFX/Anim ghi khi code cần âm thanh mà project chưa có tệp; Sound làm rồi đổi trạng thái. Mẫu:\n## SND-1 · thiếu · Tên âm thanh\nKey/đường dẫn đích: sfx_tower_shoot → Assets/Audio/SFX/tower_shoot.wav\nĐang dùng tạm: Assets/Audio/Default/click.wav\nChỗ gọi: Scripts/Tower.cs:42 (sự kiện bắn)\nYêu cầu: cảm giác, độ dài, loop, mono/stereo, âm lượng tương đối, tham chiếu\nSession: … · ngày: …\n-->\n',
@@ -36,7 +38,7 @@ const TEMPLATES = {
   changes: '# CHANGES\n<!-- App ghi sau mỗi lượt Dev: tệp tạo mới/sửa (app tự lấy từ tool và git), rồi tóm tắt handoff của Dev. -->\n',
   release: '# RELEASE\n<!-- Release ghi mỗi lần build bản gửi. Mẫu:\n## <phiên bản> · <ngày> · đạt | lỗi\nCommit: … (sạch / có thay đổi chưa commit)\nLệnh: …\n| Tệp | Đích (network/store) | Dung lượng | Giới hạn | Kết quả |\nChecklist trước khi gửi: …\n-->\n'
 };
-const NAMES = { fixes: 'FIXES.md', po: 'PO.md', artPrompts: 'ART_PROMPTS.md', art: 'ART.md', gdd: 'GDD.md', uiux: 'UIUX.md', tasks: 'TASKS.md', issues: 'ISSUES.md', perf: 'PERF.md', changes: 'CHANGES.md', release: 'RELEASE.md' };
+const NAMES = { decisions: 'DECISIONS.md', fixes: 'FIXES.md', po: 'PO.md', artPrompts: 'ART_PROMPTS.md', art: 'ART.md', gdd: 'GDD.md', uiux: 'UIUX.md', tasks: 'TASKS.md', issues: 'ISSUES.md', perf: 'PERF.md', changes: 'CHANGES.md', release: 'RELEASE.md' };
 function filesOf(thread) {
   if (!thread.folder) return null;
   const base = path.join(thread.folder, DIR), own = path.join(base, thread.id);

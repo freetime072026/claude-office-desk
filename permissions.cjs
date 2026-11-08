@@ -73,7 +73,12 @@ function outsidePaths(command, folders) {
 }
 const outsideMessage = (what, folders, extra = '') => `Ngoài thư mục của session: ${what}. Chỉ đọc, tìm và ghi trong: ${folders.join(', ')}${extra}. Tệp tạm/script phụ để trong .office-desk/tmp/ của project. Nếu README hoặc tài liệu nhắc tệp ở thư mục khác: không tự tìm, dừng và báo người dùng thêm thư mục đó vào session (ghi rõ đường dẫn).`;
 // assigner: người giao task của khối (Lead hoặc Art Director), để lời từ chối ghi chỉ đúng người cần bổ sung files.
+// Mọi khối có phạm vi ghi đều ghi thêm được DECISIONS.md (quyết định người dùng nói trong chat) — tệp chung, không tính chồng phạm vi.
 function roleScope(type, files, devFiles = [], folder = '', assigner = 'Lead') {
+  const scope = baseScope(type, files, devFiles, folder, assigner);
+  return scope && files.decisions ? { ...scope, paths: [...scope.paths, files.decisions], shared: [...(scope.shared || []), files.decisions] } : scope;
+}
+function baseScope(type, files, devFiles, folder, assigner) {
   if (!files) return null;
   if (type === 'GD') return { paths: [files.gdd], bash: false, label: 'GD chỉ ghi GDD.md' };
   // Fixer: chạy lệnh kiểm tra để chẩn đoán, không sửa code; chỉ ghi FIXES.md.

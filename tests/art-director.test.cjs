@@ -35,7 +35,7 @@ test('Art Director: one per session, after UI/UX and before Lead, writes only ST
   assert.deepEqual(thread.flow, ['UI/UX', 'Art Director', 'Lead Dev']); assert.equal(worker(thread, 'Art Director').mode, 'edit');
   assert.throws(() => update(team, 'add-worker', { id, type: 'Art Director' }), /Session đã có Art Director/);
   const files = filesOf({ id: 's', folder: 'E:\\game' }), scope = roleScope('Art Director', files);
-  assert.deepEqual(scope.paths, [files.style, files.assets, files.art, files.issues, files.artLessons]); assert.equal(scope.bash, true);
+  assert.deepEqual(scope.paths, [files.style, files.assets, files.art, files.issues, files.artLessons, files.decisions]); assert.equal(scope.bash, true);
   assert.match(files.style, /\.office-desk[\\/]STYLE\.md$/); assert.match(files.art, /[\\/]s[\\/]ART\.md$/);
 });
 
