@@ -13,7 +13,7 @@ const chatEngine = require('./chat.cjs');
 const chats = new Map();
 const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK, mergePlan, labelType } = require('./workers.cjs');
 const { rolePrompt, FILE_ROLES } = require('./prompt.cjs');
-const { needsConfirm, needsTurnConfirm, ALWAYS_ASK } = require('./modes.cjs');
+const { needsConfirm, needsTurnConfirm, ALWAYS_ASK, cliMode } = require('./modes.cjs');
 const { describeTool, decide, roleScope, scopesOverlap, exclusivePaths, withShell } = require('./permissions.cjs');
 const sessionFiles = require('./session-files.cjs');
 const attachments = require('./attachments.cjs');
@@ -24,6 +24,8 @@ const po = require('./po.cjs');
 const fixer = require('./fixer.cjs');
 const flowgraphLib = require('./flowgraph.cjs');
 const penpot = require('./penpot.cjs');
+// Một khoá Penpot cho cả app: MCP Penpot chỉ thao tác trên page đang mở trong một tab trình duyệt.
+const penpotLock = penpot.createLock();
 // Dev server PLA (nút ở khối PO): chạy script dev của project, mở localhost; tắt khi app thoát.
 const devServer = require('./devserver.cjs');
 const devServers = devServer.createDevServers({ changed: () => publishSoon() });
@@ -460,9 +462,12 @@ app.whenReady().then(() => {
       if (writes && editOverlap(thread, exclusivePaths(scope))) throw retryable('Một lượt sửa đã bắt đầu trong lúc xác nhận; hãy đợi để tránh ghi đè.');
       // US-08: khối trong luồng chỉ nạp MCP server bật cho loại role của nó (team.roleMcp); chat thường nạp tất cả.
       const allMcp = mcpServerNames(), mcpServers = payload.role ? allMcp.filter(name => (metadata.team.roleMcp?.[worker.type] || []).includes(name)) : allMcp;
-      // Penpot MCP chỉ thao tác trên page đang mở trong một tab: mỗi lúc một khối dùng Penpot (penpot.cjs).
-      const penpotRun = !compactOnly && penpot.usesPenpot(mcpServers), penpotBusy = penpotRun && [...chats.values()].find(run => run.penpot);
-      if (penpotBusy) throw retryable(`Penpot đang được ${penpotBusy.message?.role || 'khối khác'} dùng; đợi lượt đó xong.`);
+      // Penpot MCP chỉ thao tác trên page đang mở trong một tab (penpot.cjs). Lượt có bước duyệt từng thao tác (mọi khối trong luồng)
+      // chỉ giữ khoá trong lúc gọi tool Penpot, nên nhiều Art làm song song; lượt Auto/Bypass (CLI tự duyệt) giữ khoá cả lượt.
+      const penpotServers = compactOnly ? [] : mcpServers.filter(penpot.isPenpot), penpotRun = penpotServers.length > 0;
+      const penpotPerCall = penpotRun && penpot.perCall(cliMode(worker.mode, scope)), penpotTurn = penpotRun && !penpotPerCall ? 'turn:' + randomUUID() : '';
+      const penpotBusy = () => { if (penpotTurn && !penpotLock.tryAcquire(penpotTurn, payload.role || 'Claude')) throw retryable(`Penpot đang được ${penpotLock.holder()?.label || 'khối khác'} dùng; đợi lượt đó xong.`); };
+      if (penpotTurn && (penpotLock.holder() || penpotLock.waiting())) penpotBusy();
       const directory = profileDir(root, profileId); fs.mkdirSync(directory, { recursive: true });
       const policy = JSON.parse(fs.readFileSync(settings, 'utf8')); policy.disableAllHooks = true;
       const chatSettings = path.join(directory, 'chat-settings.json'); fs.writeFileSync(chatSettings, JSON.stringify(policy));
@@ -479,6 +484,8 @@ app.whenReady().then(() => {
       const images = payload.auto || compactOnly ? [] : attachments.take(thread);
       // Project Unity: khối chạy lệnh được biết Editor có đang mở project không và cách gọi Unity (unity.cjs; kiểm /health ~0,6 s).
       const unityInfo = payload.role && SHELL_TYPES.includes(worker.type) ? await unity.context(thread.folder) : null;
+      // Giữ khoá cả lượt sau lần await cuối: từ đây tới launch chạy liền một mạch; lỗi giữa chừng thì trả khoá ở vòng sự kiện kế tiếp.
+      let penpotLaunched = false; penpotBusy(); if (penpotTurn) setImmediate(() => { if (!penpotLaunched) penpotLock.releaseRun(penpotTurn); });
       unity.writeHelper(unityInfo); // .office-desk/unity.sh: dò cổng theo sổ đăng ký, chờ Unity nạp lại, luôn có timeout
       const unityGuide = unity.guide(unityInfo);
       // CLAUDE.md của dự án: cả nội dung ở lượt đầu mỗi phiên CLI, sau đó chỉ dòng tra README (project-docs.cjs).
@@ -504,8 +511,9 @@ app.whenReady().then(() => {
       const devRun = Boolean(files && payload.role && isDevType(worker.type) && scope?.paths?.length), gitBefore = devRun ? fileChanges.gitStatus(thread.folder, scope.paths, foldersOf(thread)) : null;
       const model = payload.role ? modelFor(worker.type, worker.model, thread.leadPhase) : worker.model;
       const runThread = { ...thread, mode: worker.mode, model, cliSessions: thread.cliSessions ||= {}, sessionTotals: thread.sessionTotals ||= {} };
-      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, extraDirs: [...(images.length ? [attachments.folderOf(root, thread.id)] : []), ...(compactOnly ? [] : skills.extraDirs(runSkills))], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder, readable: [attachments.folderOf(root, thread.id)], cliData: path.join(directory, 'projects') }, { approved: () => Boolean(thread.shellApproved?.[payload.role || 'Claude']), approve: () => { (thread.shellApproved ||= {})[payload.role || 'Claude'] = new Date().toISOString(); persist(); } }) }); run.mode = worker.mode; run.scope = exclusivePaths(scope); run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
+      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, ...(penpotPerCall ? { toolLock: penpotLock, lockedServers: penpotServers } : {}), extraDirs: [...(images.length ? [attachments.folderOf(root, thread.id)] : []), ...(compactOnly ? [] : skills.extraDirs(runSkills))], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder, readable: [attachments.folderOf(root, thread.id)], cliData: path.join(directory, 'projects') }, { approved: () => Boolean(thread.shellApproved?.[payload.role || 'Claude']), approve: () => { (thread.shellApproved ||= {})[payload.role || 'Claude'] = new Date().toISOString(); persist(); } }) }); run.mode = worker.mode; run.scope = exclusivePaths(scope); run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
       run.message.profileId = profileId; run.message.model = model; run.penpot = penpotRun;
+      penpotLaunched = true; if (penpotTurn) { run.child.once('close', () => penpotLock.releaseRun(penpotTurn)); run.child.once('error', () => penpotLock.releaseRun(penpotTurn)); }
       run.child.once('close', () => {
         chats.delete(activeKey);
         if (compactOnly) { persist(); publish(); return; }

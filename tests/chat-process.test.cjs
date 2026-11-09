@@ -126,3 +126,22 @@ test('the CLI gets long Bash timeouts so 2–5 minute checks are not moved to th
   await new Promise((resolve, reject) => { started.child.once('error', reject); started.child.once('close', resolve); });
   assert.deepEqual(JSON.parse(thread.messages[0].text), { BASH_DEFAULT_TIMEOUT_MS: '600000', BASH_MAX_TIMEOUT_MS: '1800000' });
 });
+test('Penpot tools leave --allowedTools, wait for the shared lock without a dialog, and free it at their tool_result', { skip, timeout: 20000 }, async () => {
+  const { createLock } = require('../penpot.cjs');
+  const lock = createLock(), seen = [], asked = [];
+  const spy = { ...lock, release: (run, key) => { seen.push(['release', key, thread.messages[0].text]); lock.release(run, key); } };
+  await lock.acquire('other-run', 'x', 'Art #2');
+  const thread = { folder: __dirname, messages: [], mode: 'edit', model: 'sonnet' };
+  const started = launch({ executable: path.join(__dirname, 'fake-cli.cmd'), directory: __dirname, settings: 'unused.json', mcp: 'unused.json', mcpServers: ['penpot', 'image-gen'], thread, profileId: 'test-profile', prompt: '[ask:mcp__penpot__export_shape]', save: () => {}, publish: () => {}, askPermission: async request => { asked.push(request.tool); return { allow: true }; }, toolLock: spy, lockedServers: ['penpot'] });
+  const message = started.message;
+  for (let tries = 0; !message.progress.lockWait && tries < 200; tries++) await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(message.progress.lockWait, 'Art #2', 'shows who holds Penpot while waiting'); assert.equal(message.progress.waiting, undefined);
+  lock.release('other-run', 'x');
+  await new Promise((resolve, reject) => { started.child.once('error', reject); started.child.once('close', resolve); });
+  assert.deepEqual(asked, [], 'a pre-allowed Penpot tool needs no dialog');
+  assert.match(message.text, /^mcp__penpot__export_shape allow/); assert.equal(message.progress.lockWait, undefined);
+  assert.deepEqual(seen, [['release', 'tool-1', '']], 'released at tool_result, before the answer streamed');
+  assert.equal(lock.holder(), null);
+  const args = JSON.parse((await run('[args]', undefined, 'edit')).messages[0].text);
+  assert.doesNotMatch(args[args.indexOf('--allowedTools') + 1], /penpot/);
+});

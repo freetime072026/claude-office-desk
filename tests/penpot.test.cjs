@@ -28,3 +28,26 @@ test('the Penpot guide reaches only blocks that have Penpot, with role-specific 
   assert.match(buildPrompt({ label: 'Art', type: 'Art', files, penpot: true, content: 'x' }).text, /import_image đặt vào board ART-/);
   assert.doesNotMatch(buildPrompt({ label: 'UI/UX', type: 'UI/UX', files, content: 'x' }).text, /Penpot/);
 });
+test('Penpot lock: one run at a time in arrival order, the same run re-enters, a whole-turn holder does not cut the queue', async () => {
+  const lock = penpot.createLock(), order = [];
+  await lock.acquire('art1', 'call-a', 'Art'); await lock.acquire('art1', 'call-b', 'Art'); // cùng lượt gọi song song: không tự khoá chết
+  const second = lock.acquire('art2', 'call-c', 'Art #2').then(() => order.push('art2'));
+  const third = lock.acquire('art3', 'call-d', 'Art #3').then(() => order.push('art3'));
+  assert.deepEqual(lock.holder(), { run: 'art1', label: 'Art' }); assert.equal(lock.waiting(), 2);
+  assert.equal(lock.tryAcquire('chat', 'Claude'), false);
+  lock.release('art1', 'call-a'); await Promise.resolve(); assert.deepEqual(order, [], 'still held by the other call of the same run');
+  lock.release('art1', 'call-b'); await second; assert.deepEqual(order, ['art2']); assert.equal(lock.holder().label, 'Art #2');
+  lock.release('art2', 'call-c'); await third; lock.release('art3', 'call-d');
+  assert.equal(lock.holder(), null); assert.equal(lock.tryAcquire('chat', 'Claude'), true); lock.releaseRun('chat'); assert.equal(lock.holder(), null);
+});
+test('Penpot lock: a run that ends gives the lock back and drops its waiting calls', async () => {
+  const lock = penpot.createLock();
+  await lock.acquire('art1', 'a', 'Art');
+  const dropped = lock.acquire('art2', 'b', 'Art #2'), next = lock.acquire('art3', 'c', 'Art #3');
+  lock.releaseRun('art2', 'gone'); await assert.rejects(dropped, /gone/);
+  lock.releaseRun('art1'); await next; assert.equal(lock.holder().run, 'art3');
+});
+test('only CLI modes that ask the host get per-call locking; Auto and Bypass hold Penpot for the whole turn', () => {
+  assert.equal(penpot.perCall('default'), true); assert.equal(penpot.perCall('plan'), true);
+  assert.equal(penpot.perCall('auto'), false); assert.equal(penpot.perCall('bypassPermissions'), false);
+});

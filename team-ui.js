@@ -194,6 +194,8 @@
     const steps = progress.steps ? ` · ${progress.steps} bước` : '';
     if (!message.streaming) return progress.finishedAt ? `✓ Xong sau ${elapsed(Date.parse(progress.finishedAt) - Date.parse(progress.startedAt))}${steps}` : '';
     if (progress.waiting) return `⏸ ${elapsed(Date.now() - Date.parse(progress.startedAt))} · chờ bạn duyệt ${progress.waiting}${steps}`;
+    // Penpot chỉ một lần gọi mỗi lúc (penpot.cjs): lượt đang chờ khối khác gọi Penpot xong, không phải treo.
+    if (progress.lockWait) return `⏸ ${elapsed(Date.now() - Date.parse(progress.startedAt))} · chờ ${progress.lockWait} dùng xong Penpot${steps}`;
     // Tool đang chạy: hiện thời gian chạy của lệnh; chỉ cảnh báo treo khi vượt TOOL_STALL_MS.
     // Không có tool chạy mà không có bước mới quá STALL_MS (không tính lúc chờ bạn duyệt): có thể đang treo.
     const running = progress.runningSince ? Date.now() - Date.parse(progress.runningSince) : 0;
@@ -468,7 +470,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   const cardCache = new Map(); let cachedThread;
   const messageKey = (message, index) => message.id || `${index}:${message.time}:${message.role}`;
   const profileName = id => knownProfiles.find(profile => profile.id === id)?.name || 'Hồ sơ';
-  const signature = message => [message.text, message.streaming, message.error, (message.tools || []).join(','), message.profileId, message.model, message.profileId ? profileName(message.profileId) : '', JSON.stringify(message.usage || null), (message.denied || []).join(','), message.progress?.waiting || '', (message.compactions || []).length].join('\u0000');
+  const signature = message => [message.text, message.streaming, message.error, (message.tools || []).join(','), message.profileId, message.model, message.profileId ? profileName(message.profileId) : '', JSON.stringify(message.usage || null), (message.denied || []).join(','), message.progress?.waiting || '', message.progress?.lockWait || '', (message.compactions || []).length].join('\u0000');
   function updateProgress(card, message) { const node = card.querySelector('.run-progress'); if (node) node.textContent = progressText(message); updateSteps(card, message); }
   // Nhật ký bước: mỗi tool một dòng (giờ, tool, mục tiêu, thời gian, kết quả rút gọn). Trạng thái mở/đóng giữ theo id tin
   // vì thẻ bị dựng lại mỗi khi chữ của tin đổi.

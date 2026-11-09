@@ -149,7 +149,7 @@ const RESULT_EXIT_MS = 30000;
 function closeAfterExit(child, grace = EXIT_GRACE_MS) {
   child.once('exit', () => { const timer = setTimeout(() => { for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy(); }, grace); timer.unref?.(); child.once('close', () => clearTimeout(timer)); });
 }
-function launch({ brief = '', mcpConfig = null, executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [], resultExitMs = RESULT_EXIT_MS }) {
+function launch({ brief = '', mcpConfig = null, executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [], resultExitMs = RESULT_EXIT_MS, toolLock = null, lockedServers = [] }) {
   const message = { id: randomUUID(), role: role || 'Claude', text: '', time: new Date().toISOString(), streaming: true };
   message.progress = { startedAt: message.time, steps: 0, lastTool: '', target: '' };
   thread.messages.push(message);
@@ -167,7 +167,11 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
   if (scope?.bash) { const agents = path.join(directory, 'agents.json'); fs.writeFileSync(agents, agentsArg()); args.push('--agents', agents); }
   const briefFile = brief ? path.join(directory, 'briefs', message.id + '.md') : '';
   if (briefFile) { fs.mkdirSync(path.dirname(briefFile), { recursive: true }); fs.writeFileSync(briefFile, brief); args.push('--append-system-prompt-file', briefFile); }
-  args.push('--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--permission-prompt-tool', 'stdio', '--verbose', '--include-partial-messages', '--model', thread.model || 'claude-opus-5-5', ...extraFolderArgs(foldersOf(thread)), ...extraDirs.flatMap(dir => ['--add-dir', dir]), '--allowedTools', allowedFor(thread.mode, mcpServers));
+  args.push('--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--permission-prompt-tool', 'stdio', '--verbose', '--include-partial-messages', '--model', thread.model || 'claude-opus-5-5', ...extraFolderArgs(foldersOf(thread)), ...extraDirs.flatMap(dir => ['--add-dir', dir]), '--allowedTools', allowedFor(thread.mode, toolLock ? mcpServers.filter(name => !lockedServers.includes(name)) : mcpServers));
+  // toolLock (penpot.createLock): tool của lockedServers bị bỏ khỏi --allowedTools để CLI hỏi app trước mỗi lần gọi; app giữ khoá
+  // từ lúc cho phép tới khi có tool_result (hoặc hết lượt). Tool vốn được cho phép sẵn thì không hiện hộp duyệt.
+  const preAllowed = new Set(String(allowedFor(thread.mode, mcpServers)).split(',')), held = new Set();
+  const releaseHeld = id => { if (held.delete(id)) toolLock.release(message.id, id); };
   thread.cliSessions ||= {};
   const key = resumeKey(profileId, thread.folder, role);
   // resume=false: role làm việc theo tệp .md mở phiên mới mỗi lượt thay vì kéo dài một phiên phình mãi.
@@ -186,18 +190,28 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
   async function control(event) {
     const requestId = event.request_id, request = event.request || {};
     if (request.subtype !== 'can_use_tool') { send(controlError(requestId, 'Office Desk không hỗ trợ yêu cầu ' + request.subtype)); return; }
-    const progress = progressOf(message); progress.waiting = request.tool_name; publish();
-    let decision; try { decision = askPermission ? await askPermission({ tool: request.tool_name, input: request.input || {}, toolUseId: request.tool_use_id }) : null; } catch (error) { decision = { allow: false, message: error.message }; }
-    delete progress.waiting; if (!decision?.allow) message.denied = [...(message.denied || []), request.tool_name];
+    const tool = request.tool_name || '', server = toolLock ? lockedServers.find(name => tool.startsWith('mcp__' + name + '__')) : '';
+    const progress = progressOf(message); progress.waiting = tool; publish();
+    let decision; try {
+      decision = server && preAllowed.has('mcp__' + server) ? { allow: true } : askPermission ? await askPermission({ tool, input: request.input || {}, toolUseId: request.tool_use_id }) : null;
+      if (server && decision?.allow) {
+        const holder = toolLock.holder(), lockKey = request.tool_use_id || requestId;
+        if (holder && holder.run !== message.id) { delete progress.waiting; progress.lockWait = holder.label || 'khối khác'; publish(); }
+        await toolLock.acquire(message.id, lockKey, message.role);
+        if (ended) { toolLock.release(message.id, lockKey); throw Error('Lượt đã kết thúc.'); }
+        held.add(lockKey);
+      }
+    } catch (error) { decision = { allow: false, message: error.message }; }
+    delete progress.waiting; delete progress.lockWait; if (!decision?.allow) message.denied = [...(message.denied || []), request.tool_name];
     send(controlReply(requestId, permissionResult(decision, request.input))); publish();
   }
-  const parse = line => { try { const event = JSON.parse(line); if (event.type === 'control_request') { control(event); return; } const id = consume(message, event, seen); if (id) thread.cliSessions[key] = id; if (event.type === 'result') { const turn = turnUsage(message.usage, totals[resumedId], Boolean(resumedId)); message.usage = turn.usage; if (id) recordTotal(totals, id, turn.total); child.stdin.end(); afterResult(); } if (event.type === 'rate_limit_event') { const usagePath = path.join(directory, 'usage.json'); let previous = {}; try { previous = JSON.parse(fs.readFileSync(usagePath, 'utf8')); } catch {} const usage = usageEvent(event, previous); if (usage) fs.writeFileSync(usagePath, JSON.stringify(usage)); } } catch {} };
+  const parse = line => { try { const event = JSON.parse(line); if (event.type === 'control_request') { control(event); return; } const id = consume(message, event, seen); if (id) thread.cliSessions[key] = id; if (held.size && event.type === 'user' && Array.isArray(event.message?.content)) for (const block of event.message.content) if (block.type === 'tool_result') releaseHeld(block.tool_use_id); if (event.type === 'result') { if (toolLock) { held.clear(); toolLock.releaseRun(message.id); } const turn = turnUsage(message.usage, totals[resumedId], Boolean(resumedId)); message.usage = turn.usage; if (id) recordTotal(totals, id, turn.total); child.stdin.end(); afterResult(); } if (event.type === 'rate_limit_event') { const usagePath = path.join(directory, 'usage.json'); let previous = {}; try { previous = JSON.parse(fs.readFileSync(usagePath, 'utf8')); } catch {} const usage = usageEvent(event, previous); if (usage) fs.writeFileSync(usagePath, JSON.stringify(usage)); } } catch {} };
   child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
   child.stdout.on('data', chunk => { pending += chunk; if (pending.length > 5 * 1024 * 1024) { pending = ''; errors = 'CLI xuất dữ liệu vượt giới hạn'; child.kill(); return; } const lines = pending.split(/\r?\n/); pending = lines.pop(); for (const line of lines) parse(line); publish(); });
   child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-6000); });
   // stdin giữ mở tới khi CLI trả event result (để trả lời yêu cầu duyệt), rồi đóng để CLI thoát.
   child.stdin.on('error', () => {}); send(userLine(prompt));
-  const finish = code => { if (ended) return; ended = true; for (const file of [briefFile, mcpFile]) if (file) fs.rm(file, { force: true }, () => {}); if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0 && !message.killedAfterResult) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
+  const finish = code => { if (ended) return; ended = true; if (toolLock) { held.clear(); toolLock.releaseRun(message.id); } for (const file of [briefFile, mcpFile]) if (file) fs.rm(file, { force: true }, () => {}); if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0 && !message.killedAfterResult) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
   child.on('error', error => { errors = error.message; finish(1); }); child.on('close', finish); closeAfterExit(child);
   // CLI thoát: dọn dev server / trình duyệt mà lệnh Bash của lượt bỏ lại (proc-tree.cjs), để lượt sau không bị chiếm cổng.
   const launchedAt = Date.now(); child.once('exit', () => { killLeftovers(child.pid, launchedAt).catch(() => {}); });

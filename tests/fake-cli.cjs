@@ -22,7 +22,8 @@ function handle(message) {
   if (prompt.includes('[args]')) { reply(JSON.stringify(process.argv.slice(2))); return; }
   if (prompt.includes('[env]')) { reply(JSON.stringify({ BASH_DEFAULT_TIMEOUT_MS: process.env.BASH_DEFAULT_TIMEOUT_MS, BASH_MAX_TIMEOUT_MS: process.env.BASH_MAX_TIMEOUT_MS })); return; }
   if (!ask) { reply('Echo: ' + prompt.trim()); return; }
-  waiting.set('req-1', response => { const decision = response.response; reply(`${ask[1]} ${decision.behavior}` + (decision.behavior === 'allow' ? ' ' + JSON.stringify(decision.updatedInput) : ': ' + decision.message)); });
+  // Tool MCP được cho phép: gửi tool_result như CLI thật trước câu trả lời (app trả khoá Penpot khi thấy kết quả).
+  waiting.set('req-1', response => { const decision = response.response; if (decision.behavior === 'allow' && ask[1].startsWith('mcp__')) out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }] } }); reply(`${ask[1]} ${decision.behavior}` + (decision.behavior === 'allow' ? ' ' + JSON.stringify(decision.updatedInput) : ': ' + decision.message)); });
   out({ type: 'control_request', request_id: 'req-1', request: { subtype: 'can_use_tool', tool_name: ask[1], input: { command: 'echo hi' }, tool_use_id: 'tool-1' } });
 }
 process.stdin.setEncoding('utf8');

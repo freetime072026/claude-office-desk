@@ -1,6 +1,8 @@
 // Penpot (công cụ thiết kế mã nguồn mở) qua MCP chính thức @penpot/mcp: server chạy local, nối với editor qua plugin
 // mở trong tab trình duyệt. Không giới hạn số lần gọi như Figma MCP. MCP luôn thao tác trên page đang focus và chỉ
-// một tab dùng được, nên app chỉ cho một khối dùng Penpot tại một thời điểm.
+// một tab dùng được, nên app chỉ cho một lần gọi tool Penpot tại một thời điểm (createLock). Khối có bước duyệt từng
+// thao tác (CLI mode default/plan: mọi khối trong luồng) chỉ giữ khoá trong lúc gọi tool Penpot, nên nhiều Art vẽ song
+// song và chỉ xếp hàng ở các lần gọi Penpot; lượt không có bước duyệt (Auto, Bypass của chat thường) giữ khoá cả lượt.
 const fs = require('node:fs');
 const NAME = 'penpot';
 const SERVER_URL = 'http://localhost:4401/mcp';
@@ -35,4 +37,39 @@ const BY_ROLE = {
 };
 function guide(type) { return [COMMON, BY_ROLE[type] || ''].filter(Boolean).join(' '); }
 
-module.exports = { NAME, SERVER_URL, PLUGIN_URL, ROLES, SETUP, isPenpot, usesPenpot, install, guide };
+// CLI chỉ gửi yêu cầu duyệt (can_use_tool) cho tool chưa được cho phép sẵn ở mode default/plan; Auto và Bypass tự quyết.
+const perCall = cliMode => ['default', 'plan'].includes(cliMode);
+
+// Khoá dùng chung: chủ là một lượt (run = id tin), giữ một hoặc nhiều key (tool_use_id; '*' = cả lượt); lượt khác xếp hàng theo
+// thứ tự đến. Cùng lượt vào lại được ngay: CLI gửi tool_result của các lần gọi song song trong một tin chung sau khi cả loạt xong,
+// nên bắt lần gọi thứ hai chờ lần thứ nhất trả kết quả sẽ khoá chết lượt.
+function createLock() {
+  let owner = null; const queue = [];
+  const grant = item => { (owner ||= { run: item.run, label: item.label, keys: new Set() }).keys.add(item.key); item.resolve(); };
+  const next = () => {
+    if (owner || !queue.length) return;
+    const run = queue[0].run;
+    for (let index = 0; index < queue.length;) if (queue[index].run === run) grant(queue.splice(index, 1)[0]); else index++;
+  };
+  return {
+    holder: () => owner && { run: owner.run, label: owner.label },
+    waiting: () => queue.length,
+    // Lượt giữ khoá cả lượt không chen trước các lần gọi đang chờ.
+    tryAcquire(run, label) { if (owner || queue.length) return false; owner = { run, label, keys: new Set(['*']) }; return true; },
+    acquire(run, key, label) {
+      return new Promise((resolve, reject) => {
+        const item = { run, key, label, resolve, reject };
+        if (owner?.run === run || !owner && !queue.length) grant(item); else queue.push(item);
+      });
+    },
+    release(run, key) { if (owner?.run !== run) return; owner.keys.delete(key); if (!owner.keys.size) { owner = null; next(); } },
+    // Lượt kết thúc/bị huỷ: trả khoá nó đang giữ và bỏ các lần gọi của nó còn chờ (để không giữ khoá cho tiến trình đã chết).
+    releaseRun(run, reason = 'Lượt đã kết thúc.') {
+      for (let index = queue.length - 1; index >= 0; index--) if (queue[index].run === run) queue.splice(index, 1)[0].reject(Error(reason));
+      if (owner?.run === run) owner = null;
+      next();
+    }
+  };
+}
+
+module.exports = { NAME, SERVER_URL, PLUGIN_URL, ROLES, SETUP, isPenpot, usesPenpot, perCall, createLock, install, guide };
