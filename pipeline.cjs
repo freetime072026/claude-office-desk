@@ -309,6 +309,9 @@ function createAutoRun(deps) {
   }
   async function afterLead(thread, node, message, handoff, proposalApplied, planBlocked) {
     if (node.phase !== 'review') {
+      // Không có Art Director thì Lead giao cả Art/Anim: cùng chốt chặn khi mốc có việc Art/Anim mà không ai được giao (chỉ pha lập kế hoạch).
+      const leadGivesArt = node.phase === 'planning' && !hasArtDirector(thread) && (proposalApplied || handoff?.status === 'done');
+      if (leadGivesArt && artGuard(thread, node, handoff?.summary)) return;
       if (proposalApplied) { graph.finish(thread, node.id, 'done'); queueStale(thread); return note(thread, 'Lead đã phân công; chạy Dev/VFX theo sơ đồ.'); }
       if (planBlocked) return block(thread, node, planBlocked);
       if (handoff?.status === 'blocked') return wait(thread, node, 'Lead Dev cần người dùng: ' + handoff.summary);
@@ -367,6 +370,25 @@ function createAutoRun(deps) {
     }
     delete thread.artRework; delete thread.artRedo;
   }
+  // Mốc của kế hoạch PO có việc Art/Anim mà người giao (Art Director, hoặc Lead khi không có Art Director) lập kế hoạch xong không giao
+  // task nào cho khối đó: trước đây khối Art bị "bỏ qua", kiểm của nhánh tự đạt và mốc trôi qua không có ảnh nào (Art Director coi
+  // "chờ ảnh ChatGPT, inbox trống" là không có việc). Khối cần việc: owners của hạng mục art/anim của mốc, hoặc (kế hoạch cũ chưa có
+  // hạng mục) mọi khối Art/Anim đang hoạt động ở mốc. Dừng chờ người dùng một lần mỗi vòng; chạy lại người giao thì app cho qua.
+  const ART_KINDS = ['art', 'anim'], ART_BLOCKS = ['Art', 'Anim'];
+  function artWithoutTask(thread) {
+    const plan = thread.poPlan?.status === 'approved' ? thread.poPlan.plan.milestones[thread.poPlan.current ?? 0] : null;
+    if (!plan || thread.tweak) return [];
+    const isArt = label => thread.flow.includes(label) && ART_BLOCKS.includes(labelType(thread, label)) && !worker(thread, label).idle && !worker(thread, label).paused;
+    const needed = plan.requirements?.length ? [...new Set(plan.requirements.filter(item => ART_KINDS.includes(item.kind)).flatMap(item => item.owners))].filter(isArt) : thread.flow.filter(isArt);
+    return needed.filter(label => !(thread.dispatch || []).some(task => task.worker === label && !['finished', 'cancelled'].includes(task.status)));
+  }
+  function artGuard(thread, node, summary) {
+    const missing = artWithoutTask(thread), round = thread.round || 1;
+    if (!missing.length || thread.artGuard === round) return false;
+    thread.artGuard = round; focus(thread, node, '');
+    wait(thread, node, `${node.label} lập kế hoạch xong nhưng không giao task cho ${missing.join(', ')}, dù mốc ${(thread.poPlan.current ?? 0) + 1} có việc Art/Anim (${summary || 'không ghi lý do'}). Ảnh còn chờ ChatGPT vẫn phải giao để khối Art viết lệnh vẽ rồi chờ ảnh của bạn. Nhắn ${node.label} giao lại rồi /role ${node.label} start; nếu đúng là không còn ảnh cần làm ở mốc này, chạy /role ${node.label} start, lần này app cho qua.`);
+    return true;
+  }
   // Art Director pha planning: duyệt mockup UI/UX (reject → UI/UX sửa theo uiuxReview), viết ART.md và giao Art (main.cjs áp task).
   // Pha review: pass; reject kèm task Art làm lại (main.cjs đã áp); issue = lỗi visual do code/layout → Issue và Lead triage.
   function afterAd(thread, node, message, handoff, proposalApplied, planBlocked) {
@@ -383,7 +405,7 @@ function createAutoRun(deps) {
         thread.uiuxRejects = (thread.uiuxRejects || 0) + 1; thread.uiuxReview = summary; handedOff(thread, node.label, 'Chưa duyệt mockup: ' + summary);
         return graph.finish(thread, node.id, 'reject');
       }
-      if (['done', 'pass'].includes(handoff.status)) { handedOff(thread, node.label, summary); return graph.finish(thread, node.id, 'done'); }
+      if (['done', 'pass'].includes(handoff.status)) { if (artGuard(thread, node, summary)) return; handedOff(thread, node.label, summary); return graph.finish(thread, node.id, 'done'); }
     } else {
       // Review lại do Dev trả ảnh: art đạt (lỗi ở cách ghép) thì khối chờ chạy lại kèm hướng dẫn, không đi tiếp tới Lead review.
       if (['done', 'pass'].includes(handoff.status) && thread.artRework?.length) {

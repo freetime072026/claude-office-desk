@@ -103,3 +103,39 @@ test('auto run: reaching Hoàn tất with a later milestone waits for the PO rev
   await auto.resumeMilestone(thread);
   assert.equal(thread.poPlan.current, 1); assert.deepEqual(sent, ['GD', 'GD']);
 });
+
+// ---- Mốc có việc Art mà người giao không giao task: không cho mốc trôi qua (session BaseTD 021b1d4b mốc 1 trôi qua không có ảnh nào).
+function artSession() {
+  const store = initial(), id = update(store, 'create', { request: 'x' }); update(store, 'add-worker', { id, type: 'PO' });
+  const thread = store.threads.find(item => item.id === id);
+  const parsed = po.parsePlan(team({ milestones: [{ title: 'Nhân vật', gd: 'vẽ', blocks: ['GD', 'Art Director', 'Art', 'Art', 'QA'], requirements: [R('H1', 'art', 'L', ['Art']), R('L1', 'art', 'L', ['Art #2'])] }] }));
+  update(store, 'po-propose', { id, plan: parsed, steps: po.timeline(parsed, thread.flow), previews: [] }); update(store, 'po-approve', { id, busy: [] });
+  const sent = [];
+  const auto = createAutoRun({ update: (item, action, payload) => update(store, action, { ...payload, id: item.id }), send: async (item, label) => { sent.push(label); return true; }, pump: async item => { for (const task of item.dispatch || []) if (task.status === 'queued') sent.push(task.worker); }, log: (item, role, text) => item.messages.push({ role, text }), changed: () => {}, approve: async () => true, isRunning: () => false });
+  return { thread, sent, auto };
+}
+const handoff = (status, summary = status) => ({ text: '```handoff\n' + JSON.stringify({ status, summary }) + '\n```' });
+
+test('Art Director giving Art nothing in a milestone with art items stops once with the reason; running it again lets it pass', async () => {
+  const { thread, sent, auto } = artSession();
+  await auto.enable(thread, 'test'); graph.resetRun(thread); graph.stateOf(thread, 'PO').status = 'done';
+  await auto.runStage(thread, 'GD'); await auto.after(thread, 'GD', handoff('done'));
+  assert.equal(sent.at(-1), 'Art Director');
+  await auto.after(thread, 'Art Director', handoff('done', 'chờ ảnh C34 từ ChatGPT, inbox trống'));
+  assert.equal(graph.stateOf(thread, 'Art Director@planning').status, 'blocked');
+  assert.match(thread.messages.at(-1).text, /không giao task cho Art, Art #2, dù mốc 1 có việc Art\/Anim \(chờ ảnh C34 từ ChatGPT, inbox trống\)/);
+  assert.equal(sent.includes('Art'), false, 'Art is not skipped silently');
+  await auto.runStage(thread, 'Art Director'); assert.equal(sent.at(-1), 'Art Director', 'rerun the same planning step');
+  await auto.after(thread, 'Art Director', handoff('done', 'mọi ảnh đã có'));
+  assert.equal(graph.stateOf(thread, 'Art Director@planning').status, 'done', 'second time the user confirmed, app lets it pass');
+});
+
+test('the guard names only art owners left without a task', async () => {
+  const { thread, auto } = artSession();
+  await auto.enable(thread, 'test'); graph.resetRun(thread); graph.stateOf(thread, 'PO').status = 'done';
+  await auto.runStage(thread, 'GD'); await auto.after(thread, 'GD', handoff('done'));
+  thread.dispatch = [{ worker: 'Art', task: 'C34', files: ['hero/'], status: 'pending', by: 'Art Director' }];
+  await auto.after(thread, 'Art Director', { text: handoff('done').text + '\n```tasks\n{}\n```' }, { proposalApplied: true });
+  assert.match(thread.messages.at(-1).text, /không giao task cho Art #2,/);
+  assert.doesNotMatch(thread.messages.at(-1).text, /cho Art, /);
+});
