@@ -535,7 +535,8 @@ app.whenReady().then(() => {
       if (briefHash) (thread.briefSent ||= {})[sessionKey] = briefHash;
       if (fullDocs && docsGuide) projectDocs.markSent(thread, sessionKey, resumed);
       const mcpConfig = payload.role ? mcpSubset(mcpServers) : null;
-      if (payload.auto) thread.messages.push({ role: 'Điều phối', text: content, time: new Date().toISOString() }); else { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); if (images.length) thread.messages.at(-1).attachments = images; }
+      // to: khối nhận lời này, để tab "Tin của khối" (block-feed.js) gom đúng lời gửi cho khối.
+      if (payload.auto) thread.messages.push({ role: 'Điều phối', text: content, time: new Date().toISOString(), ...(payload.role ? { to: payload.role } : {}) }); else { teamStore.update(metadata.team, 'message', { id: thread.id, text: content }); if (images.length) thread.messages.at(-1).attachments = images; if (payload.role) thread.messages.at(-1).to = payload.role; }
       if (folderNote) thread.messages.push({ role: 'Hệ thống', text: folderNote, time: new Date().toISOString() });
       // Ảnh chụp git trong phạm vi tệp của Dev/VFX trước lượt: sau lượt so lại để biết tệp nào được tạo/sửa (file-changes.cjs).
       const devRun = Boolean(files && payload.role && isDevType(worker.type) && scope?.paths?.length), gitBefore = devRun ? fileChanges.gitStatus(thread.folder, scope.paths, foldersOf(thread)) : null;

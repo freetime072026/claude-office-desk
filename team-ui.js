@@ -263,6 +263,41 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   Object.defineProperty(messageBox, 'value', { configurable: true, get() { return valueProperty.get.call(this); }, set(text) { valueProperty.set.call(this, text); autosize(); } });
   messageBox.addEventListener('input', autosize); addEventListener('resize', autosize);
   function chooseWorker(role) { selectedWorker = role; panelKey = ''; if (document.body.classList.contains('panel-hidden')) applyPanel(true); paint(); }
+  // ---- Tab "Tin của khối" (block-feed.js) trong khung bên phải: chỉ tin của khối đang chọn, để tin bị chặn của một khối không trôi
+  // mất giữa chat chung khi nhiều khối chạy song song. Tin bị chặn/dừng tô đỏ. Bấm khối ở dòng khối thì mở tab này.
+  const FEED_LIMIT = 80, feedCache = new Map(); let feedOf = '', feedPinned = true;
+  let panelTab = (() => { try { return localStorage.getItem('panel-tab') === 'config' ? 'config' : 'feed'; } catch { return 'feed'; } })();
+  function applyTab(tab, repaint = true) {
+    panelTab = tab; try { localStorage.setItem('panel-tab', tab); } catch {}
+    get('#panel').classList.toggle('feed-mode', tab === 'feed');
+    get('#panel-tab-feed').setAttribute('aria-selected', String(tab === 'feed')); get('#panel-tab-config').setAttribute('aria-selected', String(tab !== 'feed'));
+    if (repaint && tab === 'feed') { feedPinned = true; paintBlockFeed(current()); }
+  }
+  get('#panel-tab-feed').onclick = () => applyTab('feed'); get('#panel-tab-config').onclick = () => applyTab('config');
+  applyTab(panelTab, false);
+  const feedBox = get('#block-feed');
+  feedBox.addEventListener('scroll', () => { feedPinned = feedBox.scrollHeight - feedBox.scrollTop - feedBox.clientHeight < 60; });
+  function paintBlockFeed(thread) {
+    if (panelTab !== 'feed') return;
+    const role = thread?.flow.includes(selectedWorker) ? selectedWorker : '', key = (thread?.id || '') + ':' + role;
+    if (key !== feedOf) { feedCache.clear(); feedOf = key; feedPinned = true; get('#block-feed-list').replaceChildren(); }
+    const all = role ? window.blockFeed.related(thread.messages, role, thread.flow) : [], list = all.slice(-FEED_LIMIT);
+    const position = new Map((thread?.messages || []).map((message, index) => [message, index]));
+    const hint = get('#block-feed-empty');
+    hint.hidden = Boolean(list.length) && all.length <= list.length;
+    hint.textContent = !role ? 'Chọn một khối để xem tin của khối.' : !list.length ? `Chưa có tin nào của ${role}.` : `Đang hiện ${list.length} tin gần nhất trên ${all.length} tin của ${role}.`;
+    const used = new Set();
+    const cards = list.map(message => {
+      const id = messageKey(message, position.get(message)), sig = signature(message), hit = feedCache.get(id); used.add(id);
+      if (hit && hit.sig === sig) { hit.card.message = message; updateProgress(hit.card, message); if (!message.progress) updateSteps(hit.card, message); return hit.card; }
+      const card = buildCard(message); card.message = message; if (window.blockFeed.isStop(message)) card.classList.add('feed-stop');
+      feedCache.set(id, { sig, card }); return card;
+    });
+    for (const id of [...feedCache.keys()]) if (!used.has(id)) feedCache.delete(id);
+    const box = get('#block-feed-list'), children = [...box.children]; let same = 0; while (same < cards.length && children[same] === cards[same]) same++;
+    for (const child of children.slice(same)) child.remove(); box.append(...cards.slice(same));
+    if (feedPinned) feedBox.scrollTop = feedBox.scrollHeight;
+  }
   function paintDispatch(thread) {
     const tasks = thread.dispatch || [], count = status => tasks.filter(task => task.status === status).length;
     const parts = [thread.auto?.enabled ? '⚙ Tự động: bật' : 'Tự động: tắt (/chot hoặc /auto on)'];
@@ -273,7 +308,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
       const task = thread.dispatch?.find(item => item.worker === role), paused = thread.workers?.[role]?.paused;
       const state = runningOf(thread, role) ? 'running' : paused ? 'paused' : ['blocked', 'failed'].includes(task?.status) ? 'blocked' : index < thread.stage || thread.status === 'done' || task?.status === 'finished' ? 'done' : index === thread.stage ? 'current' : 'idle';
       const chip = make('button', { type: 'button', className: `team-chip ${state}${role === selectedWorker ? ' selected' : ''}`, textContent: role, title: `${role}: ${blockLabel(thread, role, index)}` });
-      chip.onclick = () => chooseWorker(role); return chip;
+      chip.onclick = () => { applyTab('feed', false); chooseWorker(role); }; return chip;
     });
     line.replaceChildren(...chips, make('span', { className: 'team-status', textContent: parts.join(' · ') }));
   }
@@ -550,6 +585,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     const thread = current(); if (!thread) return;
     thread.messages.forEach((message, index) => { if (message.streaming) { const hit = cardCache.get(messageKey(message, index)); if (hit) updateProgress(hit.card, message); } });
     const running = selectedWorker ? runningOf(thread, selectedWorker) : null; if (running) get('#panel-state').textContent = progressText(running);
+    for (const { card } of feedCache.values()) if (card.message?.streaming) updateProgress(card, card.message);
   }, 1000);
 
   // ---- Vẽ toàn bộ theo trạng thái hiện tại.
@@ -566,11 +602,11 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     get('#decision-banner').hidden = thread?.status !== 'awaiting-decision';
     get('#decision-text').textContent = `QA fail ${thread?.qaFailRounds || 0}/${qaRoundLimit} vòng. Chọn cách xử lý:`;
     window.graphView?.paint(thread);
-    if (!thread) { paintPanel(thread); get('#dispatch-summary').hidden = true; get('#manual').hidden = true; get('#role').disabled = false; get('#folders').disabled = false; return; }
+    if (!thread) { paintPanel(thread); paintBlockFeed(thread); get('#dispatch-summary').hidden = true; get('#manual').hidden = true; get('#role').disabled = false; get('#folders').disabled = false; return; }
     if (!thread.archived) { get('#role').disabled = false; get('#folders').disabled = false; }
     if (selectedWorker && !thread.flow.includes(selectedWorker)) selectedWorker = undefined;
     if (!selectedWorker) selectedWorker = thread.flow[thread.stage] || thread.flow[0];
-    paintDispatch(thread); paintPanel(thread); renderActivity(thread);
+    paintDispatch(thread); paintPanel(thread); renderActivity(thread); paintBlockFeed(thread);
     for (const image of thread.attachments || []) get('#attachments').append(thumbnail(image, thread.archived ? null : async () => { try { await window.office.run('remove-attachment', { id: selected, path: image.path }); } catch (error) { showError(error); } }));
     // Chỉ hiện Issue đang mở; Issue đã retest/bỏ qua gộp một dòng. Retest chỉ khi QA đang kiểm (team.cjs chặn lúc khác);
     // ô chat trống thì dùng bằng chứng mặc định.

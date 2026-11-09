@@ -67,6 +67,8 @@
   <div class="panel-pick"><select id="panel-block" aria-label="Chọn khối"></select><button id="panel-remove" type="button" aria-label="Xoá khối" title="Xoá khối">🗑</button></div>
   <p id="panel-remove-note" class="panel-note" hidden></p>
   <p id="panel-state"></p>
+  <div id="panel-tabs" role="tablist" aria-label="Nội dung khối"><button type="button" id="panel-tab-feed" role="tab" aria-selected="true">💬 Tin của khối</button><button type="button" id="panel-tab-config" role="tab" aria-selected="false">⚙ Cấu hình</button></div>
+  <section id="block-feed" aria-label="Tin của khối" aria-live="polite"><p id="block-feed-empty" class="hint">Chưa có tin nào của khối này.</p><div id="block-feed-list"></div></section>
   <label id="account-field">Tài khoản<select id="worker-account" aria-label="Tài khoản của khối"></select></label>
   <label>Mode<select id="chat-mode" aria-label="Mode"></select></label>
   <label>Model<select id="chat-model" aria-label="Model"></select></label>
@@ -112,4 +114,4 @@
 <dialog id="file-viewer"><h3 id="file-title"></h3><button type="button" id="file-copy">Copy nội dung</button><button type="button" id="file-close">Đóng</button><pre id="file-text"></pre></dialog>
 <dialog id="image-viewer"><h3 id="image-title"></h3><button type="button" id="image-close">Đóng</button><img id="image-view" alt=""></dialog>
 <dialog id="usage-viewer"><h3>Usage chính thức của hồ sơ CLI</h3><p>Nếu CLI hiện onboarding, hoàn tất tại đây rồi nhập /usage. Không tự gửi prompt AI.</p><button type="button" id="usage-close">Đóng</button><div id="usage-terminal"></div></dialog>
-<script src="chat-format.js"></script><script src="node_modules/@xterm/xterm/lib/xterm.js"></script><script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script><script src="po-ui.js"></script><script src="team-ui.js"></script><script src="graph-ui.js"></script></body></html>
+<script src="chat-format.js"></script><script src="node_modules/@xterm/xterm/lib/xterm.js"></script><script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script><script src="block-feed.js"></script><script src="po-ui.js"></script><script src="team-ui.js"></script><script src="graph-ui.js"></script></body></html>

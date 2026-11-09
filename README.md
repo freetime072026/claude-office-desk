@@ -172,6 +172,13 @@ Bảng tệp session có nút **Release**. Model mặc định Sonnet, 30 lượ
 
 ## Cấu hình riêng từng khối
 
+**Tab "Tin của khối"** (khung bên phải chat, cạnh tab **Cấu hình**): bấm một khối ở dòng khối thì khung mở ở tab này. Tab chỉ hiện tin liên quan tới khối đó:
+- lượt trả lời và bàn giao của khối;
+- lời bạn hoặc điều phối gửi cho khối;
+- log của app và kết luận của Fixer có nhắc đúng tên khối ("Art" không khớp "Art Director" hay "Art #2").
+
+Tin bị chặn hoặc dừng được tô đỏ. Tab hiện 80 tin gần nhất và tự cuộn xuống tin mới, nên khi nhiều khối chạy song song, tin bị chặn của một khối không bị trôi mất giữa chat chung.
+
 Mục **Trách nhiệm & yêu cầu riêng** của một khối (trách nhiệm, đầu ra, yêu cầu riêng) lưu theo **khối**, không theo loại role: sửa Dev #2 không đổi Dev, sửa khối ở session này không đổi session khác hay template. Khối chưa sửa hiện và dùng phần thừa hưởng: preset của khối (PLA…) → template của team → mặc định của role; app chỉ lưu phần khác phần thừa hưởng nên khối chưa sửa vẫn theo preset khi preset đổi. Xoá khối thì cấu hình của khối đi theo. Session cũ (cấu hình theo loại) được chuyển khi mở app: mỗi khối nhận bản sao cấu hình của loại mình, phần app tự chép từ template bị bỏ để preset/template áp lại. MCP server vẫn bật theo loại role (dùng chung mọi khối cùng loại).
 
 ## Ảnh tham chiếu trong chat
