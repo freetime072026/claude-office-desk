@@ -41,6 +41,7 @@ function addStep(message, block, sub) {
   if (steps.length > STEP_LIMIT) steps.splice(0, steps.length - STEP_LIMIT);
 }
 function finishStep(message, result) {
+  settleFile(message, result);
   const step = (message.steps || []).findLast(item => item.id && item.id === result.tool_use_id); if (!step || step.end) return;
   step.end = new Date().toISOString(); step.ok = !result.is_error; step.result = oneLine(resultText(result.content), RESULT_CLIP);
   const progress = progressOf(message); progress.updatedAt = step.end;
@@ -59,7 +60,16 @@ const WRITE_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
 function trackFile(message, block) {
   const file = block.input?.file_path || block.input?.notebook_path; if (!WRITE_TOOLS.includes(block.name) || typeof file !== 'string' || !file) return;
   const ops = message.fileOps ||= {}; if (ops[file] === 'created') return;
+  if (block.id) (message.pendingFileOps ||= {})[block.id] = { file, previous: ops[file] || '' };
   ops[file] = block.name === 'Write' && !fs.existsSync(file) ? 'created' : 'edited';
+}
+// Tool bị app từ chối (ngoài phạm vi ghi) hoặc lỗi (old_string không khớp) không đổi tệp: bỏ tệp khỏi fileOps để dòng
+// "Sửa:" của báo cáo không ghi tệp chưa hề được sửa (Art bị chặn sửa to_game.py mà báo cáo vẫn ghi đã sửa).
+function settleFile(message, result) {
+  const pending = message.pendingFileOps?.[result.tool_use_id]; if (!pending) return;
+  delete message.pendingFileOps[result.tool_use_id]; if (!Object.keys(message.pendingFileOps).length) delete message.pendingFileOps;
+  if (!result.is_error || !message.fileOps) return;
+  if (pending.previous) message.fileOps[pending.file] = pending.previous; else delete message.fileOps[pending.file];
 }
 // Thông báo lỗi chuẩn khi CLI không để lại stderr/text dùng được (US-07).
 const CLI_FAILED_TEXT = 'CLI dừng hoặc gặp lỗi. Kiểm tra đăng nhập và phiên bản Claude Code.';

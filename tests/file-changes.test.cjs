@@ -27,6 +27,16 @@ test('Write to a missing file counts as created, Edit as edited; a created file 
   use('1', 'Write', { file_path: missing }); use('2', 'Edit', { file_path: missing }); use('3', 'Write', { file_path: existing }); use('4', 'Read', { file_path: 'x' });
   assert.deepEqual(message.fileOps, { [missing]: 'created', [existing]: 'edited' });
 });
+test('a denied or failed Edit does not count as a changed file', () => {
+  const message = { text: '' }, seen = new Set(), denied = path.join(os.tmpdir(), 'to_game.py'), done = __filename;
+  const use = (id, name, input) => consume(message, { type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } }, seen);
+  const result = (id, is_error) => consume(message, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error, content: is_error ? 'Ngoài phạm vi ghi' : 'ok' }] } }, seen);
+  use('1', 'Edit', { file_path: done }); result('1', false);
+  use('2', 'Edit', { file_path: denied }); result('2', true);
+  use('3', 'Edit', { file_path: done }); result('3', true);
+  assert.deepEqual(message.fileOps, { [done]: 'edited' });
+  assert.equal(message.pendingFileOps, undefined);
+});
 test('Dev handoff asks for new files; Lead review must update PROJECT.md from CHANGES', () => {
   const files = { changes: 'CHANGES.md', issues: 'ISSUES.md', perf: 'PERF.md', project: 'PROJECT.md' };
   assert.match(buildPrompt({ label: 'Dev', type: 'Dev', content: 'x' }).text, /Tệp mới: mỗi tệp một dòng/);
