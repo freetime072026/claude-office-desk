@@ -1,8 +1,8 @@
 // Penpot (công cụ thiết kế mã nguồn mở) qua MCP chính thức @penpot/mcp: server chạy local, nối với editor qua plugin
 // mở trong tab trình duyệt. Không giới hạn số lần gọi như Figma MCP. MCP luôn thao tác trên page đang focus và chỉ
-// một tab dùng được, nên app chỉ cho một lần gọi tool Penpot tại một thời điểm (createLock). Khối có bước duyệt từng
-// thao tác (CLI mode default/plan: mọi khối trong luồng) chỉ giữ khoá trong lúc gọi tool Penpot, nên nhiều Art vẽ song
-// song và chỉ xếp hàng ở các lần gọi Penpot; lượt không có bước duyệt (Auto, Bypass của chat thường) giữ khoá cả lượt.
+// một tab dùng được, nên app chỉ cho một khối gọi Penpot tại một thời điểm (createLock). Khối có bước duyệt từng
+// thao tác (CLI mode default/plan: mọi khối trong luồng) chỉ giữ khoá trong chuỗi gọi Penpot liền nhau (chat.cjs LOCK_LEASE_MS),
+// nên nhiều Art vẽ song song và chỉ xếp hàng ở phần dùng Penpot; lượt không có bước duyệt (Auto, Bypass của chat thường) giữ khoá cả lượt.
 const fs = require('node:fs');
 const NAME = 'penpot';
 const SERVER_URL = 'http://localhost:4401/mcp';
@@ -29,7 +29,7 @@ function install(file, team) {
 }
 
 // Hướng dẫn cho khối có Penpot (chèn vào brief). Ghi chú chung + phần theo role.
-const COMMON = 'Penpot MCP (mcp__penpot__*): gọi penpot_api_info trước khi viết execute_code (API plugin Penpot, không phải Figma); high_level_overview để nắm file; export_shape để xem ảnh một board/shape. MCP thao tác trên page đang mở trong Penpot: tạo/sửa trong board đặt tên theo ID (SCR-…, ART-…), không xoá hay sửa board của ID khác. Tool báo chưa kết nối thì dừng và báo blocked: "mở Penpot và plugin MCP".';
+const COMMON = 'Penpot MCP (mcp__penpot__*): gọi penpot_api_info trước khi viết execute_code (API plugin Penpot, không phải Figma); high_level_overview để nắm file; export_shape để xem ảnh một board/shape. MCP thao tác trên page đang mở trong Penpot: tạo/sửa trong board đặt tên theo ID (SCR-…, ART-…), không xoá hay sửa board của ID khác. Tab Penpot dùng chung với các khối khác, page đang mở có thể đổi giữa hai lượt của bạn: tìm board bằng penpotUtils.findShape/findShapeById (tìm mọi page), không dựa vào penpot.root hay penpot.selection; trước khi tạo shape hoặc import_image, kiểm penpot.currentPage là page chứa board của bạn, khác thì penpot.openPage(page) rồi mới tạo; shape vừa tạo appendChild ngay vào board ID của bạn; export_shape truyền id board, không dùng "page"/"selection"; làm liền các lần gọi Penpot của một việc, không chen lệnh khác vào giữa (app giữ Penpot cho bạn tới khi bạn gọi tool khác). Tool báo chưa kết nối thì dừng và báo blocked: "mở Penpot và plugin MCP".';
 const BY_ROLE = {
   'UI/UX': 'Dựng mockup mỗi màn hình SCR-… thành một board cùng tên trong Penpot (layout, kích thước px, trạng thái chính) và ghi tên page/board vào UIUX.md cạnh mục SCR đó.',
   'Art Director': 'Duyệt mockup bằng export_shape các board SCR-… trong Penpot; khi giao Art, ghi tên board SCR/ART làm tham chiếu kích thước, vị trí, màu.',

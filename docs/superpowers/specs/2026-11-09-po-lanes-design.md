@@ -88,7 +88,9 @@ Sơ đồ bạn đã sửa tay (`graph.custom`) không bị dựng lại khi đ�
 
 ### Nút đang chạy của một khối
 
-QA, Lead, Art Director có nhiều nút. Lúc `startNode` gửi lượt, pipeline ghi `thread.nodeRunning[label] = node.id`. Bàn giao của khối kết thúc đúng nút đó thay cho cách tìm theo nhãn/pha hiện tại, rồi xoá mục. Mở lại app (`recoverRunning`) thì xoá `nodeRunning`.
+QA, Lead, Art Director có nhiều nút. Một khối chỉ chạy một lượt mỗi lúc, nên nút đang `running` của khối là duy nhất: `nodeOfRun` lấy nút đó trước tiên, và bàn giao kết thúc đúng nút của nhánh. Khi không có nút đang chạy (bạn chạy lại bằng tay), `nodeOfRun` ưu tiên nút bị chặn, rồi nút đang chờ, rồi nút chưa chạy của pha hiện tại.
+
+Lúc `startNode` gửi lượt của nút có `lane`, pipeline ghi `thread.runLane[label] = <nhánh>` để prompt và `workers.mergePlan` biết lượt này thuộc nhánh nào. Bàn giao xong thì xoá mục đó.
 
 Một khối chỉ chạy một lượt mỗi lúc. QA~Enemy được kích hoạt khi QA đang chạy cho Hero thì nằm chờ (`startNode` gặp `isRunning` sẽ return) và chạy ở lần `advance` sau.
 
@@ -107,17 +109,26 @@ Một khối chỉ chạy một lượt mỗi lúc. QA~Enemy được kích ho�
 
 ### Giới hạn vòng sửa
 
-`thread.qaFailRounds` và số lần Art Director trả về của vòng tính theo nhánh khi có nhánh (`thread.laneRounds[<tên>] = { qaFail, adRejects }`), cùng giới hạn hiện tại (`QA_ROUND_LIMIT`, tối đa 2 lần trả về mỗi vòng). Nhánh chạm giới hạn thì nút của nhánh đó bị chặn chờ bạn. Nhánh khác vẫn chạy; Lead·review chưa chạy vì còn nút nối vào bị chặn. `resetRound` xoá `laneRounds`.
+Số vòng QA fail, số lần Art Director trả về, pha QA (chức năng/performance) và lúc QA pass tính theo nhánh khi có nhánh (`thread.laneState[<tên>] = { qaFailRounds, adRejects, qaPhase, qaPassedAt }`), cùng giới hạn hiện tại (`QA_ROUND_LIMIT`, tối đa 2 lần trả về mỗi vòng). Issue gắn nhánh không dừng cả session (`awaiting-decision`). Nhánh chạm giới hạn QA thì Lead·triage của nhánh đó bị chặn chờ bạn; `/role Lead Dev start` cho nhánh thêm một vòng. Nhánh khác vẫn chạy. `resetRound` và vòng chỉnh sửa xoá `laneState`.
+
+### Lead·review chờ đủ nhánh
+
+Nút kiểm của một nhánh còn đang làm ở trạng thái chưa chạy (idle), nên theo luật sơ đồ nó không giữ Lead·review lại khi nhánh khác đã pass. Vì vậy `startNode` của Lead·review tự chờ (giữ `held`, như khi chờ triage) khi còn nhánh có nút đang chờ, đang chạy hoặc bị chặn. Review được kích hoạt lại khi nhánh cuối pass.
+
+### Lượt của một nhánh không đụng nhánh khác
+
+- `workers.mergePlan` ở lượt của nhánh k chỉ thay task của khối nhánh k; task (kể cả đang chạy) của nhánh khác giữ nguyên.
+- Khối bị chặn cần giao lại (`reassign`) ghi kèm nhánh. `routeReassign` chỉ đợi, huỷ task và dừng hàng chờ trong nhánh đó, rồi chuyển Lead·triage của nhánh. Lead phân công xong chỉ xoá mục `reassign` của nhánh mình.
 
 ## 4. Chặn đụng nhau
 
 ### Tệp
 
-`workers.taskPlan` (Lead lập KH, Art Director lập KH, Lead triage): khi session có `thread.lanes`, task giao cho khối thuộc nhánh k phải có mọi `files` nằm trong `files` của nhánh k (`permissions.inScope`). Ngược lại kế hoạch bị từ chối: `"<khối> thuộc nhánh <k>: tệp <x> ngoài thư mục của nhánh (<danh sách>)"`. Kiểm chồng tệp giữa các task giữ nguyên.
+`workers.taskPlan` (Lead lập KH, Art Director lập KH, Lead triage): khi session có `thread.lanes`, task giao cho khối thuộc nhánh k phải có mọi `files` nằm trong `files` của nhánh k (so theo đường dẫn đã resolve; mục của nhánh tính là thư mục). Ngược lại kế hoạch bị từ chối: `"<khối> thuộc nhánh <k>: tệp <x> ngoài thư mục của nhánh (<danh sách>)"`. Kiểm chồng tệp giữa các task giữ nguyên.
 
 ### Penpot
 
-- `penpot.guide` nhận thêm nhánh của khối: "Bạn thuộc nhánh <k>: chỉ tạo/sửa board ART-… trên page Penpot "<penpot>"; mở page đó trước khi tạo shape."
+- Brief của khối trong nhánh (`prompt.ownLaneLine`) có thêm: "Penpot: chỉ tạo/sửa board trên page "<penpot>" (mở page đó trước khi tạo shape)."
 - Khoá theo chuỗi gọi Penpot và luật mở đúng page (thay đổi trên nhánh `penpot-per-call-lock`) lo phần tab dùng chung. Spec này dựa trên thay đổi đó.
 
 ### Prompt
@@ -137,7 +148,7 @@ Một khối chỉ chạy một lượt mỗi lúc. QA~Enemy được kích ho�
   - Lead·review chỉ chạy khi mọi QA~k và AD review~k pass;
   - `validate` nhận và từ chối nút theo nhánh đúng luật.
 - `pipeline.test`:
-  - bàn giao của QA kết thúc đúng nút trong `nodeRunning`;
+  - bàn giao của QA kết thúc đúng nút của nhánh đang chạy;
   - QA~k tự pass khi nhánh k bị bỏ qua;
   - issue nhánh Enemy chỉ chạy lại khối nhánh Enemy;
   - Lead·triage~k bỏ qua khi không có issue của nhánh;

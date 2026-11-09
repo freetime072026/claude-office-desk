@@ -34,8 +34,16 @@ function handoff(item, content, log, auto = false) {
 }
 // sameRound: vòng sửa của lần kiểm này đã được tính (QA và Art Director · review chạy song song, hoặc Lead triage đang chạy): chỉ ghi
 // Issue để Lead triage nhận, không tính thêm một vòng QA fail (trước đây một vòng sửa bị đếm hai lần và session dừng ở 3/3 dù Lead đang giao việc).
-function reportIssue(item, content, log, sameRound = false) {
+// lane: Issue từ bước kiểm của một nhánh (pipeline.cjs): gắn nhánh, đếm vòng fail của riêng nhánh đó và không dừng cả session khi hết
+// vòng (pipeline dừng Lead triage của nhánh), để các nhánh khác chạy tiếp.
+function reportIssue(item, content, log, sameRound = false, lane = '') {
   if (isHalted(item)) throw Error('Session đang chờ quyết định hoặc đã dừng');
+  if (lane) {
+    const text = `[Nhánh ${lane}] ${content}`; item.issues.push({ id: randomUUID(), text, closed: false, lane }); log('Issue', text);
+    const counters = ((item.laneState ||= {})[lane] ||= {}); delete counters.qaPassedAt;
+    if (!sameRound) counters.qaFailRounds = (counters.qaFailRounds || 0) + 1;
+    return;
+  }
   item.issues.push({ id: randomUUID(), text: content, closed: false }); log('Issue', content);
   if (sameRound) { delete item.qaPassedAt; return; }
   item.qaFailRounds = (item.qaFailRounds || 0) + 1; delete item.qaPassedAt;
@@ -183,7 +191,11 @@ function applyMilestone(team, item, k, log, busy = []) {
   for (const label of item.flow) { if ([po.PO, 'Fixer'].includes(typeOf(label))) continue; const config = worker(item, label); if (milestone.blocks.includes(label)) delete config.idle; else config.idle = true; }
   migrateRoleConfig(team, item); item.roleConfig ||= {};
   for (const label of item.flow) { const body = po.responsibilityFor(plan, label); if (body) item.roleConfig[label] = { ...item.roleConfig[label], instructions: body }; }
-  const gd = item.flow.find(label => typeOf(label) === 'GD'); if (gd) worker(item, gd).task = milestone.gd;
+  const gd = item.flow.find(label => typeOf(label) === 'GD'); if (gd) worker(item, gd).task = po.gdTask(milestone);
+  // Điểm bắt đầu mốc: khi mốc xong, app đếm lượt/lỗi/Issue từ đây để PO xem lại kế hoạch các mốc sau (po.milestoneReport).
+  item.poPlan.mark = { messages: (item.messages || []).length, issues: (item.issues || []).length, round: item.round || 1, at: new Date().toISOString() };
+  // Nhánh của mốc (po.parseLanes): sơ đồ mặc định dựng thành làn; mốc không chia nhánh thì chạy như thường.
+  if (milestone.lanes?.length) item.lanes = milestone.lanes; else delete item.lanes;
   item.poPlan.current = k; flowgraph.syncGraph(item);
   const idle = item.flow.filter(label => worker(item, label).idle);
   log('Hệ thống', `Kế hoạch PO · mốc ${k + 1}/${plan.milestones.length}: ${milestone.title}. ${notes.length ? notes.join(', ') + '. ' : ''}${idle.length ? 'Tạm nghỉ: ' + idle.join(', ') + '. ' : ''}GD nhận phần việc của mốc.`);
@@ -191,8 +203,19 @@ function applyMilestone(team, item, k, log, busy = []) {
 // Đề xuất mới (main.cjs gọi sau lượt PO có khối team hợp lệ). Chưa đổi đội cho tới khi duyệt.
 function proposePlan(item, payload, log) {
   if (!payload.plan?.milestones?.length) throw Error('Kế hoạch PO không hợp lệ');
-  item.poPlan = { ...(item.poPlan?.status === 'approved' ? { previous: { plan: item.poPlan.plan, current: item.poPlan.current } } : {}), status: 'proposed', plan: payload.plan, steps: payload.steps || [], previews: payload.previews || [], proposedAt: new Date().toISOString() };
-  delete item.poProblems; log('Hệ thống', `PO đề xuất kế hoạch đội ${payload.plan.milestones.length} mốc; chờ bạn duyệt.`);
+  // startAt: đề xuất khi xem lại sau một mốc (main.cjs finishPoReview) — các mốc trước startAt đã xong và giữ nguyên.
+  const review = Number.isInteger(payload.startAt) && payload.startAt > 0 && item.poPlan?.status === 'approved';
+  const previous = item.poPlan?.status === 'approved' ? { previous: { plan: item.poPlan.plan, current: item.poPlan.current, mark: item.poPlan.mark, reviewed: item.poPlan.reviewed } } : {};
+  item.poPlan = { ...previous, status: 'proposed', plan: payload.plan, steps: payload.steps || [], previews: payload.previews || [], proposedAt: new Date().toISOString(), ...(review ? { startAt: payload.startAt } : {}) };
+  delete item.poProblems;
+  log('Hệ thống', review ? `PO đề xuất chỉnh các mốc còn lại (từ mốc ${payload.startAt + 1}); chờ bạn duyệt.` : `PO đề xuất kế hoạch đội ${payload.plan.milestones.length} mốc; chờ bạn duyệt.`);
+}
+// Bỏ đề xuất đang chờ, quay lại kế hoạch đã duyệt trước đó (giữ mốc hiện tại, điểm bắt đầu mốc và mốc đã xem lại).
+const restorePlan = item => { const old = item.poPlan.previous; item.poPlan = { status: 'approved', plan: old.plan, current: old.current, ...(old.mark ? { mark: old.mark } : {}), ...(old.reviewed !== undefined ? { reviewed: old.reviewed } : {}) }; };
+// Giữ kế hoạch cũ khi PO đề xuất chỉnh sau một mốc: chạy tiếp mốc sau theo kế hoạch đã duyệt (main.cjs đọc poPlan.resume).
+function keepPlan(item, log) {
+  if (item.poPlan?.status !== 'proposed' || item.poPlan.startAt === undefined) throw Error('Không có đề xuất chỉnh kế hoạch chờ duyệt');
+  restorePlan(item); item.poPlan.resume = true; log('Hệ thống', 'Giữ kế hoạch PO đã duyệt; chạy tiếp mốc sau.'); return true;
 }
 // Loại sản phẩm PO chọn: preset (pla → PLA) thì mọi khối có cấu hình preset nhận mục đích đó; game thì bỏ preset, engine, Spine.
 // Kế hoạch không ghi product hoặc trùng preset hiện có thì giữ nguyên (kể cả mục đích người dùng đã đổi tay ở panel khối).
@@ -215,6 +238,12 @@ function chooseProduct(item, product, log) {
 function approvePlan(team, item, payload, log) {
   if (item.poPlan?.status !== 'proposed') throw Error('Không có kế hoạch PO chờ duyệt');
   if (busyOf(payload).some(label => typeOf(label) !== po.PO)) throw Error('Còn khối đang chạy; đợi xong rồi duyệt kế hoạch');
+  // Duyệt bản chỉnh sau một mốc: thay các mốc còn lại, giữ mốc vừa xong là mốc hiện tại; main.cjs chạy tiếp mốc sau (resume).
+  if (item.poPlan.startAt !== undefined) {
+    const { plan, startAt, previous } = item.poPlan;
+    item.poPlan = { status: 'approved', plan, current: startAt - 1, reviewed: startAt - 1, ...(previous?.mark ? { mark: previous.mark } : {}), approvedAt: new Date().toISOString(), resume: true };
+    log('Hệ thống', `Đã duyệt kế hoạch PO chỉnh từ mốc ${startAt + 1}; chạy tiếp.`); return true;
+  }
   item.poPlan.status = 'approved'; item.poPlan.approvedAt = new Date().toISOString(); delete item.poPlan.previous;
   log('Hệ thống', 'Đã duyệt kế hoạch đội của PO (gồm thay đổi khối ở các mốc sau; app tự áp khi tới mốc, không hỏi lại).');
   setProduct(item, item.poProduct || item.poPlan.plan.product, log, item.poProduct ? 'lựa chọn của bạn' : 'kế hoạch PO');
@@ -223,7 +252,9 @@ function approvePlan(team, item, payload, log) {
 function rejectPlan(item, payload, log) {
   if (item.poPlan?.status !== 'proposed') throw Error('Không có kế hoạch PO chờ duyệt');
   const reason = typeof payload.reason === 'string' ? payload.reason.trim().slice(0, 2000) : ''; item.poProblems = reason || 'người dùng từ chối kế hoạch';
-  if (item.poPlan.previous) item.poPlan = { status: 'approved', plan: item.poPlan.previous.plan, current: item.poPlan.previous.current }; else delete item.poPlan;
+  // Từ chối bản chỉnh sau một mốc: PO xem lại lần nữa với lý do này (main.cjs đọc poPlan.reviewing).
+  const review = item.poPlan.startAt !== undefined;
+  if (item.poPlan.previous) { restorePlan(item); if (review) item.poPlan.reviewing = true; } else delete item.poPlan;
   log('Hệ thống', 'Từ chối kế hoạch đội của PO' + (reason ? ': ' + reason : '') + '. Lượt PO sau sẽ nhận lý do này.'); return true;
 }
 // Mốc kế tiếp (pipeline gọi khi luồng tới Hoàn tất): áp và báo true; hết mốc thì false.
@@ -272,6 +303,7 @@ function update(team, action, payload) {
   if (action === 'po-propose') { proposePlan(item, payload, log); return true; }
   if (action === 'po-approve') return approvePlan(team, item, payload, log);
   if (action === 'po-reject') return rejectPlan(item, payload, log);
+  if (action === 'po-keep') return keepPlan(item, log);
   if (action === 'po-next') return nextMilestone(team, item, payload, log);
   if (action === 'po-product') { chooseProduct(item, payload.product, log); return true; }
   // Công cụ sinh ảnh của Art (dùng chung mọi session): 'chatgpt' = Art viết prompt chi tiết, người dùng tạo ảnh bằng ChatGPT;
@@ -319,7 +351,7 @@ function update(team, action, payload) {
   else if (action === 'message') { const content = text(payload.text); if (!item.messages.some(message => message.role === 'Bạn')) item.title = content.replace(/\s+/g, ' ').slice(0, 70); log('Bạn', content); }
   else if (action === 'start') { if (item.status !== 'waiting') throw Error('Bước không ở trạng thái chờ'); item.status = 'working'; log('Hệ thống', 'Bắt đầu thủ công: ' + item.flow[item.stage]); }
   else if (action === 'handoff') handoff(item, text(payload.text), log, payload.auto === true);
-  else if (action === 'issue') reportIssue(item, text(payload.text), log, payload.sameRound === true);
+  else if (action === 'issue') reportIssue(item, text(payload.text), log, payload.sameRound === true, (item.lanes || []).some(lane => lane.name === payload.lane) ? payload.lane : '');
   else if (action === 'tweak') requestTweak(item, text(payload.text), log);
   else if (action === 'review-reject') reviewReject(item, text(payload.text), log);
   else if (action === 'decision') decide(item, payload.choice, log);

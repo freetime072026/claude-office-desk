@@ -35,20 +35,25 @@
       if (plan?.status === 'approved') { const milestone = plan.plan.milestones[plan.current ?? 0]; get('#po-status').textContent = `Kế hoạch PO · mốc ${(plan.current ?? 0) + 1}/${plan.plan.milestones.length}: ${milestone?.title || ''}`; }
       box.hidden = plan?.status !== 'proposed'; if (box.hidden) { box.dataset.key = ''; return; }
       const key = thread.id + plan.proposedAt + (thread.poProduct || '') + (thread.preset || ''); if (box.dataset.key === key) return; box.dataset.key = key;
-      const body = [make('h3', { textContent: `Kế hoạch đội của PO · ${plan.plan.milestones.length} mốc · chờ bạn duyệt` })];
+      // startAt: PO chỉnh các mốc còn lại sau khi một mốc xong; các mốc trước đó đã chạy nên không hiện lại.
+      const review = Number.isInteger(plan.startAt), first = review ? plan.startAt : 0;
+      const body = [make('h3', { textContent: review ? `PO đề xuất chỉnh kế hoạch từ mốc ${first + 1}/${plan.plan.milestones.length} · chờ bạn duyệt` : `Kế hoạch đội của PO · ${plan.plan.milestones.length} mốc · chờ bạn duyệt` })];
       // Loại sản phẩm: duyệt thì app đặt preset của session theo đó (PLA: khối dùng trách nhiệm PLA); không ghi thì giữ preset hiện có.
       // Loại bạn chọn ở panel khối PO (thread.poProduct) thắng product trong kế hoạch.
       const names = { game: 'Game', pla: 'Playable Ads (PLA)' }, chosen = thread.poProduct || plan.plan.product, product = names[chosen];
       const source = thread.poProduct ? ' · bạn chọn ở panel khối PO' : plan.plan.product ? ' · PO chọn, đổi ở panel khối PO' : '';
       body.push(make('p', { className: 'po-product', textContent: 'Loại sản phẩm: ' + (product ? product + (chosen === 'game' ? '' : ' (các khối dùng trách nhiệm và giới hạn của preset này)') : 'giữ như session hiện tại (' + (thread.preset ? names.pla : names.game) + ')') + source }));
       if (plan.plan.summary) body.push(make('p', { className: 'po-summary', textContent: plan.plan.summary }));
-      body.push(make('p', { className: 'po-note', textContent: 'Duyệt một lần cho cả kế hoạch: khối cần ở mốc sau sẽ được thêm, khối không còn cần sẽ bị xoá, khối không dùng ở một mốc sẽ tạm nghỉ, khi tới mốc đó app tự làm và không hỏi lại.' }));
+      body.push(make('p', { className: 'po-note', textContent: (review ? 'Mốc đã xong giữ nguyên; các mốc từ đây thay bằng bản PO chỉnh theo số liệu thật của mốc vừa xong. ' : 'Duyệt một lần cho cả kế hoạch: ') + 'khối cần ở mốc sau sẽ được thêm, khối không còn cần sẽ bị xoá, khối không dùng ở một mốc sẽ tạm nghỉ. Mỗi mốc xong, PO xem lại các mốc sau và chỉ hỏi lại bạn khi muốn đổi.' }));
       plan.plan.milestones.forEach((milestone, index) => {
-        const step = plan.steps[index] || { add: [], remove: [], idle: [] }, section = make('details', { className: 'po-milestone', open: index === 0 });
+        if (index < first) return;
+        const step = plan.steps[index] || { add: [], remove: [], idle: [] }, section = make('details', { className: 'po-milestone', open: index === first });
         section.append(make('summary', { textContent: `Mốc ${index + 1}: ${milestone.title}` }));
         if (milestone.goal) section.append(make('p', { textContent: 'Mục tiêu: ' + milestone.goal }));
         section.append(...[chips('Khối hoạt động', milestone.blocks, 'active'), chips('Thêm', step.add, 'add'), chips('Xoá', step.remove, 'remove'), chips('Tạm nghỉ', step.idle, 'idle')].filter(Boolean));
         if (milestone.reasons) section.append(make('p', { className: 'po-reasons', textContent: 'Lý do: ' + milestone.reasons }));
+        // Hạng mục PO ước lượng (po.cjs requirements): loại việc, cỡ S/M/L và khối phụ trách.
+        if (milestone.requirements?.length) { const list = make('details', { className: 'po-requirements' }); list.append(make('summary', { textContent: `Hạng mục (${milestone.requirements.length})` }), ...milestone.requirements.map(item => make('p', { textContent: `${item.id} · ${item.kind} · ${item.size} · ${item.owners.join(', ')}: ${item.text}` }))); section.append(list); }
         if (plan.previews?.[index]) section.append(preview(plan.previews[index], step));
         const gd = make('details', { className: 'po-gd' }); gd.append(make('summary', { textContent: 'Phần giao GD' }), make('pre', { textContent: milestone.gd })); section.append(gd);
         body.push(section);
@@ -58,7 +63,13 @@
       const reason = make('input', { type: 'text', placeholder: 'Lý do từ chối (PO sẽ nhận ở lượt sau)', className: 'po-reason' });
       const approve = make('button', { type: 'button', className: 'primary', textContent: 'Duyệt kế hoạch đội' }), reject = make('button', { type: 'button', textContent: 'Từ chối' });
       approve.onclick = () => act('po-approve'); reject.onclick = () => act('po-reject', { reason: reason.value });
-      const actions = make('div', { className: 'po-actions' }); actions.append(approve, reject, reason); body.push(actions);
+      const actions = make('div', { className: 'po-actions' });
+      if (review) {
+        approve.textContent = 'Duyệt thay đổi'; reject.textContent = 'Từ chối, PO làm lại'; reason.placeholder = 'Lý do (PO xem lại theo lý do này)';
+        const keep = make('button', { type: 'button', textContent: 'Giữ kế hoạch cũ' }); keep.onclick = () => act('po-keep');
+        actions.append(approve, keep, reject, reason);
+      } else actions.append(approve, reject, reason);
+      body.push(actions);
       box.replaceChildren(...body);
     }
   };

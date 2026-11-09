@@ -4,7 +4,7 @@ const po = require('../po.cjs');
 const { initial, update } = require('../team.cjs');
 const { buildPrompt } = require('../prompt.cjs');
 const { filesOf } = require('../session-files.cjs');
-const fence = value => '```team\n' + JSON.stringify(value) + '\n```';
+const { teamFence: fence } = require('./plan-helper.cjs');
 const PLAN = {
   summary: 'Game TD hai mốc',
   milestones: [
@@ -44,11 +44,11 @@ test('approve applies milestone 1 (blocks, responsibilities, GD task); next mile
   assert.throws(() => update(team, 'po-approve', { id, busy: ['GD'] }), /đang chạy/);
   update(team, 'po-approve', { id, busy: [] });
   assert.deepEqual(thread.flow, ['PO', 'GD', 'UI/UX', 'Lead Dev', 'Dev', 'Dev #2', 'QA']);
-  assert.equal(thread.workers.GD.task, 'Thiết kế vòng chơi cơ bản');
+  assert.match(thread.workers.GD.task, /^Thiết kế vòng chơi cơ bản\n\nHạng mục của mốc[\s\S]*- T1-Dev \(code, M; Dev\)/, 'GD gets the milestone items with the brief');
   assert.equal(thread.roleConfig['Dev #2'].instructions, 'Chỉ làm UI'); assert.equal(thread.roleConfig.Dev.instructions, 'Chỉ làm gameplay');
   assert.equal(update(team, 'po-next', { id, busy: [] }), true);
   assert.deepEqual(thread.flow, ['PO', 'GD', 'Lead Dev', 'Dev', 'Art', 'QA', 'Release']);
-  assert.equal(thread.workers.GD.task, 'Thiết kế art và hiệu ứng'); assert.equal(thread.roleConfig.Art.instructions, 'Sprite 64px');
+  assert.match(thread.workers.GD.task, /^Thiết kế art và hiệu ứng\n/); assert.equal(thread.roleConfig.Art.instructions, 'Sprite 64px');
   assert.equal(thread.poPlan.current, 1); assert.equal(update(team, 'po-next', { id, busy: [] }), false);
   assert.match(po.planMarkdown(thread.poPlan.plan, 1), /## Mốc 2: Art \(đang chạy\)[\s\S]*### Giao GD/);
 });
@@ -80,7 +80,7 @@ test('auto run: idle blocks are skipped and reaching Hoàn tất starts the next
   await auto.runStage(thread, 'GD'); assert.deepEqual(sent, ['GD']);
   await auto.after(thread, 'GD', { text: '```handoff\n{"status":"done","summary":"ok"}\n```' });
   assert.ok(thread.messages.some(message => /QA tạm nghỉ ở mốc này/.test(message.text))); assert.equal(thread.workers.QA.idle, undefined); // mốc B dùng lại QA
-  assert.equal(thread.poPlan.current, 1); assert.equal(thread.workers.GD.task, 'mốc B'); assert.deepEqual(sent, ['GD', 'GD']);
+  assert.equal(thread.poPlan.current, 1); assert.match(thread.workers.GD.task, /^mốc B/); assert.deepEqual(sent, ['GD', 'GD']);
   assert.equal(thread.status, 'working'); assert.ok(thread.messages.some(message => /Sang mốc 2\/2/.test(message.text)));
 });
 test('parsePlan reads product (game or a preset key) and rejects unknown products', () => {

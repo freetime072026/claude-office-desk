@@ -145,11 +145,14 @@ function permissionResult(decision, input) { return decision?.allow ? { behavior
 // Khi đó 'close' của tiến trình không bao giờ đến: tin kẹt "đang chạy", task và nút sơ đồ đứng mãi. Tiến trình đã thoát thì chờ một
 // chút cho dữ liệu còn lại đọc xong, rồi đóng pipe phía app để 'close' (và mọi xử lý kết thúc lượt) chạy.
 const EXIT_GRACE_MS = 3000;
+// Giữ khoá tool (Penpot) qua cả chuỗi gọi liền nhau của một lượt: import_image và shape mới nằm ở page đang mở, nên khối khác
+// không được chen vào đổi page giữa hai lần gọi. Chuỗi hết khi lượt gọi tool khác, trả kết quả, hoặc quá thời gian này không gọi tiếp.
+const LOCK_LEASE_MS = 30000;
 const RESULT_EXIT_MS = 30000;
 function closeAfterExit(child, grace = EXIT_GRACE_MS) {
   child.once('exit', () => { const timer = setTimeout(() => { for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy(); }, grace); timer.unref?.(); child.once('close', () => clearTimeout(timer)); });
 }
-function launch({ brief = '', mcpConfig = null, executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [], resultExitMs = RESULT_EXIT_MS, toolLock = null, lockedServers = [] }) {
+function launch({ brief = '', mcpConfig = null, executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [], resultExitMs = RESULT_EXIT_MS, toolLock = null, lockedServers = [], lockLeaseMs = LOCK_LEASE_MS }) {
   const message = { id: randomUUID(), role: role || 'Claude', text: '', time: new Date().toISOString(), streaming: true };
   message.progress = { startedAt: message.time, steps: 0, lastTool: '', target: '' };
   thread.messages.push(message);
@@ -171,7 +174,21 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
   // toolLock (penpot.createLock): tool của lockedServers bị bỏ khỏi --allowedTools để CLI hỏi app trước mỗi lần gọi; app giữ khoá
   // từ lúc cho phép tới khi có tool_result (hoặc hết lượt). Tool vốn được cho phép sẵn thì không hiện hộp duyệt.
   const preAllowed = new Set(String(allowedFor(thread.mode, mcpServers)).split(',')), held = new Set();
-  const releaseHeld = id => { if (held.delete(id)) toolLock.release(message.id, id); };
+  const LEASE = '~chuoi'; let leaseTimer = null;
+  const lockedTool = tool => lockedServers.some(name => String(tool || '').startsWith('mcp__' + name + '__'));
+  const endLease = () => { clearTimeout(leaseTimer); leaseTimer = null; if (held.delete(LEASE)) toolLock.release(message.id, LEASE); };
+  const releaseAll = () => { clearTimeout(leaseTimer); leaseTimer = null; held.clear(); toolLock.releaseRun(message.id); };
+  const releaseHeld = id => {
+    if (!held.delete(id)) return; toolLock.release(message.id, id);
+    if (held.has(LEASE) && held.size === 1) { clearTimeout(leaseTimer); leaseTimer = setTimeout(endLease, lockLeaseMs); leaseTimer.unref?.(); }
+  };
+  // Lượt bắt đầu gọi tool không có khoá (Bash, Read…): chuỗi gọi Penpot đã xong.
+  const watchTools = event => {
+    if (!held.has(LEASE)) return;
+    const names = event.type === 'stream_event' && event.event?.type === 'content_block_start' && event.event.content_block?.type === 'tool_use' ? [event.event.content_block.name]
+      : event.type === 'assistant' && Array.isArray(event.message?.content) ? event.message.content.filter(block => block.type === 'tool_use').map(block => block.name) : [];
+    if (names.some(name => !lockedTool(name))) endLease();
+  };
   thread.cliSessions ||= {};
   const key = resumeKey(profileId, thread.folder, role);
   // resume=false: role làm việc theo tệp .md mở phiên mới mỗi lượt thay vì kéo dài một phiên phình mãi.
@@ -199,22 +216,23 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
         if (holder && holder.run !== message.id) { delete progress.waiting; progress.lockWait = holder.label || 'khối khác'; publish(); }
         await toolLock.acquire(message.id, lockKey, message.role);
         if (ended) { toolLock.release(message.id, lockKey); throw Error('Lượt đã kết thúc.'); }
-        held.add(lockKey);
+        held.add(lockKey); clearTimeout(leaseTimer); leaseTimer = null;
+        if (!held.has(LEASE)) { await toolLock.acquire(message.id, LEASE, message.role); held.add(LEASE); }
       }
     } catch (error) { decision = { allow: false, message: error.message }; }
     delete progress.waiting; delete progress.lockWait; if (!decision?.allow) message.denied = [...(message.denied || []), request.tool_name];
     send(controlReply(requestId, permissionResult(decision, request.input))); publish();
   }
-  const parse = line => { try { const event = JSON.parse(line); if (event.type === 'control_request') { control(event); return; } const id = consume(message, event, seen); if (id) thread.cliSessions[key] = id; if (held.size && event.type === 'user' && Array.isArray(event.message?.content)) for (const block of event.message.content) if (block.type === 'tool_result') releaseHeld(block.tool_use_id); if (event.type === 'result') { if (toolLock) { held.clear(); toolLock.releaseRun(message.id); } const turn = turnUsage(message.usage, totals[resumedId], Boolean(resumedId)); message.usage = turn.usage; if (id) recordTotal(totals, id, turn.total); child.stdin.end(); afterResult(); } if (event.type === 'rate_limit_event') { const usagePath = path.join(directory, 'usage.json'); let previous = {}; try { previous = JSON.parse(fs.readFileSync(usagePath, 'utf8')); } catch {} const usage = usageEvent(event, previous); if (usage) fs.writeFileSync(usagePath, JSON.stringify(usage)); } } catch {} };
+  const parse = line => { try { const event = JSON.parse(line); if (event.type === 'control_request') { control(event); return; } const id = consume(message, event, seen); if (id) thread.cliSessions[key] = id; if (held.size) watchTools(event); if (held.size && event.type === 'user' && Array.isArray(event.message?.content)) for (const block of event.message.content) if (block.type === 'tool_result') releaseHeld(block.tool_use_id); if (event.type === 'result') { if (toolLock) releaseAll(); const turn = turnUsage(message.usage, totals[resumedId], Boolean(resumedId)); message.usage = turn.usage; if (id) recordTotal(totals, id, turn.total); child.stdin.end(); afterResult(); } if (event.type === 'rate_limit_event') { const usagePath = path.join(directory, 'usage.json'); let previous = {}; try { previous = JSON.parse(fs.readFileSync(usagePath, 'utf8')); } catch {} const usage = usageEvent(event, previous); if (usage) fs.writeFileSync(usagePath, JSON.stringify(usage)); } } catch {} };
   child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
   child.stdout.on('data', chunk => { pending += chunk; if (pending.length > 5 * 1024 * 1024) { pending = ''; errors = 'CLI xuất dữ liệu vượt giới hạn'; child.kill(); return; } const lines = pending.split(/\r?\n/); pending = lines.pop(); for (const line of lines) parse(line); publish(); });
   child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-6000); });
   // stdin giữ mở tới khi CLI trả event result (để trả lời yêu cầu duyệt), rồi đóng để CLI thoát.
   child.stdin.on('error', () => {}); send(userLine(prompt));
-  const finish = code => { if (ended) return; ended = true; if (toolLock) { held.clear(); toolLock.releaseRun(message.id); } for (const file of [briefFile, mcpFile]) if (file) fs.rm(file, { force: true }, () => {}); if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0 && !message.killedAfterResult) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
+  const finish = code => { if (ended) return; ended = true; if (toolLock) releaseAll(); for (const file of [briefFile, mcpFile]) if (file) fs.rm(file, { force: true }, () => {}); if (pending.trim()) parse(pending); message.streaming = false; delete message.deltaSeen; message.progress.finishedAt = new Date().toISOString(); const stderr = cleanStderr(errors); if (code !== 0 && !message.killedAfterResult) { message.error = true; message.text += '\n' + (stderr || CLI_FAILED_TEXT); } if (!message.text) message.text = stderr || CLI_EMPTY_TEXT; save(); publish(); };
   child.on('error', error => { errors = error.message; finish(1); }); child.on('close', finish); closeAfterExit(child);
   // CLI thoát: dọn dev server / trình duyệt mà lệnh Bash của lượt bỏ lại (proc-tree.cjs), để lượt sau không bị chiếm cổng.
   const launchedAt = Date.now(); child.once('exit', () => { killLeftovers(child.pid, launchedAt).catch(() => {}); });
   return { child, cancel: () => { if (child.pid && !ended) execFile(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); }, message };
 }
-module.exports = { BASH_TIMEOUTS, consume, launch, closeAfterExit, targetOf, usageOf, turnUsage, cleanStderr, permissionResult, userLine, CLI_FAILED_TEXT, CLI_EMPTY_TEXT };
+module.exports = { LOCK_LEASE_MS, BASH_TIMEOUTS, consume, launch, closeAfterExit, targetOf, usageOf, turnUsage, cleanStderr, permissionResult, userLine, CLI_FAILED_TEXT, CLI_EMPTY_TEXT };

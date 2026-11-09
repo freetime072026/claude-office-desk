@@ -219,6 +219,7 @@ app.whenReady().then(() => {
     send: (thread, label, text) => handleDesk(null, 'chat-send', { id: thread.id, role: label, text, auto: true }),
     pump: pumpThread, isRunning, approve: approveAuto, recordTasks,
     incident: (thread, incident) => scheduleFix(thread, incident),
+    reviewMilestone: thread => reviewMilestone(thread),
     nextMilestone: thread => { const applied = teamStore.update(metadata.team, 'po-next', { id: thread.id, busy: busyLabels(thread) }); if (applied) writePoPlan(thread); return applied; },
     newRound: (thread, round, summary) => { try { sessionFiles.appendRound(thread, round, summary); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } },
     log: (thread, role, text) => thread.messages.push({ role, text, time: new Date().toISOString() }),
@@ -300,11 +301,40 @@ app.whenReady().then(() => {
   }
   // ---- Kế hoạch đội của PO (po.cjs, team.cjs). Xem trước: sơ đồ mặc định của đội ở từng mốc (chỉ để hiện trong thẻ duyệt).
   function proposePoPlan(thread, textValue) {
-    const problems = [], plan = po.parsePlan(textValue, problems);
+    const problems = [], plan = po.parsePlan(textValue, problems, { folder: thread.folder || '' });
     if (!plan) { if (/\`\`\`team/.test(textValue) || !thread.poPlan) { thread.poProblems = problems.join('; '); thread.messages.push({ role: 'Điều phối', text: `PO chưa xuất kế hoạch đội hợp lệ (${thread.poProblems}). Lượt PO sau sẽ nhận lý do này.`, time: new Date().toISOString() }); } return; }
     const steps = po.timeline(plan, thread.flow);
-    const previews = steps.map(step => { const graph = flowgraphLib.defaultGraph({ ...thread, flow: step.flow, workers: {} }); return { nodes: graph.nodes.map(({ id, label, phase, x, y }) => ({ id, label, ...(phase ? { phase } : {}), x, y })), edges: graph.edges.map(({ from, to, when }) => ({ from, to, when })) }; });
-    teamStore.update(metadata.team, 'po-propose', { id: thread.id, plan, steps, previews });
+    teamStore.update(metadata.team, 'po-propose', { id: thread.id, plan, steps, previews: previewsOf(thread, plan.milestones, steps) });
+  }
+  const previewsOf = (thread, milestones, steps) => steps.map((step, index) => { const graph = flowgraphLib.defaultGraph({ ...thread, flow: step.flow, workers: {}, lanes: milestones[index].lanes }); return { nodes: graph.nodes.map(({ id, label, phase, lane, x, y }) => ({ id, label, ...(phase ? { phase } : {}), ...(lane ? { lane } : {}), x, y })), edges: graph.edges.map(({ from, to, when }) => ({ from, to, when })) }; });
+  // ---- PO xem lại kế hoạch khi một mốc xong (po.milestoneReport/reviewPrompt): PO giữ kế hoạch thì chạy tiếp mốc sau; PO đề xuất chỉnh
+  // các mốc còn lại thì chờ bạn duyệt (duyệt hoặc giữ kế hoạch cũ → chạy tiếp; từ chối → PO xem lại lần nữa với lý do).
+  const poLabelOf = thread => thread.flow.find(label => getWorker(thread, label).type === po.PO);
+  const REVIEW_TRIES = 3;
+  function reviewMilestone(thread) {
+    const plan = thread.poPlan, current = plan?.current ?? 0;
+    if (!poLabelOf(thread) || plan?.status !== 'approved' || current + 1 >= plan.plan.milestones.length || plan.reviewed === current) return false;
+    plan.reviewed = current; plan.reviewing = true; delete plan.reviewTries; delete thread.poProblems;
+    background(thread, () => startPoReview(thread)); return true;
+  }
+  function startPoReview(thread) {
+    const plan = thread.poPlan, label = poLabelOf(thread); if (!plan?.reviewing || !label) return;
+    const text = po.reviewPrompt(plan.plan, plan.current ?? 0, po.milestoneReport(thread), thread.poProblems || '');
+    return handleDesk(null, 'chat-send', { id: thread.id, role: label, text, auto: true });
+  }
+  function resumePoPlan(thread) { delete thread.poPlan?.resume; writePoPlan(thread); persist(); publish(); background(thread, () => autoRun.resumeMilestone(thread)); }
+  function finishPoReview(thread, textValue) {
+    const plan = thread.poPlan, current = plan.current ?? 0, say = text => thread.messages.push({ role: 'Điều phối', text, time: new Date().toISOString() });
+    if (!/```team/.test(textValue)) { delete plan.reviewing; say('PO giữ kế hoạch các mốc sau; chạy tiếp.'); return resumePoPlan(thread); }
+    const problems = [], next = po.parsePlan(textValue, problems, { folder: thread.folder || '' });
+    if (!next) {
+      thread.poProblems = problems.join('; '); plan.reviewTries = (plan.reviewTries || 0) + 1;
+      if (plan.reviewTries < REVIEW_TRIES) { say(`PO chỉnh kế hoạch chưa hợp lệ (${thread.poProblems}); PO làm lại.`); background(thread, () => startPoReview(thread)); return; }
+      delete plan.reviewing; say(`PO chỉnh kế hoạch ${REVIEW_TRIES} lần vẫn chưa hợp lệ (${thread.poProblems}); giữ kế hoạch đã duyệt và chạy tiếp.`); return resumePoPlan(thread);
+    }
+    const merged = po.mergeRemaining(plan.plan, current, next), steps = po.timeline(next, thread.flow);
+    const pad = Array(current + 1).fill(null);
+    teamStore.update(metadata.team, 'po-propose', { id: thread.id, plan: merged, steps: [...pad, ...steps], previews: [...pad, ...previewsOf(thread, next.milestones, steps)], startAt: current + 1 });
   }
   function writePoPlan(thread) { try { if (thread.poPlan?.status === 'approved') sessionFiles.writePlan(thread, po.planMarkdown(thread.poPlan.plan, thread.poPlan.current)); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được PO.md: ' + error.message, time: new Date().toISOString() }); } }
   // Duyệt kế hoạch: áp mốc 1, ghi PO.md, đánh dấu PO xong rồi chạy tự động từ GD.
@@ -535,7 +565,7 @@ app.whenReady().then(() => {
         if (changed) run.message.changedFiles = changed;
         if (files && isDevType(worker.type) && (handoff || changed)) { try { sessionFiles.appendChange(thread, payload.role, handoff?.status || (run.message.error ? 'lỗi' : 'không có handoff'), handoff?.summary || '', changed); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được CHANGES.md: ' + error.message, time: new Date().toISOString() }); } }
         let proposalApplied = false, planBlocked = '';
-        if (worker.type === po.PO && !run.message.error) proposePoPlan(thread, run.message.text);
+        if (worker.type === po.PO && !run.message.error) { if (thread.poPlan?.reviewing && thread.poPlan.status === 'approved') finishPoReview(thread, run.message.text); else proposePoPlan(thread, run.message.text); }
         if (worker.type === fixer.FIXER) applyFix(thread, run.message);
         // Lead (pha planning/triage) và Art Director (khi có khối tasks) giao việc; lý do kế hoạch bị từ chối được lưu và chèn vào
         // prompt lượt kế tiếp của người giao (prompt.cjs), xoá khi kế hoạch hợp lệ.
@@ -548,7 +578,7 @@ app.whenReady().then(() => {
         if (planner) {
           const result = applyPlan(thread, planner, run.message.text), problemKey = planner === LEAD ? 'planProblems' : 'adPlanProblems';
           const note = text => thread.messages.push({ role: 'Điều phối', text, time: new Date().toISOString() });
-          if (result.applied) { proposalApplied = true; delete thread[problemKey]; if (planner === LEAD) delete thread.reassign; note(planner === LEAD ? 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.' : 'Art Director đã giao task cho Art.'); }
+          if (result.applied) { proposalApplied = true; delete thread[problemKey]; if (planner === LEAD) { const lane = thread.runLane?.[payload.role]; thread.reassign = lane ? (thread.reassign || []).filter(item => item.lane !== lane) : []; if (!thread.reassign.length) delete thread.reassign; } /* lượt của một nhánh chỉ xử lý khối cần giao lại của nhánh đó */ note(planner === LEAD ? 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.' : 'Art Director đã giao task cho Art.'); }
           else if (result.blocked) { planBlocked = result.blocked; note(planBlocked); }
           else { thread[problemKey] = result.problems; note(`${planner} chưa xuất phân công tasks hợp lệ (${result.problems}); không tự đoán hoặc chạy khối nhận việc. Lượt ${planner} tiếp theo sẽ nhận lý do này.`); }
         }
@@ -586,7 +616,7 @@ app.whenReady().then(() => {
     if (action === 'team' && payload.action === 'tweak') return requestTweak(payload);
     if (action === 'team') { if (['remove-role', 'select-roles', 'apply-preset', 'po-approve'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? busyLabels(thread) : []; }
       if (['archive', 'delete'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); payload.busy = thread ? threadBusy(thread) : []; }
-      if (payload.action === 'delete') { const thread = metadata.team.threads.find(item => item.id === payload.id); const result = teamStore.update(metadata.team, 'delete', payload); if (thread) fs.rmSync(path.join(root, 'attachments', thread.id), { recursive: true, force: true }); persist(); publish(); return result; } if (payload.action === 'worker-config' && payload.profileId) profile(payload.profileId); teamStore.update(structuredClone(metadata.team), payload.action, payload); const previousProfile = payload.action === 'worker-config' ? metadata.team.threads.find(thread => thread.id === payload.id)?.workers?.[payload.role]?.profileId : ''; const result = teamStore.update(metadata.team, payload.action, payload); persist(); publish(); if (payload.action === 'po-approve') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread) background(thread, () => startPoPlan(thread)); } if (payload.action === 'decision') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread?.auto?.enabled) background(thread, () => autoRun.decide(thread, payload.choice)); } if (payload.action === 'worker-config' && payload.profileId && payload.profileId !== previousProfile) return await ensureAuth(payload.profileId); return result; }
+      if (payload.action === 'delete') { const thread = metadata.team.threads.find(item => item.id === payload.id); const result = teamStore.update(metadata.team, 'delete', payload); if (thread) fs.rmSync(path.join(root, 'attachments', thread.id), { recursive: true, force: true }); persist(); publish(); return result; } if (payload.action === 'worker-config' && payload.profileId) profile(payload.profileId); teamStore.update(structuredClone(metadata.team), payload.action, payload); const previousProfile = payload.action === 'worker-config' ? metadata.team.threads.find(thread => thread.id === payload.id)?.workers?.[payload.role]?.profileId : ''; const result = teamStore.update(metadata.team, payload.action, payload); persist(); publish(); if (['po-approve', 'po-keep', 'po-reject'].includes(payload.action)) { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread?.poPlan?.resume) resumePoPlan(thread); else if (thread && payload.action === 'po-approve') background(thread, () => startPoPlan(thread)); else if (thread?.poPlan?.reviewing && payload.action === 'po-reject') background(thread, () => startPoReview(thread)); } if (payload.action === 'decision') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (thread?.auto?.enabled) background(thread, () => autoRun.decide(thread, payload.choice)); } if (payload.action === 'worker-config' && payload.profileId && payload.profileId !== previousProfile) return await ensureAuth(payload.profileId); return result; }
     if (action === 'add') {
       if (typeof payload.name !== 'string' || !payload.name.trim() || payload.name.length > 60) throw Error('Tên cần 1–60 ký tự');
       if (metadata.profiles.length >= 20) throw Error('Tối đa 20 hồ sơ');

@@ -19,6 +19,13 @@ function misplacedIn(file, folders) {
   return exists(folders[0]) ? [] : folders.slice(1).filter(exists);
 }
 const resolvedFiles = (folder, files) => files.map(file => path.resolve(folder || '.', file) + (/[\\/]$/.test(file) ? path.sep : ''));
+// ---- Nhánh song song (thread.lanes, po.cjs): khối thuộc nhánh chỉ nhận task có tệp nằm trong thư mục của nhánh, để các nhánh
+// không đụng tệp nhau. Mục thư mục của nhánh tính là thư mục dù không có / ở cuối.
+const laneFor = (thread, label) => (thread.lanes || []).find(lane => lane.blocks.includes(label)) || null;
+const plain = value => path.resolve(value).replace(/[\\/]+$/, '').toLowerCase();
+const insideLane = (thread, lane, file) => { const target = plain(path.resolve(thread.folder || '.', file)); return lane.files.some(root => { const base = plain(path.resolve(thread.folder || '.', root)); return target === base || target.startsWith(base + path.sep); }); };
+// Nhánh của lượt người giao đang chạy (pipeline.cjs ghi thread.runLane khi chạy Lead triage / Art Director review của một nhánh).
+const runLaneOf = (thread, planner) => { const label = (thread.flow || []).find(item => typeOf(item) === planner); return (thread.lanes || []).find(lane => lane.name === thread.runLane?.[label]) || null; };
 // Thứ tự pipeline chuẩn (PLAN L-4). Role tùy chỉnh luôn đứng sau QA.
 const PIPELINE = Object.freeze(['PO', 'GD', 'UI/UX', 'Art Director', 'Lead Dev', 'Dev', 'VFX', 'Art', 'Anim', 'Sound', 'QA', 'Release', 'Fixer']);
 const LEAD = 'Lead Dev';
@@ -107,7 +114,8 @@ const AD_TYPES = VISUAL_TYPES;
 const ownedByAd = (thread, task) => task.by === ART_DIRECTOR && hasArtDirector(thread);
 // problems nhận lý do khi kế hoạch bị từ chối, để báo cho người dùng/Lead thay vì chỉ "không hợp lệ".
 // types: loại khối được nhận task; reserved: task của người giao khác đang giữ tệp (không được chồng).
-function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [] } = {}) {
+// lane: lượt của một nhánh (Lead triage / Art Director review của nhánh) chỉ được giao khối của nhánh đó.
+function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [], lane = null } = {}) {
   const fail = reason => { problems.push(reason); return null; };
   const body = require('./fence.cjs').fenceBody(text, 'tasks'); if (body === null) return fail('không có khối tasks');
   try {
@@ -115,6 +123,7 @@ function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [
     const owners = new Set(); for (const task of plan.tasks) {
       // Lead lập kế hoạch giao Art/Anim khi có Art Director: nói rõ luật thay vì lỗi chung "không phải Dev/VFX/Sound".
       if (thread.flow.includes(task.worker) && VISUAL_TYPES.includes(worker(thread, task.worker).type) && !types.includes(worker(thread, task.worker).type) && types.includes('Dev')) return fail(`${task.worker}: ở pha lập kế hoạch, Art/Anim do Art Director giao theo ART.md; bỏ task này khỏi khối tasks (pha triage thì Lead giao được Art/Anim)`);
+      if (lane && !lane.blocks.includes(task.worker)) return fail(`lượt này là của nhánh ${lane.name}: chỉ giao cho ${lane.blocks.join(', ')}; Issue của nhánh khác do Lead triage của nhánh đó xử lý`);
       // Khối đang giữ task chưa xong của người giao kia (Art Director/Lead): không giao chồng thêm task thứ hai.
       const held = reserved.find(item => item.worker === task.worker);
       if (held) return fail(`${task.worker} đang có task ${held.by === ART_DIRECTOR ? 'Art Director' : 'Lead'} giao chưa xong (${held.status}); đợi xong hoặc giao khối khác`);
@@ -134,6 +143,8 @@ function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [
         if (owners.length) return fail(`${task.worker}: "${file.trim()}" không có trong thư mục chính (${thread.folder}) mà có trong ${owners.join(', ')}; ghi đường dẫn tuyệt đối ${owners.length === 1 ? absolute(owners[0]) : 'vào đúng project (' + owners.map(absolute).join(' hoặc ') + ')'}; nếu đúng là tạo mới trong thư mục chính thì ghi ${absolute(thread.folder)}`);
       }
       if (task.files.length > FILES_PER_TASK) return fail(`${task.worker}: ${task.files.length} tệp, tối đa ${FILES_PER_TASK} mỗi task; chia cho thêm Dev hoặc làm nhiều vòng`);
+      const own = laneFor(thread, task.worker), outside = own && task.files.find(file => !insideLane(thread, own, file.trim()));
+      if (outside) return fail(`${task.worker} thuộc nhánh ${own.name}: tệp "${outside.trim().slice(0, 200)}" nằm ngoài thư mục của nhánh (${own.files.join(', ')}); giao tệp trong nhánh, việc ngoài nhánh giao cho khối của nhánh khác`);
     }
     const scopes = plan.tasks.map(task => resolvedFiles(thread.folder, task.files));
     for (const [index, scope] of scopes.entries()) { const other = scopes.findIndex((item, at) => at > index && scopesOverlap(scope, item)); if (other >= 0) return fail(`${plan.tasks[index].worker} và ${plan.tasks[other].worker} có tệp chồng nhau`); }
@@ -146,11 +157,12 @@ function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [
 // Kế hoạch của Lead (Dev/VFX; cả Art/Anim khi session không có Art Director) hoặc Art Director (Art/Anim). Thay task chưa bắt đầu của chính người
 // giao; task của người giao kia được giữ và không được chồng tệp; khối của người giao đang chạy/tạm dừng thì chưa áp. Thuần, main.cjs ghi.
 function mergePlan(thread, planner, text) {
-  const byAd = planner === ART_DIRECTOR, mine = task => byAd === ownedByAd(thread, task);
+  // Lượt của một nhánh chỉ thay task của chính nhánh đó; task (kể cả đang chạy) của nhánh khác giữ nguyên để các nhánh chạy độc lập.
+  const lane = runLaneOf(thread, planner), byAd = planner === ART_DIRECTOR, mine = task => byAd === ownedByAd(thread, task) && (!lane || lane.blocks.includes(task.worker));
   // Task người dùng dừng giữa chừng (Stop → cancelled, không có lý do) vẫn là việc chưa xong của người giao kia: giữ để /role <khối> start
   // chạy tiếp; chỉ bỏ task đã xong hoặc bị huỷ có lý do (ví dụ Lead lập lại kế hoạch).
   const others = (thread.dispatch || []).filter(task => !mine(task) && task.status !== 'finished' && !(task.status === 'cancelled' && task.error));
-  const problems = [], proposal = taskPlan(text, thread, problems, { types: byAd ? AD_TYPES : leadTypes(thread), reserved: others });
+  const problems = [], proposal = taskPlan(text, thread, problems, { types: byAd ? AD_TYPES : leadTypes(thread), reserved: others, lane });
   if (!proposal) return { problems: problems.join('; ') };
   const busy = (thread.dispatch || []).filter(task => mine(task) && BUSY_TASK.includes(task.status)).map(task => task.worker);
   if (busy.length) return { blocked: `${planner} đã xuất kế hoạch tasks hợp lệ nhưng ${busy.join(', ')} đang chạy hoặc tạm dừng nên chưa áp dụng. Chờ khối đó xong (hoặc dừng nó) rồi dùng /role ${planner} start.` };

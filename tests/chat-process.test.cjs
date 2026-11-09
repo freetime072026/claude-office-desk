@@ -140,8 +140,31 @@ test('Penpot tools leave --allowedTools, wait for the shared lock without a dial
   await new Promise((resolve, reject) => { started.child.once('error', reject); started.child.once('close', resolve); });
   assert.deepEqual(asked, [], 'a pre-allowed Penpot tool needs no dialog');
   assert.match(message.text, /^mcp__penpot__export_shape allow/); assert.equal(message.progress.lockWait, undefined);
-  assert.deepEqual(seen, [['release', 'tool-1', '']], 'released at tool_result, before the answer streamed');
-  assert.equal(lock.holder(), null);
+  assert.deepEqual(seen, [['release', 'tool-1', '']], 'the call key goes at tool_result, before the answer streamed');
+  assert.equal(lock.holder(), null, 'the chain lease ends with the result');
   const args = JSON.parse((await run('[args]', undefined, 'edit')).messages[0].text);
   assert.doesNotMatch(args[args.indexOf('--allowedTools') + 1], /penpot/);
+});
+
+// Chuỗi gọi Penpot: khoá giữ sau tool_result để khối khác không đổi page giữa hai lần gọi; hết khi gọi tool khác hoặc quá hạn.
+async function leaseRun(prompt, lockLeaseMs) {
+  const { createLock } = require('../penpot.cjs');
+  const lock = createLock(), log = [], thread = { folder: __dirname, messages: [], mode: 'edit', model: 'sonnet' };
+  const spy = { ...lock, release: (run, key) => { lock.release(run, key); log.push([key, thread.messages[0].text, lock.holder()?.run === run]); } };
+  const started = launch({ executable: path.join(__dirname, 'fake-cli.cmd'), directory: __dirname, settings: 'unused.json', mcp: 'unused.json', mcpServers: ['penpot'], thread, profileId: 'test-profile', prompt, save: () => {}, publish: () => {}, askPermission: async () => ({ allow: true }), toolLock: spy, lockedServers: ['penpot'], lockLeaseMs });
+  await new Promise((resolve, reject) => { started.child.once('error', reject); started.child.once('close', resolve); });
+  return { log, lock };
+}
+test('a Penpot chain keeps the lock after tool_result and ends when the run starts another tool', { skip, timeout: 20000 }, async () => {
+  const { log, lock } = await leaseRun('[ask:mcp__penpot__import_image] [then:Bash] [pause]', 60000);
+  assert.deepEqual(log, [['tool-1', '', true], ['~chuoi', '', false]], 'still held after the call, freed when Bash starts, before the answer');
+  assert.equal(lock.holder(), null);
+});
+test('a Penpot chain lease runs out when the run stops calling Penpot for a while', { skip, timeout: 20000 }, async () => {
+  const { log } = await leaseRun('[ask:mcp__penpot__export_shape] [pause]', 50);
+  assert.deepEqual(log, [['tool-1', '', true], ['~chuoi', '', false]]);
+});
+test('the Penpot guide tells blocks not to trust the open page of the shared tab', () => {
+  const { guide } = require('../penpot.cjs');
+  assert.match(guide('Art'), /penpot\.currentPage/); assert.match(guide('Art'), /openPage/); assert.match(guide('Art'), /không dùng "page"\/"selection"/);
 });

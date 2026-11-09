@@ -1,6 +1,6 @@
 // Dựng prompt cho mọi đường chạy (chat-send, run-thread). Thuần: không Electron, không đọc file. DESIGN §8.2.
 const path = require('node:path');
-const { defaults, SHELL_TYPES, ART_DIRECTOR, ART_CONSUMER_TYPES, ART_REJECT_REASONS } = require('./roles.cjs');
+const { defaults, SHELL_TYPES, isDevType, ART_DIRECTOR, ART_CONSUMER_TYPES, ART_REJECT_REASONS } = require('./roles.cjs');
 const { GUIDE: READER_GUIDE } = require('./subagent.cjs');
 const { purposeConfig } = require('./presets.cjs');
 const { guide: penpotGuide } = require('./penpot.cjs');
@@ -159,7 +159,7 @@ function phaseGuide({ lead, phase }) { if (!lead) return ''; if (phase === 'revi
 // không cộng dồn vào lịch sử mỗi lượt). Phần đổi theo lượt (kế hoạch bị từ chối, Issue đang mở) nằm ở body.
 function briefLines(options) {
   const { label, context, task, roster } = options; if (!label) return [];
-  return [header(options), field('Trách nhiệm', context.responsibility), field('Đầu ra', context.output), field('Yêu cầu riêng của session', context.instructions), field('Task của khối', task), roster ? 'Đội hiện có:\n' + roster : '', folderRule(options), options.files?.decisions ? DECISION_RULE(options.files) : '', phaseGuide(options), fileGuide(options), options.type === 'Release' ? options.release : '', options.files ? WORK_GUIDE : '', options.files && SHELL_TYPES.includes(options.type) ? READER_GUIDE : '', SHELL_TYPES.includes(options.type) ? options.unity : '', options.penpot ? penpotGuide(options.type) : '', handoffGuide(options)];
+  return [header(options), field('Trách nhiệm', context.responsibility), field('Đầu ra', context.output), field('Yêu cầu riêng của session', context.instructions), field('Task của khối', task), roster ? 'Đội hiện có:\n' + roster : '', folderRule(options), ownLaneLine(options), options.files?.decisions ? DECISION_RULE(options.files) : '', phaseGuide(options), fileGuide(options), options.type === 'Release' ? options.release : '', options.files ? WORK_GUIDE : '', options.files && SHELL_TYPES.includes(options.type) ? READER_GUIDE : '', SHELL_TYPES.includes(options.type) ? options.unity : '', options.penpot ? penpotGuide(options.type) : '', handoffGuide(options)];
 }
 // Người giao task (Lead, Art Director) cần biết gốc của đường dẫn tương đối trong files: app resolve theo thư mục chính,
 // nên khi project nằm ở thư mục liên quan (thư mục chính là kho tài nguyên) phải ghi đường dẫn tuyệt đối.
@@ -175,6 +175,25 @@ function plannerFolders({ lead, type, folders = [] }) {
   if (!(lead || type === ART_DIRECTOR) || folders.length < 2) return '';
   return `Thư mục chính (gốc của đường dẫn tương đối trong files): ${folders[0]}. Thư mục liên quan: ${folders.slice(1).join(', ')}. Tệp nằm trong thư mục liên quan phải ghi đường dẫn tuyệt đối trong files (ví dụ D:/…/project/src/Game.ts, không phải src/Game.ts), nếu không app ghi vào thư mục chính.`;
 }
+// ---- Nhánh song song (thread.lanes, po.cjs). laneText: một dòng mô tả nhánh.
+const laneText = lane => `${lane.name}: ${lane.blocks.join(' → ')} · thư mục ${lane.files.join(', ')}${lane.penpot ? ` · Penpot page "${lane.penpot}"` : ''}`;
+// Khối làm việc thuộc nhánh (ổn định trong mốc nên nằm ở brief).
+function ownLaneLine({ ownLane }) {
+  if (!ownLane) return '';
+  return `Bạn thuộc nhánh ${ownLane.name} (${ownLane.blocks.join(' → ')}): chỉ làm phần của nhánh, trong thư mục ${ownLane.files.join(', ')}; các nhánh khác chạy song song với bạn, không sửa tệp của họ.${ownLane.penpot ? ` Penpot: chỉ tạo/sửa board trên page "${ownLane.penpot}" (mở page đó trước khi tạo shape).` : ''}`;
+}
+// Lượt theo nhánh (QA, Art Director · review, Lead triage của một nhánh) hoặc người lập kế hoạch thấy mọi nhánh.
+function laneLines({ lanes = [], runLane, type, lead, phase, adPhase }) {
+  if (!lanes.length) return '';
+  if (runLane) {
+    const extra = lead ? ' Chỉ giao task cho khối của nhánh, files trong thư mục nhánh (app từ chối khối hoặc tệp ngoài nhánh).' : type === 'QA' || type === ART_DIRECTOR ? ' Issue bạn báo thuộc nhánh này (app tự gắn nhãn nhánh); Issue của nhánh khác không phải việc lượt này.' : '';
+    return `Lượt này chỉ cho nhánh ${laneText(runLane)}. Chỉ xét các khối đó và mục của chúng trong CHANGES.md.${extra}`;
+  }
+  const planner = (lead && phase !== 'triage') || (type === ART_DIRECTOR && adPhase === 'planning');
+  if (!planner) return '';
+  const rule = lead && phase === 'review' ? 'Review xét mọi nhánh; khi reject, task của khối trong nhánh vẫn chỉ dùng files trong thư mục nhánh.' : 'Task của khối trong nhánh chỉ dùng files trong thư mục nhánh (app từ chối tệp ngoài nhánh); thứ tự trong nhánh do sơ đồ lo, không cần dependsOn giữa các khối cùng nhánh. Mỗi nhánh xong được QA và Art Director kiểm riêng.';
+  return 'Nhánh song song (mỗi khối làm việc thuộc một nhánh; trong nhánh các khối chạy theo thứ tự):\n' + lanes.map(lane => '- ' + laneText(lane)).join('\n') + '\n' + rule;
+}
 function turnLines(options) {
   if (!options.label) return [];
   const rejected = options.lead && options.planProblems ? `Kế hoạch tasks trước bị app từ chối: ${options.planProblems}. Sửa đúng lỗi này.` : '';
@@ -186,7 +205,7 @@ function turnLines(options) {
   const fixNote = options.fixNote ? 'Fixer đã chẩn đoán lần dừng trước: ' + options.fixNote : '';
   // Lead không đọc lịch sử vòng: app báo lần sửa duy nhất của mốc đã dùng chưa (pipeline.cjs reviewRejects, xoá khi sang mốc mới).
   const reviewFix = options.lead && options.phase === 'review' ? (options.reviewRejects ? 'Lần sửa duy nhất của mốc này đã dùng: không reject vì warning, chỉ ghi/đóng mục warning trong ISSUES.md.' : 'Lần sửa duy nhất của mốc này chưa dùng.') : '';
-  return [fixNote, plannerFolders(options), reviewFix, rejected, reassign, adRejected, uiuxReview, artRework, options.tweak ? tweakLine(options) : '', issueLines(options)];
+  return [fixNote, plannerFolders(options), laneLines(options), reviewFix, rejected, reassign, adRejected, uiuxReview, artRework, options.tweak ? tweakLine(options) : '', issueLines(options)];
 }
 // Vòng chỉnh sửa sau bản hoàn thiện (team.cjs requestTweak): việc nhỏ, đúng khối, không làm lại phần khác, không build bản network.
 function tweakLine({ type, lead }) {
@@ -238,7 +257,11 @@ function buildPrompt(input) {
 const ROSTER_TASK_LIMIT = 160;
 const rosterOf = thread => thread.flow.map(label => label + ': ' + clip(thread.workers?.[label]?.task || 'chưa giao task', ROSTER_TASK_LIMIT)).join('\n');
 // Điểm vào duy nhất cho main.cjs: đọc trạng thái thread rồi gọi buildPrompt.
+// Lượt theo nhánh (pipeline.cjs thread.runLane): Issue, khối cần giao lại, số vòng fail và pha QA lấy của nhánh đó.
 function rolePrompt(team, thread, label, options) {
-  return buildPrompt({ label, type: label ? labelType(thread, label) : '', issues: (thread.issues || []).filter(issue => !issue.closed && !issue.accepted), lead: Boolean(label) && labelType(thread, label) === LEAD, phase: thread.leadPhase || 'planning', round: thread.qaFailRounds || 0, context: label ? roleContext(team, thread, label) : {}, task: thread.workers?.[label]?.task || '', roster: label && labelType(thread, label) === LEAD ? rosterOf(thread) : '', devFiles: thread.workers?.[label]?.files || [], qaPhase: thread.qaPhase || 'functional', tweak: Boolean(thread.tweak), poProblems: thread.poProblems || '', preset: thread.preset || '', poProduct: thread.poProduct || '', poPlan: thread.poPlan?.status === 'approved', planProblems: thread.planProblems || '', reviewRejects: thread.reviewRejects || 0, adPlanProblems: thread.adPlanProblems || '', uiuxReview: thread.uiuxReview || '', artRework: thread.artRework || [], adPhase: thread.adPhase || 'planning', hasAd: hasArtDirector(thread), artGenerator: team?.artGenerator || 'chatgpt', reassign: thread.reassign || [], flow: thread.flow || [], messages: thread.messages || [], folders: [...new Set([thread.folder, ...(thread.relatedFolders || [])].filter(Boolean))], ...options });
+  const lanes = thread.lanes || [], runLane = lanes.find(lane => lane.name === thread.runLane?.[label]) || null, counters = runLane ? thread.laneState?.[runLane.name] || {} : thread;
+  const ownLane = label && isDevType(labelType(thread, label)) ? lanes.find(lane => lane.blocks.includes(label)) || null : null;
+  const issues = (thread.issues || []).filter(issue => !issue.closed && !issue.accepted && (!runLane || issue.lane === runLane.name));
+  return buildPrompt({ label, type: label ? labelType(thread, label) : '', issues, lanes, runLane, ownLane, lead: Boolean(label) && labelType(thread, label) === LEAD, phase: thread.leadPhase || 'planning', round: counters.qaFailRounds || 0, context: label ? roleContext(team, thread, label) : {}, task: thread.workers?.[label]?.task || '', roster: label && labelType(thread, label) === LEAD ? rosterOf(thread) : '', devFiles: thread.workers?.[label]?.files || [], qaPhase: counters.qaPhase || 'functional', tweak: Boolean(thread.tweak), poProblems: thread.poProblems || '', preset: thread.preset || '', poProduct: thread.poProduct || '', poPlan: thread.poPlan?.status === 'approved', planProblems: thread.planProblems || '', reviewRejects: thread.reviewRejects || 0, adPlanProblems: thread.adPlanProblems || '', uiuxReview: thread.uiuxReview || '', artRework: thread.artRework || [], adPhase: thread.adPhase || 'planning', hasAd: hasArtDirector(thread), artGenerator: team?.artGenerator || 'chatgpt', reassign: (thread.reassign || []).filter(item => !runLane || item.lane === runLane.name), flow: thread.flow || [], messages: thread.messages || [], folders: [...new Set([thread.folder, ...(thread.relatedFolders || [])].filter(Boolean))], ...options });
 }
 module.exports = { PROMPT_LIMITS, FILE_ROLES, roleContext, inheritedRole, buildPrompt, rolePrompt };

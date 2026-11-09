@@ -20,7 +20,12 @@ const OUTCOMES = Object.freeze(['done', 'pass', 'issue', 'reject', 'skipped', 'b
 const leadId = phase => phaseId(LEAD, phase);
 // Khoảng cách cột của sơ đồ mặc định (khối rộng 170): chừa khe ~110px cho các dây chạy dọc giữa hai cột (graph-ui.js dùng cùng số).
 const COLUMN = 280;
-const nodeLabel = node => node.id === END ? 'Hoàn tất' : node.phase ? `${node.label} · ${PHASE_NAMES[node.phase]}` : node.label;
+// Nút theo nhánh (thread.lanes, po.cjs): QA, Lead Dev · triage và Art Director · review có một nút mỗi nhánh, id "<id thường>~<nhánh>".
+const laneId = (base, lane) => `${base}~${lane}`;
+const laneNames = thread => (thread.lanes || []).map(lane => lane.name);
+const nodeLabel = node => node.id === END ? 'Hoàn tất' : [node.label, node.phase ? PHASE_NAMES[node.phase] : '', node.lane || ''].filter(Boolean).join(' · ');
+// Nút được phép gắn nhánh: QA, Lead Dev pha triage, Art Director pha review.
+const laneable = (type, phase) => (type === 'QA' && !phase) || (type === LEAD && phase === 'triage') || (type === ART_DIRECTOR && phase === 'review');
 function matches(when, outcome) {
   if (outcome === 'blocked' || !OUTCOMES.includes(outcome)) return false;
   if (when === 'always') return true;
@@ -46,38 +51,74 @@ function defaultGraph(thread) {
   if (adPlanning) { linkAll(tail, [adPlanning]); const uiux = pre.find(label => type(label) === 'UI/UX'); if (uiux) link(adPlanning, uiux, 'reject'); tail = [adPlanning]; }
   const planning = lead ? add(leadId('planning'), lead, 'planning', at(column++, 0, 1)) : '';
   if (planning) { linkAll(tail, [planning]); tail = [planning]; }
-  const devColumn = column; devs.forEach((label, row) => add(label, label, '', at(column, row, devs.length))); if (devs.length) column++;
-  if (devs.length) { linkAll(tail, devs); tail = devs; }
-  // Kiểm sau vòng Dev: QA và Art Director review chạy song song; bước sau chờ cả hai pass.
-  const adReview = ad && devs.length ? phaseId(ad, 'review') : '', checkers = [...qas, ...(adReview ? [adReview] : [])];
-  qas.forEach((label, row) => add(label, label, '', at(column, row, checkers.length)));
-  if (adReview) add(adReview, ad, 'review', at(column, qas.length, checkers.length));
-  if (checkers.length) { column++; linkAll(tail, checkers); tail = checkers; }
+  const devColumn = column;
+  // Bước kiểm (QA, Art Director · review) đi tiếp khi pass; khối làm việc đi tiếp khi xong.
+  const checkerIds = new Set(), linkOn = (froms, to) => { for (const from of froms) link(from, to, checkerIds.has(from) ? 'pass' : 'done'); };
+  // Khối nhận việc lại khi Lead review trả về hoặc Release báo lỗi mà không có Lead: khối đầu mỗi nhánh (giữ thứ tự trong nhánh) hoặc mọi Dev.
+  let fixTargets = devs;
+  const lanes = (thread.lanes || []).map(lane => ({ ...lane, blocks: lane.blocks.filter(label => devs.includes(label)) })).filter(lane => lane.blocks.length);
   // Triage đặt phía trên nút lập kế hoạch (cùng cột) để cạnh triage → Dev đi xuôi, không đè lên các Dev.
   const addTriage = () => { const top = Math.min(...nodes.filter(node => devs.includes(node.id)).map(node => node.y)); return add(leadId('triage'), lead, 'triage', { x: 40 + (devColumn - 1) * COLUMN, y: top - 120 }); };
-  const triageOf = () => nodes.find(node => node.id === leadId('triage'))?.id || (lead && devs.length ? (id => { linkAll([id], devs); return id; })(addTriage()) : '');
-  // Vòng sửa lỗi: QA issue → Lead triage → Dev (không có Lead thì QA issue → Dev).
-  if (qas.length && devs.length) {
-    if (lead) { const triage = addTriage(); linkAll(qas, [triage], 'issue'); linkAll([triage], devs); }
-    else linkAll(qas, devs, 'issue');
+  const triageOf = () => nodes.find(node => node.id === leadId('triage'))?.id || (lead && devs.length ? (id => { linkAll([id], fixTargets); return id; })(addTriage()) : '');
+  if (lanes.length) {
+    // Nhánh song song (po.cjs lanes): mỗi nhánh là một làn khối nối tiếp → QA và Art Director · review của nhánh; issue/reject chỉ quay về
+    // khối của nhánh đó (Lead triage riêng mỗi nhánh). Lead review nối từ mọi nhánh nên chờ đủ các nhánh pass.
+    const width = Math.max(...lanes.map(lane => lane.blocks.length)), perLane = Math.max(1, qas.length + (ad ? 1 : 0)), band = perLane * 100 + 60;
+    const checkColumn = column + width, x = col => 40 + col * COLUMN, ends = [];
+    lanes.forEach((lane, index) => {
+      const y = index * band, mark = { lane: lane.name }, first = lane.blocks[0], last = lane.blocks.at(-1);
+      lane.blocks.forEach((label, step) => add(label, label, '', { x: x(column + step), y }));
+      linkAll(tail, [first]); lane.blocks.slice(1).forEach((label, step) => link(lane.blocks[step], label));
+      const qaIds = qas.map((label, row) => add(laneId(label, lane.name), label, '', { x: x(checkColumn), y: y + row * 100, ...mark }));
+      const adId = ad ? add(laneId(phaseId(ad, 'review'), lane.name), ad, 'review', { x: x(checkColumn), y: y + qas.length * 100, ...mark }) : '';
+      const checks = [...qaIds, ...(adId ? [adId] : [])]; checks.forEach(id => checkerIds.add(id));
+      linkAll([last], checks); ends.push(...(checks.length ? checks : [last]));
+      const triage = lead ? add(laneId(leadId('triage'), lane.name), lead, 'triage', { x: x(checkColumn + 1), y, ...mark }) : '';
+      if (triage) link(triage, first);
+      linkAll(qaIds, [triage || first], 'issue');
+      if (adId) {
+        linkAll([adId], lane.blocks.filter(label => ['Art', 'Anim'].includes(type(label))), 'reject');
+        link(adId, triage || first, 'issue');
+        linkAll(lane.blocks.filter(label => ART_CONSUMER_TYPES.includes(type(label))), [adId], 'reject');
+      }
+    });
+    // Khối thêm tay ngoài mọi nhánh: chạy song song sau lập kế hoạch, không qua kiểm của nhánh nào.
+    const loose = devs.filter(label => !lanes.some(lane => lane.blocks.includes(label)));
+    loose.forEach((label, row) => { add(label, label, '', { x: x(column), y: (lanes.length + row) * band }); linkAll(tail, [label]); ends.push(label); });
+    fixTargets = [...lanes.map(lane => lane.blocks[0]), ...loose];
+    // Lead triage chung: Issue không thuộc nhánh nào (Release, bạn tự báo, chỉnh sửa) giao được cho khối của mọi nhánh.
+    if (lead) triageOf();
+    column = checkColumn + (lead ? 2 : 1); tail = ends;
+  } else {
+    devs.forEach((label, row) => add(label, label, '', at(column, row, devs.length))); if (devs.length) column++;
+    if (devs.length) { linkAll(tail, devs); tail = devs; }
+    // Kiểm sau vòng Dev: QA và Art Director review chạy song song; bước sau chờ cả hai pass.
+    const adReview = ad && devs.length ? phaseId(ad, 'review') : '', checkers = [...qas, ...(adReview ? [adReview] : [])];
+    qas.forEach((label, row) => add(label, label, '', at(column, row, checkers.length)));
+    if (adReview) add(adReview, ad, 'review', at(column, qas.length, checkers.length));
+    if (checkers.length) { column++; linkAll(tail, checkers); tail = checkers; checkers.forEach(id => checkerIds.add(id)); }
+    // Vòng sửa lỗi: QA issue → Lead triage → Dev (không có Lead thì QA issue → Dev).
+    if (qas.length && devs.length) {
+      if (lead) { const triage = addTriage(); linkAll(qas, [triage], 'issue'); linkAll([triage], devs); }
+      else linkAll(qas, devs, 'issue');
+    }
+    // Art Director review: ảnh/animation sai → reject kèm task Art/Anim làm lại; lỗi visual do code/layout → issue về Lead triage (hoặc Dev).
+    // Dev/VFX/Anim ghép không được ảnh đã duyệt (lệch UI/UX, thừa chi tiết, thiếu layer) → reject về Art Director review lại.
+    if (adReview) {
+      linkAll([adReview], devs.filter(label => ['Art', 'Anim'].includes(type(label))), 'reject');
+      const triage = triageOf();
+      if (triage) link(adReview, triage, 'issue'); else linkAll([adReview], devs, 'issue');
+      linkAll(devs.filter(label => ART_CONSUMER_TYPES.includes(type(label))), [adReview], 'reject');
+    }
   }
-  // Art Director review: ảnh/animation sai → reject kèm task Art/Anim làm lại; lỗi visual do code/layout → issue về Lead triage (hoặc Dev).
-  // Dev/VFX/Anim ghép không được ảnh đã duyệt (lệch UI/UX, thừa chi tiết, thiếu layer) → reject về Art Director review lại.
-  if (adReview) {
-    linkAll([adReview], devs.filter(label => ['Art', 'Anim'].includes(type(label))), 'reject');
-    const triage = triageOf();
-    if (triage) link(adReview, triage, 'issue'); else linkAll([adReview], devs, 'issue');
-    linkAll(devs.filter(label => ART_CONSUMER_TYPES.includes(type(label))), [adReview], 'reject');
-  }
-  const forward = checkers.length ? 'pass' : 'done';
-  for (const label of custom) { add(label, label, '', at(column++, 0, 1)); linkAll(tail, [label], tail === checkers ? forward : 'done'); tail = [label]; }
-  const finalWhen = tail === checkers ? forward : 'done';
-  if (lead) { const review = add(leadId('review'), lead, 'review', at(column++, 0, 1)); linkAll(tail, [review], finalWhen); linkAll([review], devs, 'reject'); tail = [review]; }
+  for (const label of custom) { add(label, label, '', at(column++, 0, 1)); linkOn(tail, label); tail = [label]; }
+  if (lead) { const review = add(leadId('review'), lead, 'review', at(column++, 0, 1)); linkOn(tail, review); linkAll([review], fixTargets, 'reject'); tail = [review]; }
   // Release sau Lead review (hoặc bước cuối): pass → Hoàn tất; issue → Lead triage giao sửa (không có Lead thì về Dev).
-  let endWhen = lead ? 'pass' : finalWhen;
+  const finalChecked = tail.length && tail.every(id => checkerIds.has(id));
+  let endWhen = lead ? 'pass' : finalChecked ? 'pass' : 'done';
   if (release) {
     add(release, release, '', at(column++, 0, 1)); linkAll(tail, [release], endWhen); tail = [release]; endWhen = 'pass';
-    const triage = triageOf(); if (triage) link(release, triage, 'issue'); else linkAll([release], devs, 'issue');
+    const triage = triageOf(); if (triage) link(release, triage, 'issue'); else linkAll([release], fixTargets, 'issue');
   }
   add(END, '', '', at(column, 0, 1)); linkAll(tail, [END], endWhen);
   // Dời cả sơ đồ để nút cao nhất cách mép trên 40px (nhiều Dev xếp chồng có thể đẩy lên trên).
@@ -108,13 +149,15 @@ function validate(thread, graph) {
   if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw Error('Sơ đồ không hợp lệ');
   if (graph.nodes.length > 60 || graph.edges.length > 300) throw Error('Sơ đồ quá lớn');
   const ids = new Set(), nodes = graph.nodes.map(node => {
-    const id = String(node.id || ''), label = String(node.label || ''), phase = node.phase ? String(node.phase) : '';
+    const id = String(node.id || ''), label = String(node.label || ''), phase = node.phase ? String(node.phase) : '', lane = node.lane ? String(node.lane) : '';
     if (ids.has(id)) throw Error('Nút trùng: ' + id); ids.add(id);
     if (id === END) return { id, label: '', x: coord(node.x), y: coord(node.y) };
     if (!thread.flow.includes(label)) throw Error(`Khối "${label}" không có trong session`);
-    const phases = PHASED[labelType(thread, label)];
-    if (phases ? !phases.includes(phase) || id !== phaseId(label, phase) : phase || id !== label) throw Error('Nút không hợp lệ: ' + id);
-    return { id, label, ...(phase ? { phase } : {}), x: coord(node.x), y: coord(node.y) };
+    const type = labelType(thread, label), phases = PHASED[type], base = phases ? phaseId(label, phase) : label;
+    if (phases ? !phases.includes(phase) : phase) throw Error('Nút không hợp lệ: ' + id);
+    if (lane && (!laneable(type, phase) || !laneNames(thread).includes(lane))) throw Error(`Nút ${id}: nhánh "${lane}" không có trong session hoặc khối không chia theo nhánh`);
+    if (id !== (lane ? laneId(base, lane) : base)) throw Error('Nút không hợp lệ: ' + id);
+    return { id, label, ...(phase ? { phase } : {}), ...(lane ? { lane } : {}), x: coord(node.x), y: coord(node.y) };
   });
   const edges = [];
   for (const edge of graph.edges) {
@@ -128,7 +171,8 @@ function validate(thread, graph) {
 // Session cũ hoặc session vừa đổi khối: dựng sơ đồ mặc định khi chưa có; bỏ nút/cạnh của khối đã xoá.
 function ensureGraph(thread) {
   if (!thread.graph) { thread.graph = defaultGraph(thread); return thread.graph; }
-  const keep = node => node.id === END || thread.flow.includes(node.label);
+  // Nút của nhánh đã bỏ (mốc mới không còn nhánh đó) bị bỏ cùng cạnh của nó.
+  const keep = node => node.id === END || (thread.flow.includes(node.label) && (!node.lane || laneNames(thread).includes(node.lane)));
   thread.graph.nodes = thread.graph.nodes.filter(keep);
   const ids = new Set(thread.graph.nodes.map(node => node.id));
   thread.graph.edges = thread.graph.edges.filter(edge => ids.has(edge.from) && ids.has(edge.to));
@@ -190,4 +234,4 @@ function ready(thread) {
   return queued.slice(0, 1);
 }
 const nodesFor = (thread, label) => ensureGraph(thread).nodes.filter(node => node.label === label);
-module.exports = { syncGraph, recoverRunning, END, LEAD_PHASES, PHASED, phaseId, CONDITIONS, CONDITION_NAMES, PHASE_NAMES, leadId, nodeLabel, matches, defaultGraph, validate, ensureGraph, addNode, runOf, stateOf, resetRun, entries, finish, queue, ready, nodesFor, incoming, outgoing };
+module.exports = { laneId, laneable, syncGraph, recoverRunning, END, LEAD_PHASES, PHASED, phaseId, CONDITIONS, CONDITION_NAMES, PHASE_NAMES, leadId, nodeLabel, matches, defaultGraph, validate, ensureGraph, addNode, runOf, stateOf, resetRun, entries, finish, queue, ready, nodesFor, incoming, outgoing };

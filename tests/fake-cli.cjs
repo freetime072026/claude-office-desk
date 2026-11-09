@@ -23,7 +23,10 @@ function handle(message) {
   if (prompt.includes('[env]')) { reply(JSON.stringify({ BASH_DEFAULT_TIMEOUT_MS: process.env.BASH_DEFAULT_TIMEOUT_MS, BASH_MAX_TIMEOUT_MS: process.env.BASH_MAX_TIMEOUT_MS })); return; }
   if (!ask) { reply('Echo: ' + prompt.trim()); return; }
   // Tool MCP được cho phép: gửi tool_result như CLI thật trước câu trả lời (app trả khoá Penpot khi thấy kết quả).
-  waiting.set('req-1', response => { const decision = response.response; if (decision.behavior === 'allow' && ask[1].startsWith('mcp__')) out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }] } }); reply(`${ask[1]} ${decision.behavior}` + (decision.behavior === 'allow' ? ' ' + JSON.stringify(decision.updatedInput) : ': ' + decision.message)); });
+  waiting.set('req-1', response => { const decision = response.response; if (decision.behavior === 'allow' && ask[1].startsWith('mcp__')) out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }] } });
+    // [then:Tên] → sau kết quả, model bắt đầu gọi tool khác; [pause] → nghĩ 400ms trước khi trả lời.
+    const then = /\[then:(\w+)\]/.exec(prompt); if (then) out({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'tool_use', id: 'tool-2', name: then[1] } } });
+    setTimeout(() => reply(`${ask[1]} ${decision.behavior}` + (decision.behavior === 'allow' ? ' ' + JSON.stringify(decision.updatedInput) : ': ' + decision.message)), prompt.includes('[pause]') ? 400 : 0); });
   out({ type: 'control_request', request_id: 'req-1', request: { subtype: 'can_use_tool', tool_name: ask[1], input: { command: 'echo hi' }, tool_use_id: 'tool-1' } });
 }
 process.stdin.setEncoding('utf8');

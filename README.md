@@ -11,6 +11,31 @@ Tab **🗺 Sơ đồ luồng** (cạnh tab Hội thoại) cho xem và sửa th�
 - **Sơ đồ mặc định** (session cũ tự dựng): GD → UI/UX → Lead lập kế hoạch → các Dev/VFX song song → QA → (role tùy chỉnh) → Lead review → (Release) → Hoàn tất; QA `issue` → Lead triage → Dev; review `reject` → Dev; Release `pass` → Hoàn tất, `issue` → Lead triage; có Art Director thì Dev/VFX/Anim `reject` → Art Director review. Lưu/Huỷ thay đổi/Đặt lại mặc định trên thanh công cụ. Chưa sửa sơ đồ thì thêm/xoá role sẽ dựng lại mặc định; đã lưu sơ đồ riêng thì Dev/VFX mới được nối giống các Dev đang có, khối loại khác thêm vào chưa nối.
 - Giữ nguyên: Lead pha triage/review, QA hai pha (chức năng → performance), review chỉ lặp 1 lần, giới hạn vòng QA và quyết định của bạn, GD chốt vấn đề mới mở vòng mới. Task Lead giao ở trạng thái "chờ tới lượt theo sơ đồ" cho tới khi nút Dev tới lượt.
 
+### Nhánh song song do PO chia
+
+PO có thể chia một mốc thành 2–4 **nhánh** theo mảng nội dung tách rời (vd. Hero, Enemy, UI, Map) bằng `"lanes"` trong khối `team`: mỗi nhánh có tên, chuỗi khối làm việc riêng theo thứ tự chạy (vd. Art → Anim → Dev), thư mục gốc riêng và page Penpot riêng. App từ chối kế hoạch khi một khối nằm ở hai nhánh, có khối làm việc không thuộc nhánh nào, thư mục hai nhánh chồng nhau hoặc trùng page.
+
+- Sơ đồ mặc định dựng mỗi nhánh thành một làn: các khối của nhánh nối tiếp nhau, rồi tới **QA · <nhánh>** và **Art Director · review · <nhánh>** riêng; issue và reject của nhánh chỉ về **Lead Dev · triage · <nhánh>** và khối của nhánh đó. Các nhánh chạy song song; lượt kiểm của các nhánh xếp hàng trên một khối QA và một Art Director.
+- Nhánh xong là được kiểm ngay. Lead review chạy một lần khi mọi nhánh pass. Nhánh không có việc ở một lần (vd Lead review chỉ trả nhánh khác về sửa) tự đạt, không kiểm lại.
+- Issue do app gắn nhãn `[Nhánh <tên>]`; số vòng QA fail và số lần Art Director trả về tính riêng mỗi nhánh. Nhánh hết vòng thì Lead triage của nhánh đó dừng chờ bạn (`/role Lead Dev start` cho thêm một vòng), các nhánh khác vẫn chạy.
+- Task giao cho khối trong nhánh phải có `files` nằm trong thư mục của nhánh; lượt triage/review của một nhánh chỉ giao và chỉ thay task của nhánh đó.
+- Mốc không có `lanes` chạy như trước.
+
+### Kế hoạch PO: hạng mục, năng lực và xem lại sau mỗi mốc
+
+- **Năng lực thật trong hướng dẫn PO:** một khối nhận một task mỗi lần giao, tối đa 8 tệp, 40 lần gọi tool mỗi lượt, Art ChatGPT 6–10 ảnh mỗi task. Trách nhiệm từng role được đưa đầy đủ hơn. PO kiểm kê project, liệt kê hạng mục, ước lượng cỡ rồi mới tính số khối.
+- **Bảng phủ yêu cầu bắt buộc:** mỗi mốc có `requirements`, mỗi hạng mục có `id`, `text`, `kind` (`code`, `art`, `anim`, `vfx`, `sound`, `ui`, `design`), `size` (S = 1, M = 2, L = 4 điểm) và `owners`. App từ chối kế hoạch và trả lý do cho PO khi:
+  - hạng mục thiếu khối đúng loại;
+  - một khối làm việc quá 4 điểm trong mốc;
+  - có khối làm việc không có hạng mục nào;
+  - một hạng mục giao cho khối của nhiều nhánh.
+
+  Hạng mục được ghi vào PO.md và giao cho GD kèm phần việc của mốc.
+- **Xem lại sau mỗi mốc:**
+  - Khi một mốc xong mà còn mốc sau, app gửi PO số liệu thật của mốc: thời gian, số vòng, Issue, và với từng khối là số lượt, số lần chạm giới hạn lượt tool, số lần bị chặn.
+  - PO giữ kế hoạch thì app chạy tiếp ngay. PO đề xuất chỉnh các mốc còn lại thì thẻ duyệt hiện riêng phần đổi, với ba nút: **Duyệt thay đổi**, **Giữ kế hoạch cũ** (đều chạy tiếp) và **Từ chối, PO làm lại** (PO xem lại theo lý do của bạn).
+  - PO xuất kế hoạch sai 3 lần thì app giữ kế hoạch cũ và chạy tiếp.
+
 ## Tự phát hiện project Unity
 
 Khi thư mục chính của session là project Unity (có `ProjectSettings/ProjectVersion.txt`), trước mỗi lượt của Lead Dev, Dev, VFX, QA app kiểm và chèn vào prompt một đoạn ngắn: phiên bản Unity, đường dẫn `Unity.exe` đúng phiên bản trong Unity Hub, Editor có đang mở project không (`Temp/UnityLockfile`), và cách gọi Unity phù hợp:

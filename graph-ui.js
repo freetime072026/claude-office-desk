@@ -15,7 +15,7 @@
   const get = selector => document.querySelector(selector);
   const make = (tag, props = {}) => Object.assign(document.createElement(tag), props);
   const svg = (tag, attrs = {}) => { const element = document.createElementNS(SVG, tag); for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, value); return element; };
-  const nodeName = node => node.id === END ? 'Hoàn tất' : node.phase ? `${node.label} · ${PHASES[node.phase]}` : node.label;
+  const nodeName = node => node.id === END ? 'Hoàn tất' : [node.label, node.phase ? PHASES[node.phase] : '', node.lane || ''].filter(Boolean).join(' · ');
   const snap = value => Math.round(value / GRID) * GRID;
   let thread, draft, dirty = false, draftOf = '', menu, scale = 1, panX = 0, panY = 0, fitted = '';
   // Làm nổi: hoverNode/hoverEdge = khối/dây dưới con trỏ; activeEdge = dây đang mở menu; dragEdge = dây đang kéo; tracking = đang kéo gì đó.
