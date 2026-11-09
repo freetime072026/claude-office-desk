@@ -380,7 +380,9 @@ function createAutoRun(deps) {
     if (!plan || thread.tweak) return [];
     const isArt = label => thread.flow.includes(label) && ART_BLOCKS.includes(labelType(thread, label)) && !worker(thread, label).idle && !worker(thread, label).paused;
     const needed = plan.requirements?.length ? [...new Set(plan.requirements.filter(item => ART_KINDS.includes(item.kind)).flatMap(item => item.owners))].filter(isArt) : thread.flow.filter(isArt);
-    return needed.filter(label => !(thread.dispatch || []).some(task => task.worker === label && !['finished', 'cancelled'].includes(task.status)));
+    const has = label => (thread.dispatch || []).some(task => task.worker === label && !['finished', 'cancelled'].includes(task.status));
+    // Nhánh: một khối của nhánh có task là đủ (người giao có thể gộp việc của cả nhánh vào một khối); chỉ báo nhánh không ai có việc.
+    return needed.filter(label => { const lane = (thread.lanes || []).find(item => item.blocks.includes(label)); return lane ? !lane.blocks.some(has) : !has(label); });
   }
   function artGuard(thread, node, summary) {
     const missing = artWithoutTask(thread), round = thread.round || 1;

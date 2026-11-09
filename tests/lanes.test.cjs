@@ -172,3 +172,11 @@ test('Art Director review per lane: reject goes to that lane art, counted per la
   await auto.after(thread, 'Art Director', reply('issue'));
   assert.equal(thread.issues.at(-1).lane, 'Hero'); assert.match(thread.issues.at(-1).text, /\[Nhánh Hero\] \[Visual · Art Director\]/);
 });
+
+test('blocks chained in one lane may share the lane folders; reserved tasks of the same lane do not block either', () => {
+  const { thread } = setup(), problems = [];
+  const both = taskPlan(tasks([['Art', 'hero/'], ['Dev', 'hero/']]), thread, problems);
+  assert.ok(both, problems.join()); assert.equal(both.length, 2);
+  const merged = mergePlan({ ...thread, dispatch: [{ worker: 'Art', task: 'x', files: ['hero/'], status: 'pending', by: 'Art Director' }] }, 'Lead Dev', tasks([['Dev', 'hero/']]));
+  assert.ok(merged.dispatch, merged.problems);
+});

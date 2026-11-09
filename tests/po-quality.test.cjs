@@ -139,3 +139,22 @@ test('the guard names only art owners left without a task', async () => {
   assert.match(thread.messages.at(-1).text, /không giao task cho Art #2,/);
   assert.doesNotMatch(thread.messages.at(-1).text, /cho Art, /);
 });
+
+test('in lanes, one task for any block of the lane satisfies the art guard', async () => {
+  const store = initial(), id = update(store, 'create', { request: 'x' }); update(store, 'add-worker', { id, type: 'PO' });
+  const thread = store.threads.find(item => item.id === id);
+  const parsed = po.parsePlan(team({ milestones: [{ title: 'M1', gd: 'vẽ', blocks: ['GD', 'Art Director', 'Art', 'Art', 'Art', 'QA'],
+    lanes: [{ name: 'Hero', blocks: ['Art', 'Art #2'], files: ['hero/'] }, { name: 'Pet', blocks: ['Art #3'], files: ['pet/'] }],
+    requirements: [R('H1', 'art', 'L', ['Art']), R('H2', 'art', 'L', ['Art #2']), R('P1', 'art', 'L', ['Art #3'])] }] }));
+  update(store, 'po-propose', { id, plan: parsed, steps: po.timeline(parsed, thread.flow), previews: [] }); update(store, 'po-approve', { id, busy: [] });
+  const auto = createAutoRun({ update: (item, action, payload) => update(store, action, { ...payload, id: item.id }), send: async () => true, pump: async () => {}, log: (item, role, text) => item.messages.push({ role, text }), changed: () => {}, approve: async () => true, isRunning: () => false });
+  await auto.enable(thread, 'test'); graph.resetRun(thread); graph.stateOf(thread, 'PO').status = 'done';
+  await auto.runStage(thread, 'GD'); await auto.after(thread, 'GD', handoff('done'));
+  thread.dispatch = [{ worker: 'Art', task: 'C34 rồi C35', files: ['hero/'], status: 'pending', by: 'Art Director' }];
+  await auto.after(thread, 'Art Director', { text: handoff('done').text + '\n```tasks\n{}\n```' }, { proposalApplied: true });
+  assert.match(thread.messages.at(-1).text, /không giao task cho Art #3,/, 'only the Pet lane has nobody');
+  thread.dispatch.push({ worker: 'Art #3', task: 'C61', files: ['pet/'], status: 'pending', by: 'Art Director' }); delete thread.artGuard;
+  graph.stateOf(thread, 'Art Director@planning').status = 'running';
+  await auto.after(thread, 'Art Director', { text: handoff('done').text + '\n```tasks\n{}\n```' }, { proposalApplied: true });
+  assert.equal(graph.stateOf(thread, 'Art Director@planning').status, 'done', 'Art #2 without its own task is fine: Art carries the Hero lane');
+});

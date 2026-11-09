@@ -146,9 +146,10 @@ function taskPlan(text, thread, problems = [], { types = DEV_TYPES, reserved = [
       const own = laneFor(thread, task.worker), outside = own && task.files.find(file => !insideLane(thread, own, file.trim()));
       if (outside) return fail(`${task.worker} thuộc nhánh ${own.name}: tệp "${outside.trim().slice(0, 200)}" nằm ngoài thư mục của nhánh (${own.files.join(', ')}); giao tệp trong nhánh, việc ngoài nhánh giao cho khối của nhánh khác`);
     }
-    const scopes = plan.tasks.map(task => resolvedFiles(thread.folder, task.files));
-    for (const [index, scope] of scopes.entries()) { const other = scopes.findIndex((item, at) => at > index && scopesOverlap(scope, item)); if (other >= 0) return fail(`${plan.tasks[index].worker} và ${plan.tasks[other].worker} có tệp chồng nhau`); }
-    for (const [index, scope] of scopes.entries()) { const held = reserved.find(task => scopesOverlap(scope, resolvedFiles(thread.folder, task.files || []))); if (held) return fail(`${plan.tasks[index].worker} chồng tệp với task đang giao cho ${held.worker}`); }
+    // Hai khối cùng một nhánh chạy nối tiếp theo sơ đồ (Art → Art #2), không cùng lúc, nên được dùng chung thư mục của nhánh.
+    const scopes = plan.tasks.map(task => resolvedFiles(thread.folder, task.files)), sameLane = (first, second) => Boolean(laneFor(thread, first)?.blocks.includes(second));
+    for (const [index, scope] of scopes.entries()) { const other = scopes.findIndex((item, at) => at > index && !sameLane(plan.tasks[index].worker, plan.tasks[at].worker) && scopesOverlap(scope, item)); if (other >= 0) return fail(`${plan.tasks[index].worker} và ${plan.tasks[other].worker} có tệp chồng nhau`); }
+    for (const [index, scope] of scopes.entries()) { const held = reserved.find(task => !sameLane(plan.tasks[index].worker, task.worker) && scopesOverlap(scope, resolvedFiles(thread.folder, task.files || []))); if (held) return fail(`${plan.tasks[index].worker} chồng tệp với task đang giao cho ${held.worker}`); }
     for (const task of plan.tasks) if (task.dependsOn !== undefined && (!Array.isArray(task.dependsOn) || task.dependsOn.some(owner => !owners.has(owner) || owner === task.worker))) return fail(`${task.worker}: dependsOn chỉ gồm Dev khác trong kế hoạch`);
     const visited = new Set(); for (let count = 0; count < plan.tasks.length; count++) for (const task of plan.tasks) if ((task.dependsOn || []).every(owner => visited.has(owner))) visited.add(task.worker); if (visited.size !== owners.size) return fail('dependsOn tạo vòng phụ thuộc');
     return plan.tasks.map(task => ({ worker: task.worker, task: task.task, files: [...new Set(task.files.map(file => file.trim().replaceAll('\\', '/')))], ...(task.dependsOn?.length ? { dependsOn: [...new Set(task.dependsOn)] } : {}) }));
