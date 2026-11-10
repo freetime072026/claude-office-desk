@@ -61,6 +61,12 @@ test('scoped roles run the CLI in default mode so every write reaches the app', 
   assert.equal(cliMode('auto', null), 'auto');
 });
 
+test('Plan without a scope (PO, plain chat) runs the CLI in default mode with read-only tools, not CLI plan mode', () => {
+  // CLI plan mode tells the model to Write a plan file and call ExitPlanMode, neither of which a Plan session has.
+  for (const mode of ['read', 'unknown']) { assert.equal(cliMode(mode, null), 'default'); assert.doesNotMatch(cliTools(mode, null), /(^|,)(Write|Edit|Bash)(,|$)/); }
+  assert.equal(cliMode('bypass', null), 'bypassPermissions');
+});
+
 test('UI/UX writes only UIUX.md without shell, works from files, and Lead/QA are pointed at it while Dev is not', () => {
   const folder = 'E:\game', files = filesOf({ id: 's', folder });
   assert.equal(files.uiux, path.join(folder, '.office-desk', 's', 'UIUX.md'));
