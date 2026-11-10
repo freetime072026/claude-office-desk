@@ -34,7 +34,8 @@
       get('#po-status').hidden = plan?.status !== 'approved';
       if (plan?.status === 'approved') { const milestone = plan.plan.milestones[plan.current ?? 0]; get('#po-status').textContent = `Kế hoạch PO · mốc ${(plan.current ?? 0) + 1}/${plan.plan.milestones.length}: ${milestone?.title || ''}`; }
       box.hidden = plan?.status !== 'proposed'; if (box.hidden) { box.dataset.key = ''; return; }
-      const key = thread.id + plan.proposedAt + (thread.poProduct || '') + (thread.preset || ''); if (box.dataset.key === key) return; box.dataset.key = key;
+      // graphs: sơ đồ mốc bạn đã sửa (graph-ui.js editMilestone) thay ảnh sơ đồ PO dựng sẵn.
+      const key = thread.id + plan.proposedAt + (thread.poProduct || '') + (thread.preset || '') + JSON.stringify(plan.graphs || []); if (box.dataset.key === key) return; box.dataset.key = key;
       // startAt: PO chỉnh các mốc còn lại sau khi một mốc xong; các mốc trước đó đã chạy nên không hiện lại.
       const review = Number.isInteger(plan.startAt), first = review ? plan.startAt : 0;
       const body = [make('h3', { textContent: review ? `PO đề xuất chỉnh kế hoạch từ mốc ${first + 1}/${plan.plan.milestones.length} · chờ bạn duyệt` : `Kế hoạch đội của PO · ${plan.plan.milestones.length} mốc · chờ bạn duyệt` })];
@@ -54,7 +55,14 @@
         if (milestone.reasons) section.append(make('p', { className: 'po-reasons', textContent: 'Lý do: ' + milestone.reasons }));
         // Hạng mục PO ước lượng (po.cjs requirements): loại việc, cỡ S/M/L và khối phụ trách.
         if (milestone.requirements?.length) { const list = make('details', { className: 'po-requirements' }); list.append(make('summary', { textContent: `Hạng mục (${milestone.requirements.length})` }), ...milestone.requirements.map(item => make('p', { textContent: `${item.id} · ${item.kind} · ${item.size} · ${item.owners.join(', ')}: ${item.text}` }))); section.append(list); }
-        if (plan.previews?.[index]) section.append(preview(plan.previews[index], step));
+        // Ảnh nhỏ chỉ để xem nhanh: bấm ảnh hoặc nút để mở sơ đồ mốc ở tab Sơ đồ luồng (phóng to, kéo, sửa khối/dây rồi Lưu vào kế hoạch).
+        if (plan.previews?.[index]) {
+          const edited = Boolean(plan.graphs?.[index]), open = () => window.graphView?.editMilestone(index);
+          const image = preview(plan.graphs?.[index] || plan.previews[index], step); image.classList.add('editable'); image.addEventListener('click', open);
+          const bar = make('div', { className: 'po-graph-bar' }), button = make('button', { type: 'button', textContent: '⤢ Phóng to & sửa sơ đồ' }); button.onclick = open;
+          bar.append(button, make('small', { textContent: edited ? 'Đã sửa · app dùng sơ đồ này khi tới mốc' : 'Sơ đồ PO dựng sẵn' }));
+          section.append(image, bar);
+        }
         const gd = make('details', { className: 'po-gd' }); gd.append(make('summary', { textContent: 'Phần giao GD' }), make('pre', { textContent: milestone.gd })); section.append(gd);
         body.push(section);
       });

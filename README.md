@@ -35,6 +35,12 @@ PO có thể chia một mốc thành 2–4 **nhánh** theo mảng nội dung tá
   - Khi một mốc xong mà còn mốc sau, app gửi PO số liệu thật của mốc: thời gian, số vòng, Issue, và với từng khối là số lượt, số lần chạm giới hạn lượt tool, số lần bị chặn.
   - PO giữ kế hoạch thì app chạy tiếp ngay. PO đề xuất chỉnh các mốc còn lại thì thẻ duyệt hiện riêng phần đổi, với ba nút: **Duyệt thay đổi**, **Giữ kế hoạch cũ** (đều chạy tiếp) và **Từ chối, PO làm lại** (PO xem lại theo lý do của bạn).
   - PO xuất kế hoạch sai 3 lần thì app giữ kế hoạch cũ và chạy tiếp.
+- **Sửa sơ đồ từng mốc trước khi duyệt:**
+  - Trong thẻ kế hoạch chờ duyệt, bấm vào ảnh sơ đồ của một mốc hoặc nút **⤢ Phóng to & sửa sơ đồ**. Sơ đồ mốc đó mở ở tab **🗺 Sơ đồ luồng** với đủ công cụ như sơ đồ session: phóng to/thu nhỏ, kéo, nối dây, đổi điều kiện, Sắp xếp gọn. Thẻ kế hoạch tạm ẩn để sơ đồ có đủ chỗ; **← Về kế hoạch PO** quay lại.
+  - **Lưu sơ đồ** ghi bản sửa vào kế hoạch (kiểm theo khối của mốc đó, kể cả khối chưa có trong session). **Đặt lại mặc định** bỏ bản sửa, quay về sơ đồ PO dựng sẵn. Thẻ hiện "Đã sửa" ở mốc có bản sửa.
+  - Duyệt kế hoạch xong, khi tới mốc app dùng sơ đồ bạn sửa thay sơ đồ mặc định. Khối thật khác khối lúc sửa (nhãn đổi khi thêm khối) thì app dùng sơ đồ mặc định và ghi lý do vào log của mốc.
+  - PO đề xuất kế hoạch mới thì các bản sửa của kế hoạch cũ bị bỏ, vì khối của các mốc đã đổi.
+- **PO và chat ở mode Plan** chạy CLI ở mode `default` với bộ tool chỉ đọc (Read, Glob, Grep, TodoWrite, web phải duyệt), thay cho plan mode của CLI. Plan mode của CLI dặn model ghi kế hoạch bằng Write vào `<hồ sơ>/plans/` rồi gọi ExitPlanMode, nhưng phiên Plan không có hai tool này: lượt PO gọi Write bị lỗi "No such tool available" và có thể kết thúc mà thiếu khối `team`.
 
 ## Tự phát hiện project Unity
 

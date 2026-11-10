@@ -29,3 +29,5 @@
 .graph-scroll.panning{cursor:grabbing}.graph-node.selected{border-color:#2f6fb3;box-shadow:0 0 0 2px #2f6fb355}.graph-marquee{position:absolute;z-index:6;border:1px dashed #2f6fb3;background:#2f6fb314;pointer-events:none}.graph-edge-menu .reset-route{color:#303f37}
 
 #graph-sizer{position:absolute;left:0;top:0;width:0;height:0}#graph-canvas{transform-origin:0 0;position:absolute;left:0;top:0;width:1px;height:1px}.graph-zoom{display:inline-flex;align-items:center;gap:4px;margin-left:auto}.graph-zoom button{padding:4px 10px}#graph-zoom-level{font-size:12px;min-width:40px;text-align:center;color:#5d6560}
+.graph-target{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px;border-radius:8px;background:#eef7ef;border:1px solid #b9d3bd;font-size:12px;color:#26322d}.graph-target[hidden]{display:none}.graph-target span{flex:1;min-width:200px}
+body.po-graph-editing #po-plan{display:none}

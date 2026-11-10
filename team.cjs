@@ -197,8 +197,24 @@ function applyMilestone(team, item, k, log, busy = []) {
   // Nhánh của mốc (po.parseLanes): sơ đồ mặc định dựng thành làn; mốc không chia nhánh thì chạy như thường.
   if (milestone.lanes?.length) item.lanes = milestone.lanes; else delete item.lanes;
   item.poPlan.current = k; flowgraph.syncGraph(item);
+  // Sơ đồ bạn sửa cho mốc này trong thẻ kế hoạch (po-graph) thay sơ đồ của session; không còn khớp khối thật (nhãn khối đổi khi thêm)
+  // thì giữ sơ đồ vừa dựng và báo.
+  const edited = item.poPlan.graphs?.[k];
+  if (edited) { try { item.graph = flowgraph.validate(item, edited); notes.push('dùng sơ đồ bạn sửa cho mốc'); } catch (error) { notes.push(`sơ đồ bạn sửa cho mốc không còn khớp (${error.message}), dùng sơ đồ mặc định`); } }
   const idle = item.flow.filter(label => worker(item, label).idle);
   log('Hệ thống', `Kế hoạch PO · mốc ${k + 1}/${plan.milestones.length}: ${milestone.title}. ${notes.length ? notes.join(', ') + '. ' : ''}${idle.length ? 'Tạm nghỉ: ' + idle.join(', ') + '. ' : ''}GD nhận phần việc của mốc.`);
+}
+// Sửa sơ đồ một mốc ngay trong thẻ kế hoạch chờ duyệt (graph-ui.js editMilestone): kiểm theo khối của mốc đó (steps[index].flow,
+// nhánh của mốc) rồi lưu vào poPlan.graphs; applyMilestone dùng khi tới mốc. graph null = bỏ bản sửa, quay về sơ đồ mặc định.
+function editMilestoneGraph(item, payload) {
+  const plan = item.poPlan, index = payload.index;
+  if (plan?.status !== 'proposed') throw Error('Chỉ sửa sơ đồ mốc khi kế hoạch PO đang chờ duyệt');
+  if (!Number.isInteger(index) || index < (plan.startAt ?? 0) || index >= plan.plan.milestones.length) throw Error('Mốc không hợp lệ');
+  const flow = plan.steps?.[index]?.flow; if (!flow?.length) throw Error('Mốc chưa có danh sách khối');
+  plan.graphs ||= [];
+  if (payload.graph === null) { delete plan.graphs[index]; return true; }
+  plan.graphs[index] = flowgraph.validate({ flow, workers: {}, lanes: plan.plan.milestones[index].lanes }, payload.graph);
+  return true;
 }
 // Đề xuất mới (main.cjs gọi sau lượt PO có khối team hợp lệ). Chưa đổi đội cho tới khi duyệt.
 function proposePlan(item, payload, log) {
@@ -240,8 +256,8 @@ function approvePlan(team, item, payload, log) {
   if (busyOf(payload).some(label => typeOf(label) !== po.PO)) throw Error('Còn khối đang chạy; đợi xong rồi duyệt kế hoạch');
   // Duyệt bản chỉnh sau một mốc: thay các mốc còn lại, giữ mốc vừa xong là mốc hiện tại; main.cjs chạy tiếp mốc sau (resume).
   if (item.poPlan.startAt !== undefined) {
-    const { plan, startAt, previous } = item.poPlan;
-    item.poPlan = { status: 'approved', plan, current: startAt - 1, reviewed: startAt - 1, ...(previous?.mark ? { mark: previous.mark } : {}), approvedAt: new Date().toISOString(), resume: true };
+    const { plan, startAt, previous, graphs } = item.poPlan;
+    item.poPlan = { status: 'approved', plan, current: startAt - 1, reviewed: startAt - 1, ...(previous?.mark ? { mark: previous.mark } : {}), ...(graphs?.length ? { graphs } : {}), approvedAt: new Date().toISOString(), resume: true };
     log('Hệ thống', `Đã duyệt kế hoạch PO chỉnh từ mốc ${startAt + 1}; chạy tiếp.`); return true;
   }
   item.poPlan.status = 'approved'; item.poPlan.approvedAt = new Date().toISOString(); delete item.poPlan.previous;
@@ -305,6 +321,7 @@ function update(team, action, payload) {
   if (action === 'po-reject') return rejectPlan(item, payload, log);
   if (action === 'po-keep') return keepPlan(item, log);
   if (action === 'po-next') return nextMilestone(team, item, payload, log);
+  if (action === 'po-graph') return editMilestoneGraph(item, payload);
   if (action === 'po-product') { chooseProduct(item, payload.product, log); return true; }
   // Công cụ sinh ảnh của Art (dùng chung mọi session): 'chatgpt' = Art viết prompt chi tiết, người dùng tạo ảnh bằng ChatGPT;
   // 'tool' = Art tự gọi script/pipeline của project hoặc MCP sinh ảnh.

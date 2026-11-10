@@ -78,3 +78,4 @@ dialog{width:520px;max-width:90vw;border:1px solid #deded9;border-radius:15px;pa
 #block-feed article.feed-stop{border-left:3px solid #c0614a;padding-left:8px;background:#fdf3f0}#block-feed article.feed-stop p{color:#7a2e1e}#block-feed .step-log{font-size:11px}
 #panel.feed-mode{overflow:hidden}
 @media(max-width:1100px){#panel.feed-mode{width:340px}}
+.po-preview.editable{cursor:zoom-in}.po-preview.editable:hover{border-color:#4f8a5c;box-shadow:0 0 0 2px #dbe9dc}.po-graph-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.po-graph-bar button{font-size:12px}.po-graph-bar small{font-size:11px;color:#5d6560}

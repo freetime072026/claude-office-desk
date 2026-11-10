@@ -137,3 +137,34 @@ test('choosing the product in the PO panel applies it now, fixes the PO guide an
   update(team, 'po-product', { id, product: 'game' }); assert.equal(thread.preset, undefined); assert.equal(thread.workers.GD.purpose, undefined);
   assert.doesNotMatch(buildPrompt({ label: 'PO', type: 'PO', files, content: 'x', poProduct: 'game' }).text, /PLA Producer/);
 });
+test('po-graph: edit a milestone graph while the plan waits for approval; the milestone uses it when it starts', () => {
+  const flowgraph = require('../flowgraph.cjs');
+  const team = initial(), id = update(team, 'create', { request: 'x' }); update(team, 'add-worker', { id, type: 'PO' });
+  const thread = team.threads.find(item => item.id === id), plan = po.parsePlan(fence(PLAN)), steps = po.timeline(plan, thread.flow);
+  update(team, 'po-propose', { id, plan, steps, previews: [] });
+  // Milestone 2: drop the Art node's edges and move GD, validated against that milestone's blocks (Art, Release not in the session yet).
+  const second = flowgraph.defaultGraph({ flow: steps[1].flow, workers: {} });
+  const edited = { nodes: second.nodes.map(node => node.label === 'GD' ? { ...node, x: 999, y: 555 } : node), edges: second.edges.filter(edge => edge.from !== 'Art' && edge.to !== 'Art') };
+  assert.equal(update(team, 'po-graph', { id, index: 1, graph: edited }), true);
+  assert.equal(thread.poPlan.graphs[1].custom, true); assert.equal(thread.poPlan.graphs[0], undefined);
+  assert.throws(() => update(team, 'po-graph', { id, index: 0, graph: edited }), /không có trong session/); // milestone 1 has no Art
+  assert.throws(() => update(team, 'po-graph', { id, index: 5, graph: edited }), /Mốc không hợp lệ/);
+  update(team, 'po-graph', { id, index: 0, graph: flowgraph.defaultGraph({ flow: steps[0].flow, workers: {} }) });
+  update(team, 'po-graph', { id, index: 0, graph: null }); assert.equal(thread.poPlan.graphs[0], undefined);
+  update(team, 'po-approve', { id, busy: [] });
+  assert.equal(thread.graph.custom, undefined); // milestone 1 kept the generated graph
+  assert.throws(() => update(team, 'po-graph', { id, index: 1, graph: edited }), /chờ duyệt/);
+  update(team, 'po-next', { id, busy: [] });
+  assert.equal(thread.graph.custom, true);
+  assert.deepEqual(thread.graph.nodes.find(node => node.id === 'GD'), { id: 'GD', label: 'GD', x: 999, y: 555 });
+  assert(!thread.graph.edges.some(edge => edge.from === 'Art' || edge.to === 'Art'));
+  assert.match(thread.messages.at(-1).text, /dùng sơ đồ bạn sửa cho mốc/);
+});
+test('po-graph: an edited graph that no longer matches the real blocks falls back to the generated graph', () => {
+  const team = initial(), id = update(team, 'create', { request: 'x' }); update(team, 'add-worker', { id, type: 'PO' });
+  const thread = team.threads.find(item => item.id === id), plan = po.parsePlan(fence(PLAN));
+  update(team, 'po-propose', { id, plan, steps: po.timeline(plan, thread.flow), previews: [] });
+  thread.poPlan.graphs = [{ nodes: [{ id: 'Ghost', label: 'Ghost', x: 0, y: 0 }], edges: [] }];
+  update(team, 'po-approve', { id, busy: [] });
+  assert.equal(thread.graph.custom, undefined); assert.match(thread.messages.at(-1).text, /không còn khớp/);
+});

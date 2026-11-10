@@ -27,25 +27,54 @@
   // ---- Chuyển tab Hội thoại / Sơ đồ (nhớ theo máy).
   function setTab(name) {
     const graph = name === 'graph';
+    // Rời tab sơ đồ thì thoát chế độ sửa sơ đồ mốc của kế hoạch PO (bấm sơ đồ trong thẻ để vào lại).
+    if (!graph && target) { if (dirty && !confirm('Bỏ thay đổi chưa lưu của sơ đồ mốc?')) return; target = null; dirty = false; draftOf = ''; window.graphView.paint(session); }
     get('#graph-view').hidden = !graph; for (const id of ['#activity', '#issues', '#composer']) get(id).hidden = graph;
     get('#tab-chat').setAttribute('aria-selected', String(!graph)); get('#tab-graph').setAttribute('aria-selected', String(graph));
     try { localStorage.setItem('main-tab', name); } catch {}
+    paintTarget();
     if (graph) { fitted = ''; render(); }
   }
   get('#tab-chat').onclick = () => setTab('chat'); get('#tab-graph').onclick = () => setTab('graph');
 
   const markDirty = () => { dirty = true; get('#graph-save').disabled = get('#graph-cancel').disabled = !thread || thread.archived; get('#graph-state').textContent = 'Có thay đổi chưa lưu'; };
   function loadDraft() { draft = structuredClone(thread?.graph || { nodes: [], edges: [] }); dirty = false; draftOf = thread?.id || ''; selected.clear(); get('#graph-save').disabled = get('#graph-cancel').disabled = true; get('#graph-state').textContent = ''; }
+  // ---- Sửa sơ đồ một mốc của kế hoạch PO chờ duyệt (po-ui.js gọi editMilestone): tab này vẽ "session ảo" của mốc đó (khối của
+  // mốc, sơ đồ đã sửa hoặc sơ đồ PO dựng sẵn, không có trạng thái chạy); Lưu ghi vào kế hoạch (team po-graph), app dùng khi tới mốc.
+  // session = session thật đang chọn; thread = thứ đang vẽ (session thật hoặc mốc).
+  let session = null, target = null;
+  function viewOf(item) {
+    if (!target) return item;
+    const plan = item?.poPlan, step = plan?.steps?.[target.index], preview = plan?.previews?.[target.index];
+    if (!item || item.id !== target.id || plan.status !== 'proposed' || !step?.flow?.length || !preview) { target = null; return item; }
+    return { id: `${item.id}#po${target.index}`, archived: item.archived, flow: step.flow, graph: plan.graphs?.[target.index] || preview, graphRun: { nodes: {} }, milestone: target.index };
+  }
+  function paintTarget() {
+    // Thẻ kế hoạch PO nằm trên tab và chiếm tới 55vh: ẩn khi đang sửa sơ đồ mốc để sơ đồ có đủ chỗ (← Về kế hoạch PO mở lại).
+    document.body.classList.toggle('po-graph-editing', Boolean(target) && !get('#graph-view').hidden);
+    get('#graph-target').hidden = !target; if (!target) return;
+    const milestone = session?.poPlan?.plan?.milestones?.[target.index], edited = Boolean(session?.poPlan?.graphs?.[target.index]);
+    get('#graph-target-title').textContent = `Đang sửa sơ đồ Mốc ${target.index + 1}: ${milestone?.title || ''} · kế hoạch PO chờ duyệt, app dùng khi tới mốc · ${edited ? 'đã sửa' : 'sơ đồ PO dựng sẵn'}`;
+  }
+  get('#graph-target-exit').onclick = () => setTab('chat');
   window.graphView = {
     // Gọi từ team-ui.js mỗi lần vẽ lại. Bản nháp đang sửa không bị ghi đè bởi trạng thái mới từ main.
     // Khối đang chạy thì main gửi trạng thái mới ~10 lần/giây (log, tiến độ, token) nhưng sơ đồ chỉ phụ thuộc vào sơ đồ đã lưu,
     // danh sách khối và trạng thái từng nút: những thứ đó không đổi thì bỏ qua, không dựng lại DOM (vẽ lại sẽ đóng menu dây, cắt thao tác kéo).
     // Có đổi thật mà menu đang mở/đang kéo (cùng session) thì hoãn tới khi đóng menu/thả chuột (flushPaint).
     paint(next) {
-      const same = next && thread && next.id === thread.id, key = signature(next); thread = next;
+      session = next; const view = viewOf(next); paintTarget();
+      const same = view && thread && view.id === thread.id, key = signature(view); thread = view;
       if (same && key === painted) return;
       if (same && (menu || tracking)) { pendingPaint = true; return; }
       pendingPaint = false; painted = key; if (!thread || draftOf !== thread.id || !dirty) loadDraft(); if (!get('#graph-view').hidden) render();
+    },
+    // Mở sơ đồ mốc index của kế hoạch PO đang chờ duyệt ở cỡ đầy đủ (phóng to, kéo, sửa như sơ đồ session).
+    editMilestone(index) {
+      if (!session?.poPlan?.previews?.[index]) return;
+      if (dirty && !(target?.index === index) && !confirm('Bỏ thay đổi chưa lưu của sơ đồ đang sửa?')) return;
+      target = { id: session.id, index }; dirty = false; draftOf = ''; painted = null; fitted = '';
+      window.graphView.paint(session); setTab('graph');
     }
   };
   let pendingPaint = false, painted = null;
@@ -327,7 +356,9 @@
   function startDrag(event, node) {
     if (event.button !== 0 || event.target.closest('.graph-handle')) return;
     event.preventDefault(); event.stopPropagation(); closeMenu();
-    if (thread.archived) { if (node.id !== END) window.officeSelectBlock?.(node.label); return; }
+    // Sơ đồ mốc PO: khối có thể chưa có trong session nên không mở bảng khối.
+    const pick = () => { if (node.id !== END && !target) window.officeSelectBlock?.(node.label); };
+    if (thread.archived) { pick(); return; }
     if (event.shiftKey || event.ctrlKey || event.metaKey) { if (selected.has(node.id)) selected.delete(node.id); else selected.add(node.id); paintSelection(); return; }
     if (!selected.has(node.id)) { selected.clear(); selected.add(node.id); paintSelection(); }
     const group = draft.nodes.filter(item => selected.has(item.id)), origin = new Map(group.map(item => [item, { x: item.x, y: item.y }]));
@@ -338,7 +369,7 @@
       for (const item of group) { item.x = origin.get(item).x + dx; item.y = origin.get(item).y + dy; const element = canvas.querySelector(`.graph-node[data-id="${CSS.escape(item.id)}"]`); if (element) { element.style.left = item.x + 'px'; element.style.top = item.y + 'px'; } }
       for (const edge of inner) edge.points = pointOrigin.get(edge).map(was => ({ x: was.x + dx, y: was.y + dy }));
       renderEdges(); markDirty();
-    }, () => { if (node.id !== END && selected.size === 1) window.officeSelectBlock?.(node.label); });
+    }, () => { if (selected.size === 1) pick(); });
   }
   // ---- Nền: kéo để di chuyển cả sơ đồ (chuột trái hoặc giữa); Shift + kéo để quét chọn; bấm (không kéo) để bỏ chọn.
   // Shift + kéo bắt đầu quét chọn cả khi điểm bấm nằm trên dây (dây phủ dày khoảng giữa các nút).
@@ -399,7 +430,7 @@
 
   // ---- Lưu / huỷ / đặt lại
   const showError = error => { get('#graph-state').textContent = error.message; };
-  get('#graph-save').onclick = async () => { try { await window.office.run('team', { action: 'graph-save', id: thread.id, graph: { nodes: draft.nodes, edges: draft.edges } }); dirty = false; get('#graph-save').disabled = get('#graph-cancel').disabled = true; get('#graph-state').textContent = '✓ Đã lưu sơ đồ'; } catch (error) { showError(error); } };
+  get('#graph-save').onclick = async () => { try { const graph = { nodes: draft.nodes, edges: draft.edges }; await window.office.run('team', target ? { action: 'po-graph', id: session.id, index: target.index, graph } : { action: 'graph-save', id: thread.id, graph }); dirty = false; get('#graph-save').disabled = get('#graph-cancel').disabled = true; get('#graph-state').textContent = '✓ Đã lưu sơ đồ'; } catch (error) { showError(error); } };
   get('#graph-cancel').onclick = () => { loadDraft(); render(); };
   // ---- Sắp xếp gọn (trên bản nháp, Huỷ để bỏ): khối xếp theo cột theo dây đi xuôi (xong/pass/luôn), trong mỗi cột giữ thứ tự
   // trên-dưới hiện tại và căn giữa; khối chỉ được gọi bằng dây quay về (như Lead Dev · triage) đặt phía trên các khối nó giao việc.
@@ -430,7 +461,10 @@
     selected.clear(); markDirty(); fitted = ''; render();
   }
   get('#graph-arrange').onclick = () => { if (thread && !thread.archived && draft.nodes.length) arrange(); };
-  get('#graph-reset').onclick = async () => { if (!confirm('Đặt lại sơ đồ theo mặc định? Các nối, đường dây và vị trí đã sửa sẽ mất.')) return; try { await window.office.run('team', { action: 'graph-reset', id: thread.id }); dirty = false; draftOf = ''; } catch (error) { showError(error); } };
+  get('#graph-reset').onclick = async () => {
+    if (!confirm(target ? 'Bỏ bản sửa và quay về sơ đồ PO dựng sẵn cho mốc này?' : 'Đặt lại sơ đồ theo mặc định? Các nối, đường dây và vị trí đã sửa sẽ mất.')) return;
+    try { await window.office.run('team', target ? { action: 'po-graph', id: session.id, index: target.index, graph: null } : { action: 'graph-reset', id: thread.id }); dirty = false; draftOf = ''; } catch (error) { showError(error); }
+  };
 
   let saved = 'chat'; try { saved = localStorage.getItem('main-tab') || 'chat'; } catch {}
   setTab(saved === 'graph' ? 'graph' : 'chat');
