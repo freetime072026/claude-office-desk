@@ -24,8 +24,8 @@ const COLUMN = 280;
 const laneId = (base, lane) => `${base}~${lane}`;
 const laneNames = thread => (thread.lanes || []).map(lane => lane.name);
 const nodeLabel = node => node.id === END ? 'Hoàn tất' : [node.label, node.phase ? PHASE_NAMES[node.phase] : '', node.lane || ''].filter(Boolean).join(' · ');
-// Nút được phép gắn nhánh: QA, Lead Dev pha triage, Art Director pha review.
-const laneable = (type, phase) => (type === 'QA' && !phase) || (type === LEAD && phase === 'triage') || (type === ART_DIRECTOR && phase === 'review');
+// Nút được phép gắn nhánh: QA, Lead Dev pha triage và review, Art Director pha review.
+const laneable = (type, phase) => (type === 'QA' && !phase) || (type === LEAD && ['triage', 'review'].includes(phase)) || (type === ART_DIRECTOR && phase === 'review');
 function matches(when, outcome) {
   if (outcome === 'blocked' || !OUTCOMES.includes(outcome)) return false;
   if (when === 'always') return true;
@@ -61,8 +61,9 @@ function defaultGraph(thread) {
   const addTriage = () => { const top = Math.min(...nodes.filter(node => devs.includes(node.id)).map(node => node.y)); return add(leadId('triage'), lead, 'triage', { x: 40 + (devColumn - 1) * COLUMN, y: top - 120 }); };
   const triageOf = () => nodes.find(node => node.id === leadId('triage'))?.id || (lead && devs.length ? (id => { linkAll([id], fixTargets); return id; })(addTriage()) : '');
   if (lanes.length) {
-    // Nhánh song song (po.cjs lanes): mỗi nhánh là một làn khối nối tiếp → QA và Art Director · review của nhánh; issue/reject chỉ quay về
-    // khối của nhánh đó (Lead triage riêng mỗi nhánh). Lead review nối từ mọi nhánh nên chờ đủ các nhánh pass.
+    // Nhánh song song (po.cjs lanes): mỗi nhánh là một làn khối nối tiếp → QA và Art Director · review của nhánh → Lead Dev · review của
+    // nhánh; issue/reject chỉ quay về khối của nhánh đó (Lead triage riêng mỗi nhánh). Bước sau (Release / Hoàn tất) nối từ review của mọi
+    // nhánh và chờ đủ các nhánh pass. Art Director và Lead Dev chạy các bước của từng nhánh song song (pipeline.cjs parallelLane).
     const width = Math.max(...lanes.map(lane => lane.blocks.length)), perLane = Math.max(1, qas.length + (ad ? 1 : 0)), band = perLane * 100 + 60;
     const checkColumn = column + width, x = col => 40 + col * COLUMN, ends = [];
     lanes.forEach((lane, index) => {
@@ -72,7 +73,10 @@ function defaultGraph(thread) {
       const qaIds = qas.map((label, row) => add(laneId(label, lane.name), label, '', { x: x(checkColumn), y: y + row * 100, ...mark }));
       const adId = ad ? add(laneId(phaseId(ad, 'review'), lane.name), ad, 'review', { x: x(checkColumn), y: y + qas.length * 100, ...mark }) : '';
       const checks = [...qaIds, ...(adId ? [adId] : [])]; checks.forEach(id => checkerIds.add(id));
-      linkAll([last], checks); ends.push(...(checks.length ? checks : [last]));
+      linkAll([last], checks);
+      const review = lead ? add(laneId(leadId('review'), lane.name), lead, 'review', { x: x(checkColumn + 2), y, ...mark }) : '';
+      if (review) { linkOn(checks.length ? checks : [last], review); link(review, first, 'reject'); checkerIds.add(review); ends.push(review); }
+      else ends.push(...(checks.length ? checks : [last]));
       const triage = lead ? add(laneId(leadId('triage'), lane.name), lead, 'triage', { x: x(checkColumn + 1), y, ...mark }) : '';
       if (triage) link(triage, first);
       linkAll(qaIds, [triage || first], 'issue');
@@ -88,7 +92,7 @@ function defaultGraph(thread) {
     fixTargets = [...lanes.map(lane => lane.blocks[0]), ...loose];
     // Lead triage chung: Issue không thuộc nhánh nào (Release, bạn tự báo, chỉnh sửa) giao được cho khối của mọi nhánh.
     if (lead) triageOf();
-    column = checkColumn + (lead ? 2 : 1); tail = ends;
+    column = checkColumn + (lead ? 3 : 1); tail = ends;
   } else {
     devs.forEach((label, row) => add(label, label, '', at(column, row, devs.length))); if (devs.length) column++;
     if (devs.length) { linkAll(tail, devs); tail = devs; }
@@ -112,7 +116,8 @@ function defaultGraph(thread) {
     }
   }
   for (const label of custom) { add(label, label, '', at(column++, 0, 1)); linkOn(tail, label); tail = [label]; }
-  if (lead) { const review = add(leadId('review'), lead, 'review', at(column++, 0, 1)); linkOn(tail, review); linkAll([review], fixTargets, 'reject'); tail = [review]; }
+  // Có nhánh: mỗi nhánh đã có Lead Dev · review riêng (ở trên), không thêm review chung.
+  if (lead && !lanes.length) { const review = add(leadId('review'), lead, 'review', at(column++, 0, 1)); linkOn(tail, review); linkAll([review], fixTargets, 'reject'); tail = [review]; }
   // Release sau Lead review (hoặc bước cuối): pass → Hoàn tất; issue → Lead triage giao sửa (không có Lead thì về Dev).
   const finalChecked = tail.length && tail.every(id => checkerIds.has(id));
   let endWhen = lead ? 'pass' : finalChecked ? 'pass' : 'done';

@@ -120,7 +120,7 @@ test('Lead review reject without tasks reassigns the previous Dev and keeps QA r
   assert.equal(thread.leadPhase, 'planning'); assert.equal(thread.qaFailRounds, 0);
   assert.deepEqual(thread.dispatch.map(task => task.worker), ['Dev', 'Dev #2']); assert.match(thread.dispatch[0].task, /Duplicate: main.cjs:10/);
 });
-test('QA checks performance only after functional pass, and Lead review may send work back to Dev only once', async () => {
+test('QA checks performance only after functional pass, and Lead review may send work back to Dev twice', async () => {
   const { thread, sent, auto } = harness();
   await auto.after(thread, 'GD', reply('done'));
   leadPlans(thread, tasksText(['Dev'])); await auto.after(thread, 'Lead Dev', { text: '' }, { proposalApplied: true });
@@ -135,10 +135,13 @@ test('QA checks performance only after functional pass, and Lead review may send
   await auto.after(thread, 'Lead Dev', reply('reject', { summary: 'Duplicate A' })); assert.equal(thread.reviewRejects, 1);
   devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
   await auto.after(thread, 'QA', reply('pass')); await auto.after(thread, 'QA', reply('pass'));
+  await auto.after(thread, 'Lead Dev', reply('reject', { summary: 'Duplicate B' })); assert.equal(thread.reviewRejects, 2, 'a second fix round is allowed');
+  devFinishes(thread, 'Dev'); await auto.after(thread, 'Dev', reply('done'));
+  await auto.after(thread, 'QA', reply('pass')); await auto.after(thread, 'QA', reply('pass'));
   const before = sent.length;
-  await auto.after(thread, 'Lead Dev', reply('reject', { summary: 'Duplicate B' }));
-  assert.equal(sent.length, before, 'second reject does not start another Dev round'); assert.equal(thread.reviewRejects, 1);
-  assert.match(thread.messages.at(-1).text, /Review vẫn không đạt sau 1 lần sửa[\s\S]*Duplicate B/);
+  await auto.after(thread, 'Lead Dev', reply('reject', { summary: 'Duplicate C' }));
+  assert.equal(sent.length, before, 'third reject does not start another Dev round'); assert.equal(thread.reviewRejects, 2);
+  assert.match(thread.messages.at(-1).text, /Review vẫn không đạt sau 2 lần sửa[\s\S]*Duplicate C/);
 });
 
 test('GD confirming a new problem after the flow moved on opens a new round from the step after GD', async () => {

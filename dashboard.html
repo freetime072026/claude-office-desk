@@ -66,7 +66,7 @@
 <aside id="panel" aria-label="Khối đang chọn">
   <div class="panel-head"><small class="eyebrow">KHỐI ĐANG CHỌN</small><button id="panel-close" type="button" aria-label="Đóng panel khối" title="Đóng panel (mở lại bằng ▣ Khối)">×</button></div>
   <div class="panel-pick"><select id="panel-block" aria-label="Chọn khối"></select><button id="panel-remove" type="button" aria-label="Xoá khối" title="Xoá khối">🗑</button></div>
-  <p id="panel-remove-note" class="panel-note" hidden></p>
+  <div class="panel-row"><p id="panel-remove-note" class="panel-note" hidden></p><button id="panel-restart" type="button" hidden>↻ Restart</button></div>
   <p id="panel-state"></p>
   <div id="panel-tabs" role="tablist" aria-label="Nội dung khối"><button type="button" id="panel-tab-feed" role="tab" aria-selected="true">💬 Tin của khối</button><button type="button" id="panel-tab-config" role="tab" aria-selected="false">⚙ Cấu hình</button></div>
   <section id="block-feed" aria-label="Tin của khối" aria-live="polite"><p id="block-feed-empty" class="hint">Chưa có tin nào của khối này.</p><div id="block-feed-list"></div></section>
@@ -101,7 +101,7 @@
     <textarea id="role-output" aria-label="Đầu ra của khối" maxlength="6000"></textarea>
     <small>Yêu cầu riêng của khối này</small>
     <textarea id="role-instructions" aria-label="Yêu cầu riêng của khối" maxlength="12000"></textarea>
-    <div id="role-mcp" hidden><small>MCP server của role (mọi session)</small><div class="mcp-choices"></div></div>
+    <div id="role-mcp" hidden><small>MCP server của role (mọi session)</small><div class="mcp-choices"></div><div id="penpot-run" hidden><button type="button" id="penpot-start" title="Chạy npx -y @penpot/mcp@stable (một server cho cả app)">▶ Chạy Penpot MCP</button><small id="penpot-status"></small></div></div>
   </details>
   <div id="role-skills" hidden><small>Skill của role (mọi session)</small><div class="mcp-choices"></div></div>
   <small id="panel-saved" role="status"></small>

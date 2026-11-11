@@ -13,7 +13,7 @@ const usesPenpot = servers => (servers || []).some(isPenpot);
 
 const SETUP = [
   'Cách bật Penpot cho các khối:',
-  '1. Mở terminal, chạy: npx -y @penpot/mcp@stable (cần Node.js 20+; để terminal chạy suốt lúc làm việc).',
+  '1. Chạy server: bấm ▶ Chạy Penpot MCP trong ô "MCP server của role" của khối có tích Penpot (panel khối → Cấu hình → Trách nhiệm & yêu cầu riêng), hoặc mở terminal chạy: npx -y @penpot/mcp@stable (cần Node.js 20+; để chạy suốt lúc làm việc).',
   `2. Mở file thiết kế trên Penpot (design.penpot.app hoặc bản tự host) → Plugins → Load from URL → ${PLUGIN_URL} → chạy plugin, bấm "Connect to MCP server" tới khi báo Connected.`,
   '3. Giữ tab Penpot và cửa sổ plugin mở. Trình duyệt Chromium có thể hỏi quyền truy cập mạng local: cho phép; không được thì dùng Firefox.',
   `Server: ${SERVER_URL}. Đã bật cho ${ROLES.join(', ')} (đổi ở mục MCP của từng khối).`
@@ -72,4 +72,39 @@ function createLock() {
   };
 }
 
-module.exports = { NAME, SERVER_URL, PLUGIN_URL, ROLES, SETUP, isPenpot, usesPenpot, perCall, createLock, install, guide };
+// ---- Server Penpot MCP chạy từ app (nút trong panel khối khi role có tích Penpot): `npx -y @penpot/mcp@stable`, dùng chung cả app.
+// Cổng 4401 đã có server (bạn chạy ở terminal) thì không chạy thêm bản thứ hai. Tắt cả cây tiến trình khi dừng hoặc khi app thoát.
+const SERVER_PORT = 4401, START_COMMAND = 'npx -y @penpot/mcp@stable';
+function portOpen(port = SERVER_PORT, host = '127.0.0.1', timeout = 800) {
+  return new Promise(resolve => {
+    const socket = require('node:net').connect({ port, host });
+    const done = value => { socket.destroy(); resolve(value); };
+    socket.setTimeout(timeout, () => done(false)); socket.once('connect', () => done(true)); socket.once('error', () => done(false));
+  });
+}
+function createServer({ changed = () => {}, spawn = require('node:child_process').spawn, execFile = require('node:child_process').execFile, probe = portOpen } = {}) {
+  let run = null; // { child, log, startedAt, running, code, external }
+  const state = () => run && { running: run.running, external: Boolean(run.external), startedAt: run.startedAt, code: run.code, log: run.log.slice(-1500), command: START_COMMAND, plugin: PLUGIN_URL };
+  async function start() {
+    if (run?.running) return state();
+    if (await probe()) { run = { log: `Cổng ${SERVER_PORT} đã có server Penpot MCP đang chạy (ngoài app).`, startedAt: new Date().toISOString(), running: true, code: null, external: true }; changed(); return state(); }
+    const child = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['-y', '@penpot/mcp@stable'], { shell: process.platform === 'win32', windowsHide: true, env: { ...process.env, FORCE_COLOR: '0' } });
+    run = { child, log: '', startedAt: new Date().toISOString(), running: true, code: null, external: false };
+    const take = chunk => { run.log = (run.log + String(chunk).replace(/\x1b\[[0-9;]*m/g, '')).slice(-4000); changed(); };
+    child.stdout?.on('data', take); child.stderr?.on('data', take);
+    child.on('exit', code => { run.running = false; run.code = code; changed(); });
+    child.on('error', error => { run.running = false; run.log += '\n' + error.message; changed(); });
+    changed(); return state();
+  }
+  function stop() {
+    if (!run?.running) return false;
+    if (run.external) { run.running = false; changed(); return true; } // server ngoài app: chỉ thôi theo dõi, không tắt hộ
+    const pid = run.child.pid;
+    if (process.platform === 'win32' && pid) execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {});
+    else try { process.kill(-pid); } catch { run.child.kill(); }
+    return true;
+  }
+  return { start, stop, state };
+}
+
+module.exports = { SERVER_PORT, START_COMMAND, portOpen, createServer, NAME, SERVER_URL, PLUGIN_URL, ROLES, SETUP, isPenpot, usesPenpot, perCall, createLock, install, guide };

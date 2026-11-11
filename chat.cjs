@@ -152,7 +152,7 @@ const RESULT_EXIT_MS = 30000;
 function closeAfterExit(child, grace = EXIT_GRACE_MS) {
   child.once('exit', () => { const timer = setTimeout(() => { for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy(); }, grace); timer.unref?.(); child.once('close', () => clearTimeout(timer)); });
 }
-function launch({ brief = '', mcpConfig = null, executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [], resultExitMs = RESULT_EXIT_MS, toolLock = null, lockedServers = [], lockLeaseMs = LOCK_LEASE_MS }) {
+function launch({ brief = '', mcpConfig = null, executable, directory, settings, mcp, mcpServers = [], thread, profileId, prompt, role, save, publish, askPermission, scope = null, resume = true, maxTurns = 0, extraDirs = [], resultExitMs = RESULT_EXIT_MS, toolLock = null, lockedServers = [], lockLeaseMs = LOCK_LEASE_MS, sessionRole = '' }) {
   const message = { id: randomUUID(), role: role || 'Claude', text: '', time: new Date().toISOString(), streaming: true };
   message.progress = { startedAt: message.time, steps: 0, lastTool: '', target: '' };
   thread.messages.push(message);
@@ -190,7 +190,8 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
     if (names.some(name => !lockedTool(name))) endLease();
   };
   thread.cliSessions ||= {};
-  const key = resumeKey(profileId, thread.folder, role);
+  // sessionRole: tên phiên CLI (mặc định = khối). Bước của một nhánh chạy song song (Art Director/Lead Dev) có phiên riêng "<khối>~<nhánh>".
+  const key = resumeKey(profileId, thread.folder, sessionRole || role);
   // resume=false: role làm việc theo tệp .md mở phiên mới mỗi lượt thay vì kéo dài một phiên phình mãi.
   const resumedId = resume && thread.cliSessions[key] ? thread.cliSessions[key] : '';
   if (resumedId) args.push('--resume', resumedId);

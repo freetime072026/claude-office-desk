@@ -13,10 +13,12 @@ const clip = (value, limit) => { const text = String(value ?? '').trim(); return
 // Câu trả lời dài: giữ đầu (tóm tắt) và đuôi (khối tasks/handoff nằm cuối); lược ở giữa để Fixer không tưởng khối bị cụt.
 const clipMiddle = (value, limit) => { const text = String(value ?? '').trim(); if (text.length <= limit) return text; const head = Math.floor(limit / 4); return text.slice(0, head) + `\n…[app lược ${text.length - limit} ký tự ở giữa]…\n` + text.slice(text.length - (limit - head)); };
 const BRIEF_LIMIT = 11000;
-const keyOf = (thread, label) => `${thread.round || 1}:${label}`;
-const attempts = (thread, label) => thread.fixCounts?.[keyOf(thread, label)] || 0;
-const canFix = (thread, label) => label !== FIXER && attempts(thread, label) < ATTEMPTS;
-function count(thread, label) { (thread.fixCounts ||= {})[keyOf(thread, label)] = attempts(thread, label) + 1; }
+// lane: sự cố ở bước của một nhánh (vd Art Director · review · Hero). Mỗi nhánh có lượt Fixer riêng: Art Director dùng hết lượt ở
+// nhánh này (hoặc ở bước lập kế hoạch) không làm nhánh khác mất Fixer.
+const keyOf = (thread, label, lane = '') => `${thread.round || 1}:${label}${lane ? '~' + lane : ''}`;
+const attempts = (thread, label, lane = '') => thread.fixCounts?.[keyOf(thread, label, lane)] || 0;
+const canFix = (thread, label, lane = '') => label !== FIXER && attempts(thread, label, lane) < ATTEMPTS;
+function count(thread, label, lane = '') { (thread.fixCounts ||= {})[keyOf(thread, label, lane)] = attempts(thread, label, lane) + 1; }
 // Ngữ cảnh gửi Fixer: khối, loại sự cố, lý do app ghi, task và phạm vi tệp, câu trả lời cuối và nhật ký bước của lượt cuối.
 function brief(thread, incident) {
   const label = incident.label, task = (thread.dispatch || []).find(item => item.worker === label);
@@ -24,7 +26,8 @@ function brief(thread, incident) {
   const steps = (last?.steps || []).slice(-25).map(step => `- ${step.tool}${step.sub ? ' (subagent)' : ''}: ${clip(step.detail, 120)}${step.end ? (step.ok ? ' → ✓ ' : ' → ✗ ') + clip(step.result, 120) : ' → (không kết thúc)'}`);
   // Ô chat nhận tối đa 12000 ký tự: giữ tổng dưới BRIEF_LIMIT để lượt Fixer không bị từ chối.
   return clipMiddle([
-    `Sự cố ở khối ${label}${incident.manual ? ' (bạn gọi Fixer)' : ` (lần ${attempts(thread, label) + 1}/${ATTEMPTS} trong vòng này)`}: ${incident.kind}.`,
+    // Tên khối đứng riêng (Fixer chép vào target); nhánh ghi ở câu sau. Lần đếm đã được tính trước khi dựng brief (main.cjs scheduleFix).
+    `Sự cố ở khối ${label}${incident.manual ? ' (bạn gọi Fixer)' : ` (lần ${Math.max(1, attempts(thread, label, incident.lane))}/${ATTEMPTS} trong vòng này)`}: ${incident.kind}.${incident.lane ? ` Bước của nhánh ${incident.lane} (target vẫn ghi đúng tên khối "${label}"; app tự chạy lại đúng bước của nhánh này).` : ''}`,
     'Lý do app ghi: ' + clip(incident.reason, 1500),
     task ? `Task của ${label} (${task.status}${task.error ? ', lỗi: ' + clip(task.error, 400) : ''}): ${clip(task.task, 2500)}\nTệp được giao: ${(task.files || []).join(', ') || '(không giới hạn)'}${task.dependsOn?.length ? '\nPhụ thuộc: ' + task.dependsOn.join(', ') : ''}` : (thread.workers?.[label]?.task ? 'Task của khối: ' + clip(thread.workers[label].task, 2500) : ''),
     last ? `Câu trả lời cuối của ${label}${last.maxTurns ? ' (chạm giới hạn lượt tool)' : last.error ? ' (lỗi)' : ''}:\n${clipMiddle(last.text, 5000)}` : `${label} chưa có lượt nào.`,
@@ -54,7 +57,10 @@ function parseFix(text, flow, problems = []) {
   const body = fenceBody(text, 'fix'); if (body === null) return fail('không có khối fix');
   let data; try { data = JSON.parse(body); } catch { return fail('JSON trong khối fix không đọc được'); }
   if (!ACTIONS.includes(data.action)) return fail(`action phải là một trong ${ACTIONS.join(', ')}`);
-  const target = String(data.target || '');
+  // Fixer hay chép nguyên tên bước có nhánh/pha ("Art Director · nhánh Hero", "Art Director~Hero", "Lead Dev · review") vào target:
+  // lấy phần tên khối có trong session (dài nhất trước, để "Art" không khớp "Art Director").
+  const raw = String(data.target || '').trim(), named = [...flow].sort((a, b) => b.length - a.length).find(label => raw === label || raw.startsWith(label + ' ') || raw.startsWith(label + '~') || raw.startsWith(label + ' ·') || raw.startsWith(label + ' ('));
+  const target = flow.includes(raw) ? raw : named || raw;
   if (data.action !== 'user' && (!flow.includes(target) || target === FIXER)) return fail(`target "${target}" không phải khối trong session`);
   if (data.action === 'complete' && !COMPLETE_STATUSES.includes(data.status)) return fail(`complete cần status là một trong ${COMPLETE_STATUSES.join(', ')} (kết quả khối đã làm xong)`);
   return { cause: clip(data.cause, 2000) || '(không ghi)', fix: clip(data.fix, 2000), action: data.action, target, message: clip(data.message, 4000), ...(data.action === 'complete' ? { status: data.status } : {}) };

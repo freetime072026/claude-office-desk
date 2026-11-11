@@ -11,7 +11,7 @@
   const TAKES_ARGS = ['/role', '/auto'];
   const CHAT_SKILLS = '*chat'; // skills.CHAT_KEY
   // Thứ tự role, giới hạn vòng QA và quyền xóa đều lấy từ backend (snapshot), UI không tự tính.
-  let devServers = {};
+  let devServers = {}, penpotServer = null;
   let removal = {}, qaRoundLimit, roleTypes = [], mcpNames = [], skillCatalog = {}, releaseFiles = {}, releaseNetworks = [], knownProfiles = [], defaultRoles = {}, presets = {};
   const isLead = (thread, role) => (thread.workers?.[role]?.type || role) === 'Lead Dev';
   const current = () => team?.threads.find(thread => thread.id === selected);
@@ -265,7 +265,16 @@
     const role = picker.value, check = role ? removal[thread.id]?.[role] : null;
     remove.hidden = !role; remove.disabled = !(check?.ok || check?.force) || Boolean(thread?.archived); remove.title = check?.ok ? `Xóa ${role} (${check.reason})` : check?.force ? `Xóa bắt buộc: ${check.reason}` : check?.reason || 'Không xóa được';
     const note = get('#panel-remove-note'); note.hidden = !role || Boolean(check?.ok); note.textContent = check && !check.ok ? check.reason : '';
+    const restart = get('#panel-restart'); restart.hidden = !role; restart.disabled = Boolean(thread?.archived);
+    restart.title = role ? (runningOf(thread, role) ? `Dừng lượt đang chạy của ${role} rồi chạy lại (như /role ${role} pause rồi start)` : `Chạy lại ${role} (như /role ${role} start)`) : '';
   }
+  // Restart: như /role <khối> start; khối đang chạy thì dừng lượt hiện tại trước (main 'role-restart').
+  get('#panel-restart').onclick = async () => {
+    const role = get('#panel-block').value, thread = current(); if (!role || !thread) return;
+    if (runningOf(thread, role) && !confirm(`${role} đang chạy. Dừng lượt hiện tại rồi chạy lại?`)) return;
+    const button = get('#panel-restart'); button.disabled = true;
+    try { await window.office.run('role-restart', { id: thread.id, role }); } catch (error) { showError(error); } finally { button.disabled = Boolean(current()?.archived); }
+  };
   get('#panel-block').onchange = () => chooseWorker(get('#panel-block').value);
   // Khối có việc dang dở vẫn xóa được khi không chạy: hỏi rõ hậu quả rồi gửi force.
   get('#panel-remove').onclick = async () => {
@@ -374,7 +383,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     // Cấu hình riêng của khối (roleConfig[nhãn khối]); chưa sửa thì hiện phần thừa hưởng: preset của khối → template → mặc định.
     const type = roleType(thread, role), own = thread.roleConfig?.[role] || {}, template = team.roleTemplates?.[type] || {}, fallback = defaultRoles[type] || {};
     const preset = Object.entries(presets).find(([key]) => key.toLowerCase() === config.purpose)?.[1]?.config?.[type] || {};
-    paintRoleMcp(thread, type);
+    paintRoleMcp(thread, type); paintPenpot(type);
     // Mục đích chỉ hiện cho loại role preset có cấu hình (hiện chỉ có PLA).
     get('#purpose-field').hidden = !presets.PLA?.roles.includes(type); setField(get('#worker-purpose'), config.purpose || 'game', force);
     // Khối PO chọn loại sản phẩm của session (thread.poProduct); session đang là PLA thì PO cũng chọn được engine/Spine.
@@ -479,6 +488,18 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     } catch (error) { showError(error); }
   };
   // US-08: mỗi loại role chỉ nạp MCP server được tích ở đây (team.roleMcp, dùng chung mọi session); chat thường nạp tất cả.
+  // Nút Chạy / Dừng Penpot MCP (main.cjs penpot-server): hiện khi role có tích một MCP server tên chứa "penpot". Server dùng chung cả app.
+  function paintPenpot(type) {
+    const on = (team.roleMcp?.[type] || []).some(name => /penpot/i.test(name)), box = get('#penpot-run'); box.hidden = !on; if (!on) return;
+    const run = penpotServer, running = Boolean(run?.running), last = String(run?.log || '').trim().split(/\r?\n/).filter(Boolean).at(-1) || '';
+    get('#penpot-start').textContent = running ? (run.external ? '↻ Kiểm lại Penpot MCP' : '■ Dừng Penpot MCP') : '▶ Chạy Penpot MCP';
+    const code = run && run.code !== null && run.code !== undefined ? ` (mã ${run.code})` : '';
+    get('#penpot-status').textContent = running ? (run.external ? 'Đã có server chạy ở cổng 4401 (ngoài app).' : 'Đang chạy.') + ' Mở file Penpot → Plugins → Load from URL → ' + run.plugin + ' → Connect.' + (last && !run.external ? ' · ' + last.slice(0, 160) : '')
+      : run ? `Đã dừng${code}${last ? ' · ' + last.slice(0, 200) : ''}` : 'Chưa chạy. Bấm để chạy npx -y @penpot/mcp@stable.';
+  }
+  get('#penpot-start').onclick = async () => {
+    try { await window.office.run('penpot-server', { op: penpotServer?.running ? 'stop' : 'start' }); } catch (error) { showError(error); }
+  };
   function paintRoleMcp(thread, type) {
     const box = get('#role-mcp'), enabled = team.roleMcp?.[type] || []; box.hidden = !mcpNames.length;
     const key = [type, thread.archived, ...mcpNames, '|', ...enabled].join(','); if (box.dataset.key === key) return; box.dataset.key = key;
@@ -794,7 +815,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   get('#usage-viewer').addEventListener('close', () => { if (usageId) window.office.run('close', { id: usageId }).catch(() => {}); usageId = undefined; usageTerm?.dispose(); usageTerm = undefined; get('#usage-terminal').replaceChildren(); });
 
   // ---- Trạng thái từ main.
-  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; skillCatalog = state.skills || {}; releaseFiles = state.releaseFiles || {}; releaseNetworks = state.releaseNetworks || []; devServers = state.devServers || {}; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
+  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; skillCatalog = state.skills || {}; releaseFiles = state.releaseFiles || {}; releaseNetworks = state.releaseNetworks || []; devServers = state.devServers || {}; penpotServer = state.penpotServer || null; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
   window.office.onState(applyState);
   get('#search').oninput = sidebar;
   get('#new-thread').onclick = async () => { const id = await act('create', { project: current()?.archived ? '' : current()?.project || '' }); if (id) { select(id); get('#message').focus(); } };

@@ -26,10 +26,11 @@ test('TC-PROMPT-02 / AC-PROMPT-01.1 / AC-LOOP-01.7 / AC-REVIEW-01.1: Lead prompt
 });
 test('Lead review: code clean / duplicate are warnings in ISSUES.md, fixed once per milestone after Dev planning', () => {
   const fresh = rolePrompt({}, thread({ leadPhase: 'review' }), 'Lead Dev', { content: 'Review' }).text;
-  for (const item of [/Mục 1 và 2 là warning, không tự là lý do reject/, /W-n · warning/, /1 lần duy nhất, ở pha cuối cùng của mốc/, /lập kế hoạch \(planning\)/, /Lần sửa duy nhất của mốc này chưa dùng\./]) assert.match(fresh, item);
+  for (const item of [/Mục 1 và 2 là warning, không tự là lý do reject/, /W-n · warning/, /Mỗi mốc Lead review được trả về sửa tối đa 2 lần/, /Warning chỉ gom sửa 1 lần, ở lần sửa đầu tiên/, /lập kế hoạch \(planning\)/, /Mốc này còn 2 lần sửa; lần đầu gom luôn mọi warning mở\./]) assert.match(fresh, item);
   const used = rolePrompt({}, thread({ leadPhase: 'review', reviewRejects: 1 }), 'Lead Dev', { content: 'Review' }).text;
-  assert.match(used, /Lần sửa duy nhất của mốc này đã dùng: không reject vì warning/);
-  assert.doesNotMatch(rolePrompt({}, thread({ leadPhase: 'planning', reviewRejects: 1 }), 'Lead Dev', { content: 'Plan' }).text, /Lần sửa duy nhất của mốc/);
+  assert.match(used, /Đã dùng 1\/2 lần sửa của mốc này \(warning đã gom ở lần trước\): chỉ reject vì mục 3 hoặc lỗi chức năng/);
+  assert.match(rolePrompt({}, thread({ leadPhase: 'review', reviewRejects: 2 }), 'Lead Dev', { content: 'Review' }).text, /Đã dùng hết 2\/2 lần sửa của mốc này: không reject vì warning/);
+  assert.doesNotMatch(rolePrompt({}, thread({ leadPhase: 'planning', reviewRejects: 1 }), 'Lead Dev', { content: 'Plan' }).text, /lần sửa của mốc này/);
   const files = { project: 'P.md', issues: 'I.md', changes: 'C.md', perf: 'F.md', gdd: 'G.md' };
   const scope = require('../permissions.cjs').roleScope('Lead Dev', files);
   assert.deepEqual(scope.paths, ['P.md', 'I.md']);

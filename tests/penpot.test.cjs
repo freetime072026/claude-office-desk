@@ -51,3 +51,17 @@ test('only CLI modes that ask the host get per-call locking; Auto and Bypass hol
   assert.equal(penpot.perCall('default'), true); assert.equal(penpot.perCall('plan'), true);
   assert.equal(penpot.perCall('auto'), false); assert.equal(penpot.perCall('bypassPermissions'), false);
 });
+
+test('Penpot MCP server button: starts npx once, reuses a server already on port 4401, stops the whole tree', async () => {
+  const { EventEmitter } = require('node:events');
+  const spawned = [], killed = [];
+  const fakeSpawn = (command, args) => { const child = new EventEmitter(); child.pid = 4242; child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); spawned.push([command, ...args]); return child; };
+  const server = penpot.createServer({ spawn: fakeSpawn, execFile: (cmd, args) => killed.push([cmd, ...args]), probe: async () => false });
+  const started = await server.start();
+  assert.equal(started.running, true); assert.equal(started.external, false); assert.match(spawned[0].join(' '), /npx(\.cmd)? -y @penpot\/mcp@stable/);
+  await server.start(); assert.equal(spawned.length, 1, 'no second server while running');
+  assert.equal(server.stop(), true); assert.ok(killed.length || process.platform !== 'win32');
+  const outside = penpot.createServer({ spawn: fakeSpawn, probe: async () => true });
+  const reused = await outside.start();
+  assert.equal(reused.external, true); assert.equal(spawned.length, 1, 'port already served → nothing spawned'); assert.match(reused.log, /cổng 4401/i);
+});

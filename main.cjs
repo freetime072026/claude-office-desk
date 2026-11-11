@@ -26,6 +26,7 @@ const flowgraphLib = require('./flowgraph.cjs');
 const penpot = require('./penpot.cjs');
 // Một khoá Penpot cho cả app: MCP Penpot chỉ thao tác trên page đang mở trong một tab trình duyệt.
 const penpotLock = penpot.createLock();
+let penpotServer = null; // tạo khi app sẵn sàng (cần publishSoon); xem penpot.createServer
 // Dev server PLA (nút ở khối PO): chạy script dev của project, mở localhost; tắt khi app thoát.
 const devServer = require('./devserver.cjs');
 const devServers = devServer.createDevServers({ changed: () => publishSoon() });
@@ -98,7 +99,7 @@ function editOverlap(thread, scope = null) {
   });
 }
 // Nguồn duy nhất cho "khối đang chạy" khi xét xóa role (snapshot và action team dùng chung).
-function busyLabels(thread) { return thread.flow.filter(label => chats.has(runKey(thread.id, label))); }
+function busyLabels(thread) { return thread.flow.filter(label => [...chats.keys()].some(key => key === runKey(thread.id, label) || key.startsWith(runKey(thread.id, label) + '~'))); }
 // Mọi thứ đang chạy của một session: khối/chat thường và terminal mở từ session đó (dùng khi lưu trữ/xoá).
 function threadBusy(thread) { return [...[...chats.keys()].filter(key => key.startsWith(thread.id + ':')).map(key => key.slice(thread.id.length + 1)), ...[...sessions.values()].some(item => item.threadId === thread.id && item.running) ? ['Terminal'] : []]; }
 function removalOf(thread) { const busy = busyLabels(thread); return Object.fromEntries(thread.flow.map(label => [label, removable(thread, label, { busy: busy.includes(label) })])); }
@@ -133,7 +134,7 @@ function publish() { clearTimeout(publishTimer); publishTimer = null; if (window
 // Luồng stream gọi mỗi chunk; gửi trạng thái tối đa ~10 lần/giây thay vì mỗi chunk.
 let publishTimer = null;
 function publishSoon() { publishTimer ||= setTimeout(publish, 100); }
-function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, mcpServers: safeMcpNames(), skills: skillCatalog(), releaseFiles: releaseFiles(), releaseNetworks: releaseConfig.NETWORKS, devServers: devServers.all(), profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
+function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, mcpServers: safeMcpNames(), skills: skillCatalog(), releaseFiles: releaseFiles(), releaseNetworks: releaseConfig.NETWORKS, devServers: devServers.all(), penpotServer: penpotServer?.state() || null, profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
 function requireTrusted(event) { const allowed = [entry, pathToFileURL(path.join(__dirname, 'dashboard.html')).href]; if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !allowed.includes(event.senderFrame.url)) throw Error('Unauthorized'); }
 function start(profileId, kind, task) {
   const item = profile(profileId);
@@ -200,13 +201,17 @@ app.whenReady().then(() => {
   // TASKS.md do app ghi từ khối tasks đã kiểm tra; lỗi ghi tệp chỉ báo, không chặn điều phối.
   // Áp kế hoạch tasks của Lead (Dev/VFX; cả Art khi session không có Art Director) hoặc Art Director (Art). Kế hoạch mới thay task
   // chưa bắt đầu của chính người giao; task của người giao kia được giữ và không được chồng tệp; khối đang chạy/tạm dừng giữ kế hoạch lại.
-  function applyPlan(thread, planner, text) {
-    const result = mergePlan(thread, planner, text); if (!result.dispatch) return result;
+  function applyPlan(thread, planner, text, lane = '') {
+    const result = mergePlan(thread, planner, text, lane); if (!result.dispatch) return result;
     thread.taskDrafts = result.proposal; teamStore.update(metadata.team, 'apply-task-plan', { id: thread.id }); thread.dispatch = result.dispatch;
     recordTasks(thread, result.proposal, planner === ART_DIRECTOR ? 'Art Director giao Art' : 'Lead phân công'); return { applied: true };
   }
   const recordTasks = (thread, tasks, reason) => { try { sessionFiles.writeTasks(thread, tasks, `Vòng ${thread.round || 1} · ${reason}`); } catch (error) { thread.messages.push({ role: 'Hệ thống', text: 'Không ghi được TASKS.md: ' + error.message, time: new Date().toISOString() }); } };
-  const isRunning = (thread, label) => chats.has(runKey(thread.id, label));
+  // Lượt của một khối: khoá "<session>:<khối>"; bước của một nhánh chạy song song (Art Director/Lead Dev) có khoá "<khối>~<nhánh>".
+  // lane: hỏi đúng lượt của nhánh đó (lượt thường của khối cũng tính là bận); không lane: khối có lượt nào đang chạy không.
+  const runsOf = (thread, label) => { const base = runKey(thread.id, label); return [...chats.keys()].filter(key => key === base || key.startsWith(base + '~')); };
+  const isRunning = (thread, label, lane = '') => lane ? chats.has(runKey(thread.id, label) + '~' + lane) || chats.has(runKey(thread.id, label)) : runsOf(thread, label).length > 0;
+  const RESTART_WAIT_MS = 15000; // Restart chờ tiến trình CLI của lượt bị huỷ thoát tối đa ngần này
   async function approveAuto(thread) {
     const folders = foldersOf(thread);
     // Cần duyệt khi có khối ghi/sửa theo mode, hoặc khối có quyền shell (Lead/Dev/VFX/QA chạy lệnh ở mọi mode).
@@ -216,7 +221,7 @@ app.whenReady().then(() => {
   }
   const autoRun = pipeline.createAutoRun({
     update: (thread, action, payload) => teamStore.update(metadata.team, action, { ...payload, id: thread.id }),
-    send: (thread, label, text) => handleDesk(null, 'chat-send', { id: thread.id, role: label, text, auto: true }),
+    send: (thread, label, text, extra = {}) => handleDesk(null, 'chat-send', { id: thread.id, role: label, text, auto: true, ...extra }),
     pump: pumpThread, isRunning, approve: approveAuto, recordTasks,
     incident: (thread, incident) => scheduleFix(thread, incident),
     reviewMilestone: thread => reviewMilestone(thread),
@@ -233,10 +238,12 @@ app.whenReady().then(() => {
     if (getWorker(thread, incident.label)?.paused) return false; // bạn tạm dừng khối: không phải sự cố
     thread.lastIncident = incident; // bạn bấm chạy Fixer bằng tay sau đó vẫn có ngữ cảnh sự cố này
     // Fixer đang xử lý khối khác: xếp hàng, xử lý lần lượt sau khi Fixer xong.
-    if (thread.fixing) { if (thread.fixing.label !== incident.label && !(thread.fixQueue ||= []).some(item => item.label === incident.label)) thread.fixQueue.push(incident); return false; }
-    if (!fixer.canFix(thread, incident.label)) { say(thread, 'Tự động', `Fixer đã xử lý ${incident.label} ${fixer.ATTEMPTS} lần trong vòng này; dừng chờ bạn.`); return false; }
-    fixer.count(thread, incident.label); thread.fixing = { ...incident, at: new Date().toISOString() };
-    say(thread, 'Tự động', `${incident.label} dừng (${incident.kind}); gọi ${label} tìm nguyên nhân.`); persist(); publish();
+    // Cùng khối nhưng khác nhánh (Art Director · review của Hero và của Pet) là hai sự cố riêng, mỗi nhánh có lượt Fixer riêng.
+    const same = (a, b) => a.label === b.label && (a.lane || '') === (b.lane || ''), where = incident.label + (incident.lane ? ` (nhánh ${incident.lane})` : '');
+    if (thread.fixing) { if (!same(thread.fixing, incident) && !(thread.fixQueue ||= []).some(item => same(item, incident))) thread.fixQueue.push(incident); return false; }
+    if (!fixer.canFix(thread, incident.label, incident.lane)) { say(thread, 'Tự động', `Fixer đã xử lý ${where} ${fixer.ATTEMPTS} lần trong vòng này; dừng chờ bạn.`); return false; }
+    fixer.count(thread, incident.label, incident.lane); thread.fixing = { ...incident, at: new Date().toISOString() };
+    say(thread, 'Tự động', `${where} dừng (${incident.kind}); gọi ${label} tìm nguyên nhân.`); persist(); publish();
     background(thread, () => handleDesk(null, 'chat-send', { id: thread.id, role: label, text: fixer.brief(thread, incident), auto: true }).catch(error => { delete thread.fixing; throw error; }));
     return true;
   }
@@ -265,7 +272,8 @@ app.whenReady().then(() => {
     if (task) { task.status = 'pending'; delete task.error; }
     // Nút của khối còn "đang chạy" mà khối không còn phiên (CLI chết trước bàn giao): đưa về bị chặn để runStage chạy lại ngay.
     for (const node of flowgraphLib.ensureGraph(thread).nodes) if (node.label === target && flowgraphLib.stateOf(thread, node.id).status === 'running' && !isRunning(thread, target) && !isDevType(getWorker(thread, target).type)) flowgraphLib.stateOf(thread, node.id).status = 'blocked';
-    persist(); publish(); background(thread, () => autoRun.runStage(thread, target));
+    // Sự cố ở bước của một nhánh: chạy lại đúng bước của nhánh đó, không phải bước bị chặn đầu tiên của khối.
+    persist(); publish(); background(thread, () => autoRun.runStage(thread, target, target === incident.label ? incident.lane || '' : ''));
   }
   // ---- Bộ canh: lượt treo (không có tiến độ quá lâu) bị dừng để Fixer xử lý; luồng tự động đứng yên (task/nút chờ mãi vì
   // trùng tệp đang ghi rồi không ai gọi lại) được đẩy chạy lại, đứng tiếp thì gọi Fixer.
@@ -283,7 +291,10 @@ app.whenReady().then(() => {
     for (const thread of metadata.team.threads) {
       if (!thread.auto?.enabled || teamStore.isHalted(thread) || thread.status === 'done' || thread.fixing) { stuck.delete(thread.id); continue; }
       const running = [...chats.keys()].some(key => key.startsWith(thread.id + ':'));
-      const waiting = (thread.dispatch || []).filter(task => ['queued', 'pending'].includes(task.status) && !getWorker(thread, task.worker)?.paused).map(task => task.worker);
+      // Task chờ sau một bước đang dừng chờ bạn (waitUser, vd Art Director chờ Penpot) không phải luồng kẹt: không đẩy chạy lại / gọi Fixer.
+      const userWait = flowgraphLib.ensureGraph(thread).nodes.filter(node => thread.graphRun?.nodes?.[node.id]?.status === 'blocked' && thread.graphRun.nodes[node.id].waitUser);
+      const heldByUser = label => userWait.some(node => !node.lane || (thread.lanes || []).find(lane => lane.name === node.lane)?.blocks.includes(label));
+      const waiting = (thread.dispatch || []).filter(task => ['queued', 'pending'].includes(task.status) && !getWorker(thread, task.worker)?.paused && !(task.status === 'pending' && heldByUser(task.worker))).map(task => task.worker);
       const pausedNode = id => getWorker(thread, flowgraphLib.ensureGraph(thread).nodes.find(node => node.id === id)?.label || '')?.paused;
       const queued = Object.entries(thread.graphRun?.nodes || {}).filter(([id, state]) => state.status === 'queued' && !pausedNode(id)).map(([id]) => id);
       const orphan = flowgraphLib.ensureGraph(thread).nodes.some(node => thread.graphRun?.nodes?.[node.id]?.status === 'running'
@@ -351,7 +362,7 @@ app.whenReady().then(() => {
     const config = getWorker(thread, label), tasks = (thread.dispatch || []).filter(task => task.worker === label);
     if (verb === 'pause') {
       config.paused = true; for (const task of tasks) if (ACTIVE_TASK.includes(task.status)) task.status = 'paused';
-      { const run = chats.get(runKey(thread.id, label)); if (run?.message) run.message.stopped = true; run?.cancel(); }
+      for (const key of runsOf(thread, label)) { const run = chats.get(key); if (run?.message) run.message.stopped = true; run?.cancel(); }
       return { text: label + ' đã tạm dừng. Bước tự động sẽ chờ tại khối này; dùng /role ' + label + ' start để tiếp tục.' };
     }
     delete config.paused;
@@ -395,6 +406,8 @@ app.whenReady().then(() => {
     if (action === 'role-presets') return Object.fromEntries(Object.entries(PRESETS).map(([key, preset]) => [key, { name: preset.name, roles: preset.roles, config: Object.fromEntries(Object.entries(preset.config).map(([type, config]) => [type, { responsibility: config.responsibility, output: config.output }])), engines: Object.fromEntries(Object.entries(preset.engines || {}).map(([id, engine]) => [id, engine.name])), spine: Object.fromEntries(Object.entries(preset.spine || {}).map(([id, choice]) => [id, choice.name])) }]));
     if (action === 'copy-text') { if (typeof payload.text !== 'string' || payload.text.length > 2 * 1024 * 1024) throw Error('Nội dung copy quá dài'); clipboard.writeText(payload.text); return true; }
     // Dev server của session (khối PO, project PLA): scripts = script dev trong package.json; start/stop; open = mở localhost đang chạy.
+    // Nút Chạy / Dừng Penpot MCP trong panel khối (role có tích Penpot): một server cho cả app.
+    if (action === 'penpot-server') { penpotServer ||= penpot.createServer({ changed: () => publishSoon() }); if (payload.op === 'start') return penpotServer.start(); if (payload.op === 'stop') return penpotServer.stop(); throw Error('Thao tác Penpot không hợp lệ'); }
     if (action === 'dev-server') {
       const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại');
       if (payload.op === 'scripts') return devServer.projects(foldersOf(thread));
@@ -405,17 +418,34 @@ app.whenReady().then(() => {
     }
     if (action === 'open-url') { let url; try { url = new URL(String(payload.url || '')); } catch { throw Error('Link không hợp lệ'); } if (!['http:', 'https:'].includes(url.protocol)) throw Error('Chỉ mở link http/https'); await shell.openExternal(url.href); return true; }
     if (action === 'file-read') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); return require('./files.cjs').readProjectFile(payload.path, foldersOf(thread), { sessionId: thread.id, readOnlyRoots: [require('node:os').tmpdir()] }); }
-    if (action === 'chat-stop') { const thread = metadata.team.threads.find(item => item.id === payload.id); for (const task of thread?.dispatch || []) if (task.worker === payload.role && ACTIVE_TASK.includes(task.status)) task.status = 'cancelled'; { const run = chats.get(runKey(payload.id, payload.role)); if (run?.message) run.message.stopped = true; run?.cancel(); } persist(); publish(); return true; }
+    if (action === 'chat-stop') { const thread = metadata.team.threads.find(item => item.id === payload.id); for (const task of thread?.dispatch || []) if (task.worker === payload.role && ACTIVE_TASK.includes(task.status)) task.status = 'cancelled'; if (thread) for (const key of runsOf(thread, payload.role)) { const run = chats.get(key); if (run?.message) run.message.stopped = true; run?.cancel(); } persist(); publish(); return true; }
+    // Nút Restart trong panel khối: như /role <khối> start. Khối đang chạy thì /role pause trước (huỷ lượt, task chuyển paused,
+    // phiên CLI được giữ) và chờ tiến trình thoát, rồi start chạy tiếp task đó hoặc chạy khối như /role start.
+    if (action === 'role-restart') {
+      const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại');
+      if (thread.archived) throw Error('Session đã lưu trữ; khôi phục để chạy tiếp.');
+      const label = String(payload.role || ''); if (!thread.flow.includes(label)) throw Error('Khối không tồn tại');
+      const wasRunning = isRunning(thread, label);
+      if (wasRunning) {
+        roleCommand(thread, label, 'pause'); persist(); publish();
+        for (let waited = 0; isRunning(thread, label) && waited < RESTART_WAIT_MS; waited += 100) await new Promise(resolve => setTimeout(resolve, 100));
+        if (isRunning(thread, label)) throw Error(label + ' chưa dừng hẳn; bấm Restart lại sau ít giây.');
+      }
+      const result = roleCommand(thread, label, 'start');
+      thread.messages.push({ role: 'Hệ thống', text: (wasRunning ? 'Restart ' + label + ': đã dừng lượt đang chạy. ' : 'Restart ' + label + ': ') + result.text, time: new Date().toISOString(), to: label });
+      persist(); publish(); if (result.run) background(thread, result.run); return true;
+    }
     if (action === 'dispatch-retry') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); for (const task of thread.dispatch || []) if (['blocked', 'failed', 'cancelled'].includes(task.status)) { task.status = 'queued'; delete task.error; } await pumpThread(thread); return true; }
     if (action === 'chat-send') {
       const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại');
       if (thread.archived) throw Error('Session đã lưu trữ; khôi phục để chạy tiếp.');
       if (payload.role && !thread.flow.includes(payload.role)) throw Error('Role không thuộc session (có thể đã bị xóa)');
       const worker = payload.role ? getWorker(thread, payload.role) : { mode: thread.mode || 'read', model: thread.model || 'claude-opus-5-5', profileId: '' };
-      const activeKey = runKey(thread.id, payload.role);
+      // Bước của một nhánh chạy song song (pipeline parallelLane): khoá và phiên CLI riêng của nhánh.
+      const laneRun = payload.parallel && payload.lane && payload.role ? String(payload.lane) : '', activeKey = runKey(thread.id, payload.role) + (laneRun ? '~' + laneRun : '');
       const content = payload.text?.trim(); if (!content || content.length > 12000) throw Error('Nhập yêu cầu tối đa 12000 ký tự');
       // Lệnh slash xử lý cục bộ nên vẫn dùng được khi khối đang trả lời (ví dụ /role Dev pause).
-      if (!content.startsWith('/')) { if (chats.has(activeKey)) throw retryable('Khối này đang trả lời. Khối khác vẫn có thể chạy.'); if (chats.size >= 8) throw retryable('Tối đa 8 phiên chat'); }
+      if (!content.startsWith('/')) { if (isRunning(thread, payload.role, laneRun)) throw retryable('Khối này đang trả lời. Khối khác vẫn có thể chạy.'); if (chats.size >= 8) throw retryable('Tối đa 8 phiên chat'); }
       // Bạn bấm chạy Fixer: gửi kèm ngữ cảnh sự cố đang mở và mở phiên Fixer mới (phiên cũ giữ chẩn đoán cũ), để kết luận được áp.
       if (!content.startsWith('/') && worker.type === fixer.FIXER && !payload.auto && !payload.fixBrief && !thread.fixing) {
         const incident = fixer.currentIncident(thread, flowgraphLib.ensureGraph(thread).nodes);
@@ -484,11 +514,11 @@ app.whenReady().then(() => {
       // Role trong flow làm việc với tệp .md của session (session-files.cjs) và bị giới hạn phạm vi ghi (permissions.roleScope).
       const files = payload.role ? sessionFiles.ensureFiles(thread) : null;
       const assigner = (thread.dispatch || []).find(task => task.worker === payload.role && task.status !== 'finished')?.by === ART_DIRECTOR ? ART_DIRECTOR : 'Lead';
-      const scope = payload.role ? withShell(roleScope(worker.type, files, worker.files || [], thread.folder, assigner), worker.shell) : null;
+      const baseScope = payload.role ? withShell(roleScope(worker.type, files, worker.files || [], thread.folder, assigner), worker.shell) : null; /* Bước song song của nhánh: tệp ghi chú của Art Director/Lead (ART.md, STYLE.md, ASSETS.md, PROJECT.md…) ghi chung với lượt của nhánh khác, không coi là chồng phạm vi */ const scope = baseScope && laneRun ? { ...baseScope, shared: [...baseScope.paths] } : baseScope;
       const writes = worker.mode !== 'read' || Boolean(scope);
       // Đọc & sửa/Auto không hỏi trước cả lượt nữa: từng thao tác ghi/sửa/shell/web được duyệt riêng (askPermission bên dưới).
       if (writes) { if (editOverlap(thread, exclusivePaths(scope))) throw retryable('Khối khác đang sửa cùng tệp/thư mục. Đợi lượt đó xong để tránh ghi đè; các lượt chỉ đọc vẫn chạy song song.'); if (needsTurnConfirm(worker.mode, foldersOf(thread)) && !autoApproved) { const answer = await dialog.showMessageBox(window, { type: 'warning', message: 'Bypass trên ổ hệ thống hoặc thư mục mạng: bỏ duyệt thao tác tệp và lệnh shell trong lượt này?', detail: foldersOf(thread).join('\n'), buttons: ['Hủy', 'Cho phép lần này'], defaultId: 0, cancelId: 0 }); if (answer.response !== 1) return false; } }
-      if (chats.has(activeKey)) throw retryable('Khối đang trả lời');
+      if (isRunning(thread, payload.role, laneRun)) throw retryable('Khối đang trả lời');
       if (writes && editOverlap(thread, exclusivePaths(scope))) throw retryable('Một lượt sửa đã bắt đầu trong lúc xác nhận; hãy đợi để tránh ghi đè.');
       // US-08: khối trong luồng chỉ nạp MCP server bật cho loại role của nó (team.roleMcp); chat thường nạp tất cả.
       const allMcp = mcpServerNames(), mcpServers = payload.role ? allMcp.filter(name => (metadata.team.roleMcp?.[worker.type] || []).includes(name)) : allMcp;
@@ -505,7 +535,7 @@ app.whenReady().then(() => {
       // trong tệp, còn phiên kéo qua nhiều task làm ngữ cảnh mỗi lần gọi model phình (Dev tới ~177k token). Ngoại lệ: chạy lại
       // đúng task đang dở (sendTask) thì tiếp tục phiên cũ nếu cùng hồ sơ/thư mục. Tin người dùng gõ tay, GD, chat thường và
       // role tùy chỉnh tiếp tục phiên của mình; CLI tự compact khi ngữ cảnh lớn (--autocompact).
-      const sessionKey = resumeKey(profileId, thread.folder, payload.role), continued = payload.resumeSession?.key === sessionKey ? payload.resumeSession.id : '';
+      const sessionRole = payload.role && laneRun ? payload.role + '~' + laneRun : payload.role, sessionKey = resumeKey(profileId, thread.folder, sessionRole), continued = payload.resumeSession?.key === sessionKey ? payload.resumeSession.id : '';
       if (continued) (thread.cliSessions ||= {})[sessionKey] = continued;
       const resume = !(payload.auto && !continued && payload.role && FILE_ROLES.includes(worker.type));
       const resumed = resume && Boolean(thread.cliSessions?.[sessionKey]);
@@ -527,7 +557,8 @@ app.whenReady().then(() => {
       // Lượt Release thường (không phải lệnh /build_…) của dự án có skill build_production: đóng gói và kiểm theo skill đó.
       const releaseSkill = payload.role && worker.type === 'Release' && !compactOnly && !projectSkill ? skills.projectSkill(thread.folder, 'build_production') : null;
       const releaseGuide = payload.role && worker.type === 'Release' && !compactOnly ? [releaseConfig.prepare(thread.folder, worker.release), releaseSkill ? `Dự án có skill build_production (${releaseSkill.file}): sau khi commit code đã review cùng build.json lên nhánh hiện tại (không push), bước đóng gói và kiểm làm đúng theo skill này (Read SKILL.md: kiểm build.json, npm run verify -- production, xem ảnh chụp, đi hết CHECKLIST.md) thay cho chỉ chạy npm run build.` : ''].filter(Boolean).join('\n') : '';
-      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { fixNote: payload.role ? takeFixNote(thread, payload.role) : '', content: projectSkill ? projectSkill.prompt : content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide });
+      const laneOptions = payload.lane ? { lane: String(payload.lane), ...(payload.phase ? (worker.type === LEAD ? { phase: payload.phase } : worker.type === ART_DIRECTOR ? { adPhase: payload.phase } : {}) : {}) } : {}; /* bước theo nhánh: prompt lấy nhánh và pha của chính bước đó, không dựa vào thread.runLane / leadPhase chung */
+      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { fixNote: payload.role ? takeFixNote(thread, payload.role) : '', content: projectSkill ? projectSkill.prompt : content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide, ...laneOptions });
       // Brief vai trò đi qua system prompt. CLI giữ system prompt của lần gọi đầu khi resume, nên brief đổi (task/pha mới) trong
       // phiên đang tiếp tục được gửi một lần trong tin; thread.briefSent nhớ bản phiên đã có.
       const briefHash = built?.brief ? createHash('sha1').update(built.brief).digest('hex') : '', briefKnown = !resumed || thread.briefSent?.[sessionKey] === briefHash;
@@ -540,10 +571,10 @@ app.whenReady().then(() => {
       if (folderNote) thread.messages.push({ role: 'Hệ thống', text: folderNote, time: new Date().toISOString() });
       // Ảnh chụp git trong phạm vi tệp của Dev/VFX trước lượt: sau lượt so lại để biết tệp nào được tạo/sửa (file-changes.cjs).
       const devRun = Boolean(files && payload.role && isDevType(worker.type) && scope?.paths?.length), gitBefore = devRun ? fileChanges.gitStatus(thread.folder, scope.paths, foldersOf(thread)) : null;
-      const model = payload.role ? modelFor(worker.type, worker.model, thread.leadPhase) : worker.model;
+      const model = payload.role ? modelFor(worker.type, worker.model, worker.type === LEAD && payload.phase ? payload.phase : thread.leadPhase) : worker.model;
       const runThread = { ...thread, mode: worker.mode, model, cliSessions: thread.cliSessions ||= {}, sessionTotals: thread.sessionTotals ||= {} };
-      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, save: persist, publish: publishSoon, scope, resume, ...(penpotPerCall ? { toolLock: penpotLock, lockedServers: penpotServers } : {}), extraDirs: [...(images.length ? [attachments.folderOf(root, thread.id)] : []), ...(compactOnly ? [] : skills.extraDirs(runSkills))], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder, readable: [attachments.folderOf(root, thread.id)], cliData: path.join(directory, 'projects') }, { approved: () => Boolean(thread.shellApproved?.[payload.role || 'Claude']), approve: () => { (thread.shellApproved ||= {})[payload.role || 'Claude'] = new Date().toISOString(); persist(); } }) }); run.mode = worker.mode; run.scope = exclusivePaths(scope); run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
-      run.message.profileId = profileId; run.message.model = model; run.penpot = penpotRun;
+      const run = chatEngine.launch({ brief: built?.brief || '', executable, directory, settings: chatSettings, mcp, mcpConfig, mcpServers, thread: runThread, profileId, prompt, role: payload.role, sessionRole, save: persist, publish: publishSoon, scope, resume, ...(penpotPerCall ? { toolLock: penpotLock, lockedServers: penpotServers } : {}), extraDirs: [...(images.length ? [attachments.folderOf(root, thread.id)] : []), ...(compactOnly ? [] : skills.extraDirs(runSkills))], maxTurns: payload.role ? MAX_TURNS[worker.type] || DEFAULT_MAX_TURNS : 0, askPermission: permissionAsker(payload.role || 'Claude', foldersOf(thread), autoApproved, { scope, mode: worker.mode, cwd: thread.folder, readable: [attachments.folderOf(root, thread.id)], cliData: path.join(directory, 'projects') }, { approved: () => Boolean(thread.shellApproved?.[payload.role || 'Claude']), approve: () => { (thread.shellApproved ||= {})[payload.role || 'Claude'] = new Date().toISOString(); persist(); } }) }); run.mode = worker.mode; run.scope = exclusivePaths(scope); run.folders = foldersOf(thread); run.profileId = profileId; chats.set(activeKey, run);
+      run.message.profileId = profileId; run.message.model = model; run.penpot = penpotRun; if (payload.lane) run.message.lane = String(payload.lane);
       penpotLaunched = true; if (penpotTurn) { run.child.once('close', () => penpotLock.releaseRun(penpotTurn)); run.child.once('error', () => penpotLock.releaseRun(penpotTurn)); }
       run.child.once('close', () => {
         chats.delete(activeKey);
@@ -575,16 +606,16 @@ app.whenReady().then(() => {
         const handTriage = !run.message.error && !payload.auto && worker.type === LEAD && thread.leadPhase === 'review' && /```tasks/.test(run.message.text);
         // Bạn chủ động cho sửa thêm sau review không đạt: vòng review kế tiếp lại có một lần trả về sửa.
         if (handTriage) { thread.leadPhase = 'triage'; delete thread.reviewRejects; }
-        const planner = run.message.error ? '' : worker.type === LEAD && thread.leadPhase !== 'review' ? LEAD : worker.type === ART_DIRECTOR && /```tasks/.test(run.message.text) ? ART_DIRECTOR : '';
+        const leadPhase = payload.phase && worker.type === LEAD ? payload.phase : thread.leadPhase, planner = run.message.error ? '' : worker.type === LEAD && leadPhase !== 'review' ? LEAD : worker.type === ART_DIRECTOR && /```tasks/.test(run.message.text) ? ART_DIRECTOR : '';
         if (planner) {
-          const result = applyPlan(thread, planner, run.message.text), problemKey = planner === LEAD ? 'planProblems' : 'adPlanProblems';
+          const runLane = payload.lane ? String(payload.lane) : thread.runLane?.[payload.role], result = applyPlan(thread, planner, run.message.text, runLane || ''), problemKey = planner === LEAD ? 'planProblems' : 'adPlanProblems'; const problemsAt = runLane ? ((thread.laneState ||= {})[runLane] ||= {}) : thread; /* lượt của một nhánh: lý do kế hoạch bị từ chối lưu theo nhánh, không lọt sang lượt của nhánh khác */
           const note = text => thread.messages.push({ role: 'Điều phối', text, time: new Date().toISOString() });
-          if (result.applied) { proposalApplied = true; delete thread[problemKey]; if (planner === LEAD) { const lane = thread.runLane?.[payload.role]; thread.reassign = lane ? (thread.reassign || []).filter(item => item.lane !== lane) : []; if (!thread.reassign.length) delete thread.reassign; } /* lượt của một nhánh chỉ xử lý khối cần giao lại của nhánh đó */ note(planner === LEAD ? 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.' : 'Art Director đã giao task cho Art.'); }
+          if (result.applied) { proposalApplied = true; delete problemsAt[problemKey]; if (planner === LEAD) { const lane = runLane; thread.reassign = lane ? (thread.reassign || []).filter(item => item.lane !== lane) : []; if (!thread.reassign.length) delete thread.reassign; } /* lượt của một nhánh chỉ xử lý khối cần giao lại của nhánh đó */ note(planner === LEAD ? 'Lead đã phân công. Bắt đầu các Dev không bị chặn bởi phụ thuộc hoặc xung đột ghi tệp.' : 'Art Director đã giao task cho Art.'); }
           else if (result.blocked) { planBlocked = result.blocked; note(planBlocked); }
-          else { thread[problemKey] = result.problems; note(`${planner} chưa xuất phân công tasks hợp lệ (${result.problems}); không tự đoán hoặc chạy khối nhận việc. Lượt ${planner} tiếp theo sẽ nhận lý do này.`); }
+          else { problemsAt[problemKey] = result.problems; note(`${planner} chưa xuất phân công tasks hợp lệ (${result.problems}); không tự đoán hoặc chạy khối nhận việc. Lượt ${planner} tiếp theo sẽ nhận lý do này.`); }
         }
         persist(); publish();
-        autoRun.after(thread, payload.role, run.message, { proposalApplied, planBlocked }).catch(error => thread.messages.push({ role: 'Tự động', text: 'Dừng tự động: ' + error.message, time: new Date().toISOString() })).finally(() => { persist(); publish(); pumpThread(thread).catch(() => {}); });
+        autoRun.after(thread, payload.role, run.message, { proposalApplied, planBlocked, lane: payload.lane ? String(payload.lane) : '' }).catch(error => thread.messages.push({ role: 'Tự động', text: 'Dừng tự động: ' + error.message, time: new Date().toISOString() })).finally(() => { persist(); publish(); pumpThread(thread).catch(() => {}); });
       }); run.child.once('error', () => chats.delete(activeKey)); persist(); publish(); return true;
     }
     if (action === 'usage-open') { const thread = metadata.team.threads.find(item => item.id === payload.id); const id = thread && payload.role ? getWorker(thread, payload.role).profileId || metadata.activeProfileId || metadata.profiles[0]?.id : metadata.activeProfileId || metadata.profiles[0]?.id; const directory = profileDir(root, id); fs.mkdirSync(directory, { recursive: true }); return start(id, 'work', { folder: directory, prompt: '/usage', runId: randomUUID() }); }
@@ -653,5 +684,5 @@ app.whenReady().then(() => {
   const watchTimer = setInterval(() => { try { watch(); } catch {} }, 60000); watchTimer.unref(); window.on('closed', () => clearInterval(watchTimer)); window.on('closed', () => clearInterval(usageTimer));
 });
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => { devServers.stopAll(); if (root) flushPersist(); });
+app.on('will-quit', () => { devServers.stopAll(); penpotServer?.stop(); if (root) flushPersist(); });
 }
