@@ -4,6 +4,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { usageEvent } = require('./usage.cjs');
 const { cleanEnv, sessionArgs, psLiteral } = require('./core.cjs');
+// Script QA (kit QA PLA trong project) tìm playwright-core của Office Desk qua biến này khi project không cài.
+const { APP_DIR: QA_KIT_APP_DIR } = require('./qa-kit.cjs');
 // Giới hạn thời gian lệnh Bash của CLI (mặc định chỉ 2 phút): script kiểm Playwright/đo FPS của QA, build, Unity compile chạy 2–5 phút
 // bị CLI chuyển sang chạy nền, khối phải dò lại kết quả và hay treo. Nâng mặc định 10 phút, tối đa 30 phút (bộ canh treo dừng lệnh
 // quá 40 phút).
@@ -198,7 +200,7 @@ function launch({ brief = '', mcpConfig = null, executable, directory, settings,
   // Không pipe qua biến PowerShell: CLI nhận thẳng stdin của tiến trình để app trả lời yêu cầu duyệt trong lúc chạy.
   const script = '$ProgressPreference = \'SilentlyContinue\'; [Console]::InputEncoding = New-Object Text.UTF8Encoding($false); [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false); $OutputEncoding = [Console]::OutputEncoding; & ' + [executable, ...args].map(psLiteral).join(' ') + '; exit $LASTEXITCODE';
   const powershell = path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { cwd: thread.folder, env: { ...cleanEnv(process.env, directory), ...BASH_TIMEOUTS, ...PYTHON_UTF8, OFFICE_USAGE_FILE: path.join(directory, 'usage.json') }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { cwd: thread.folder, env: { ...cleanEnv(process.env, directory), ...BASH_TIMEOUTS, ...PYTHON_UTF8, OFFICE_USAGE_FILE: path.join(directory, 'usage.json'), OFFICE_DESK_DIR: QA_KIT_APP_DIR }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let pending = '', errors = '', ended = false;
   // Đã có kết quả mà CLI không thoát (còn chờ tác vụ nền, vd dev server bỏ lại): tin kẹt "đang chạy", task và nút sơ đồ đứng mãi.
   // Quá resultExitMs thì tắt cả cây tiến trình; lượt vẫn tính là xong vì kết quả đã về.

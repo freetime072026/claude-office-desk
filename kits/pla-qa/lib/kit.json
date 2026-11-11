@@ -1,0 +1,5 @@
+{
+  "name": "pla-qa",
+  "version": 1,
+  "_note": "Office Desk writes officeDesk (its install folder) when it copies the kit into a project; harness.js looks for playwright-core there when the project has none."
+}

@@ -32,6 +32,7 @@ const devServers = devServer.createDevServers({ changed: () => publishSoon() });
 const skills = require('./skills.cjs');
 const skillImport = require('./skill-import.cjs');
 const releaseConfig = require('./release-config.cjs');
+const qaKit = require('./qa-kit.cjs');
 const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor, ART_DIRECTOR, ART_CONSUMER_TYPES } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
@@ -527,7 +528,10 @@ app.whenReady().then(() => {
       // Lượt Release thường (không phải lệnh /build_…) của dự án có skill build_production: đóng gói và kiểm theo skill đó.
       const releaseSkill = payload.role && worker.type === 'Release' && !compactOnly && !projectSkill ? skills.projectSkill(thread.folder, 'build_production') : null;
       const releaseGuide = payload.role && worker.type === 'Release' && !compactOnly ? [releaseConfig.prepare(thread.folder, worker.release), releaseSkill ? `Dự án có skill build_production (${releaseSkill.file}): sau khi commit code đã review cùng build.json lên nhánh hiện tại (không push), bước đóng gói và kiểm làm đúng theo skill này (Read SKILL.md: kiểm build.json, npm run verify -- production, xem ảnh chụp, đi hết CHECKLIST.md) thay cho chỉ chạy npm run build.` : ''].filter(Boolean).join('\n') : '';
-      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { fixNote: payload.role ? takeFixNote(thread, payload.role) : '', content: projectSkill ? projectSkill.prompt : content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide });
+      // QA của session PLA: chép kit QA của Office Desk (harness Playwright) vào .office-desk/qa/ của project nếu còn thiếu (qa-kit.cjs).
+      let qaKitGuide = '';
+      if (files && !compactOnly && worker.type === 'QA' && qaKit.isPla(thread)) { const qaDir = sessionFiles.qaDir(files); try { qaKitGuide = qaKit.guide(qaKit.ensure(qaDir), qaDir); } catch (error) { qaKitGuide = `Chưa chép được kit QA PLA của Office Desk vào ${qaDir}: ${error.message}. Báo trong handoff; vẫn kiểm bằng công cụ của project.`; } }
+      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { qaKit: qaKitGuide, fixNote: payload.role ? takeFixNote(thread, payload.role) : '', content: projectSkill ? projectSkill.prompt : content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide });
       // Brief vai trò đi qua system prompt. CLI giữ system prompt của lần gọi đầu khi resume, nên brief đổi (task/pha mới) trong
       // phiên đang tiếp tục được gửi một lần trong tin; thread.briefSent nhớ bản phiên đã có.
       const briefHash = built?.brief ? createHash('sha1').update(built.brief).digest('hex') : '', briefKnown = !resumed || thread.briefSent?.[sessionKey] === briefHash;
