@@ -34,3 +34,15 @@ test('worker-config stores the shell option and a change forgets the session app
   assert.throws(() => update(team, 'worker-config', { ...base, shell: 'root' }), /shell không hợp lệ/);
   update(team, 'remove-role', { id, role: 'Dev' }); assert.equal(thread.shellApproved.Dev, undefined);
 });
+test('quoted Git Bash paths with spaces stay whole, and cd to the parent of the session folders explains the fix', () => {
+  const { outsidePaths } = require('../permissions.cjs'); const folders = ['D:/Work/Game-13', 'D:/Work/Game-10'];
+  assert.deepEqual(outsidePaths('ls "/d/Work/Game-13/input/My Assets" \'/d/Work/Game-10/a b.png\'', folders), []);
+  assert.deepEqual(outsidePaths('ls "/d/Other Place/x.png"', folders), ['D:/Other Place/x.png']); // trước đây cắt thành D:/Other
+  const programs = process.env['ProgramFiles(x86)'] || process.env.ProgramFiles;
+  if (programs) { const bash = '/' + programs[0].toLowerCase() + programs.slice(2).split(require('node:path').sep).join('/'); assert.deepEqual(outsidePaths(`ls "${bash}/Microsoft/Edge/Application/msedge.exe"`, folders), []); }
+  const dev = roleScope('Dev', files, ['src/'], 'D:/Work/Game-13');
+  const parent = decide({ scope: withShell(dev, 'allow'), mode: 'edit', tool: 'Bash', input: { command: 'cd /d/Work; ls Game-10/node_modules' }, folders });
+  assert.equal(parent.action, 'deny'); assert.match(parent.message, /thư mục cha của thư mục session: không cd lên đó/);
+  const other = decide({ scope: withShell(dev, 'allow'), mode: 'edit', tool: 'Bash', input: { command: 'ls /d/Elsewhere' }, folders });
+  assert.equal(other.action, 'deny'); assert.doesNotMatch(other.message, /thư mục cha/);
+});

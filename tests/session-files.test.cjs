@@ -112,3 +112,10 @@ test('switching the main folder carries written session docs over; blank templat
   assert.equal(fs.readFileSync(after.project, 'utf8'), '# PROJECT\nnew map');
   assert.equal(fs.readFileSync(after.issues, 'utf8'), require('../session-files.cjs').TEMPLATES.issues);
 });
+test('folder rule tells shell blocks not to cd to the shared parent only when the session has several folders', () => {
+  const { buildPrompt } = require('../prompt.cjs');
+  const two = buildPrompt({ label: 'Dev', type: 'Dev', files: filesOf({ id: 's', folder: 'D:/Work/Game-13' }), content: 'x', folders: ['D:/Work/Game-13', 'D:/Work/Game-10'] });
+  assert.match(two.brief || two.text, /không cd lên thư mục cha chung/);
+  const one = buildPrompt({ label: 'Dev', type: 'Dev', files: filesOf({ id: 's', folder: 'D:/Work/Game-13' }), content: 'x', folders: ['D:/Work/Game-13'] });
+  assert.doesNotMatch(one.brief || one.text, /cd lên thư mục cha/);
+});

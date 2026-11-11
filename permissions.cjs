@@ -64,6 +64,8 @@ function outsidePaths(command, folders) {
   let text = String(command || ''); const found = [];
   // Đường dẫn trong nháy có thể chứa dấu cách ("C:/Program Files/…"): lấy nguyên chuỗi rồi bỏ khỏi lệnh trước khi quét phần còn lại.
   text = text.replace(/(["'])([A-Za-z]:[\\/][^"'\n]*)\1/g, (all, quote, inner) => { found.push(inner); return ' '; });
+  // Dạng Git Bash trong nháy: "/c/Program Files (x86)/…" (trước đây bị cắt ở dấu cách thành C:/Program, nằm ngoài Program Files nên bị chặn).
+  text = text.replace(/(["'])\/([A-Za-z])\/([^"'\n]*)\1/g, (all, quote, drive, rest) => { found.push(drive.toUpperCase() + ':/' + rest); return ' '; });
   for (const match of text.matchAll(/(?<![\w])([A-Za-z]):[\\/][^\s'"`|;&<>()]*/g)) found.push(match[0]);
   for (const match of text.matchAll(/(?<![\w:.\/~-])\/([a-zA-Z])\/[^\s'"`|;&<>()]*/g)) found.push(match[1].toUpperCase() + ':' + match[0].slice(2));
   const outside = found.map(item => item.replace(/[.,]+$/, '')).filter(item => !under(path.resolve(item), folders) && !under(path.resolve(item), SYSTEM_DIRS));
@@ -139,7 +141,9 @@ function decide({ scope, mode, tool, input = {}, cwd = '', folders = [], readabl
   }
   if (tool === 'Bash') {
     const away = folders.length ? outsidePaths(input.command, [...folders, ...readable]).filter(item => !isToolResult(path.resolve(item), cliData)) : [];
-    if (away.length) return { action: 'deny', message: outsideMessage(away.slice(0, 3).join(', '), folders, ' (công cụ trong Program Files/Windows/nvm vẫn chạy được)') };
+    // Thư mục cha của thư mục session (thường là "cd /d/Projects" rồi gọi Game-A/…, Game-B/…): nói rõ cách làm đúng để lần sau không lặp lại.
+    const parent = away.some(item => folders.some(folder => norm(folder) !== norm(item) && under(folder, [item])));
+    if (away.length) return { action: 'deny', message: outsideMessage(away.slice(0, 3).join(', '), folders, ' (công cụ trong Program Files/Windows/nvm vẫn chạy được)') + (parent ? ' Đây là thư mục cha của thư mục session: không cd lên đó, gọi thẳng đường dẫn tuyệt đối tới từng thư mục session (đặt trong nháy nếu có dấu cách).' : '') };
     const scan = wholeDiskScan(input.command);
     if (scan) return { action: 'deny', message: `Không quét cả ổ đĩa (${scan}): lệnh chạy hàng chục phút và treo lượt. Tìm công cụ bằng \`command -v ffmpeg\` / \`where ffmpeg\`; tìm tệp trong thư mục của session (đường dẫn cụ thể, có -maxdepth).` };
     // /tmp: Git Bash hiểu là thư mục tạm của Windows, node/python hiểu là \tmp ở gốc ổ, nên script ghi được mà đọc lại lỗi
