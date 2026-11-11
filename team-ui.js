@@ -38,8 +38,43 @@
 
   // ---- Panel phải: ẩn/hiện, nhớ lựa chọn theo máy.
   const panelOpen = () => { try { return (localStorage.getItem('panel') ?? (innerWidth >= 1200 ? 'open' : 'closed')) === 'open'; } catch { return true; } };
-  const applyPanel = open => { document.body.classList.toggle('panel-hidden', !open); get('#panel-toggle').setAttribute('aria-expanded', String(open)); };
-  get('#panel-toggle').onclick = () => { const open = document.body.classList.contains('panel-hidden'); localStorage.setItem('panel', open ? 'open' : 'closed'); applyPanel(open); };
+  // Tay nắm ở mép trái panel (#panel-grip, position fixed vì #panel tự cuộn): bấm để thu gọn/mở, giữ và kéo ngang để đổi độ rộng.
+  // Độ rộng kéo được nhớ theo máy và dùng cho cả hai tab của panel; panel ẩn thì tay nắm nằm ở mép phải cửa sổ để mở lại.
+  const grip = get('#panel-grip'), PANEL_MIN = 260;
+  const panelMax = () => Math.max(PANEL_MIN, Math.min(900, innerWidth - 320));
+  const setPanelWidth = (width, save) => {
+    const value = Math.round(Math.min(panelMax(), Math.max(PANEL_MIN, width))); get('#panel').style.width = value + 'px';
+    if (save) try { localStorage.setItem('panel-width', String(value)); } catch {}
+  };
+  const placeGrip = () => { const hidden = document.body.classList.contains('panel-hidden'); grip.style.right = (hidden ? 0 : get('#panel').offsetWidth) + 'px'; grip.firstChild.textContent = hidden ? '‹' : '›'; grip.setAttribute('aria-expanded', String(!hidden)); };
+  const applyPanel = open => { document.body.classList.toggle('panel-hidden', !open); get('#panel-toggle').setAttribute('aria-expanded', String(open)); placeGrip(); };
+  const setPanel = open => { try { localStorage.setItem('panel', open ? 'open' : 'closed'); } catch {} applyPanel(open); };
+  const togglePanel = () => setPanel(document.body.classList.contains('panel-hidden'));
+  get('#panel-toggle').onclick = togglePanel;
+  try { const saved = Number(localStorage.getItem('panel-width')); if (saved) setPanelWidth(saved, false); } catch {}
+  new ResizeObserver(placeGrip).observe(get('#panel'));
+  addEventListener('resize', () => { if (get('#panel').style.width) setPanelWidth(parseFloat(get('#panel').style.width), false); placeGrip(); });
+  grip.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    event.preventDefault(); grip.setPointerCapture(event.pointerId);
+    const startX = event.clientX; let moved = false;
+    const move = moveEvent => {
+      if (!moved && Math.abs(moveEvent.clientX - startX) < 4) return;
+      if (!moved) { moved = true; document.body.classList.add('panel-resizing'); if (document.body.classList.contains('panel-hidden')) setPanel(true); }
+      setPanelWidth(innerWidth - moveEvent.clientX, false);
+    };
+    const up = () => {
+      grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up);
+      document.body.classList.remove('panel-resizing');
+      if (moved) setPanelWidth(get('#panel').offsetWidth, true); else togglePanel();
+    };
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+  });
+  // Bàn phím: Enter/Space thu gọn/mở, ←/→ đổi độ rộng 20px.
+  grip.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); togglePanel(); }
+    else if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !document.body.classList.contains('panel-hidden')) { event.preventDefault(); setPanelWidth(get('#panel').offsetWidth + (event.key === 'ArrowLeft' ? 20 : -20), true); }
+  });
   applyPanel(panelOpen());
 
   // ---- Tài khoản ở chân sidebar.
@@ -241,7 +276,7 @@
 
 Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Lead, cấu hình và phiên chat bị xóa.`)) await act('remove-role', { role, force: true });
   };
-  get('#panel-close').onclick = () => { try { localStorage.setItem('panel', 'closed'); } catch {} applyPanel(false); };
+  get('#panel-close').onclick = () => setPanel(false);
   window.officeSelectBlock = role => chooseWorker(role); // bấm nút trên tab Sơ đồ để chọn khối
   // Thư mục của session ở header: nhãn tên thư mục (rê chuột xem đường dẫn) có × để bỏ khỏi session; nút ＋ bên phải để thêm.
   const folderName = folder => folder.split(/[\\/]/).filter(Boolean).pop() || folder;

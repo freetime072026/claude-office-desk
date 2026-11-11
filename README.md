@@ -178,6 +178,11 @@ Bảng tệp session có nút **Release**. Model mặc định Sonnet, 30 lượ
 
 ## Cấu hình riêng từng khối
 
+**Tay nắm của panel khối** (nút nhỏ ‹ › ở giữa mép trái panel):
+- Bấm để thu gọn hoặc mở panel. Khi panel thu gọn, tay nắm nằm ở mép phải cửa sổ.
+- Giữ và kéo ngang để đổi độ rộng, trong khoảng 260–900px; app luôn chừa ít nhất 320px cho phần chat. Độ rộng được nhớ theo máy và dùng chung cho cả hai tab của panel.
+- Bàn phím: Enter/Space để thu gọn hoặc mở, ←/→ đổi độ rộng 20px mỗi lần.
+
 **Tab "Tin của khối"** (khung bên phải chat, cạnh tab **Cấu hình**): bấm một khối ở dòng khối thì khung mở ở tab này. Tab chỉ hiện tin liên quan tới khối đó:
 - lượt trả lời và bàn giao của khối;
 - lời bạn hoặc điều phối gửi cho khối;
