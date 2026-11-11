@@ -64,32 +64,38 @@ function defaultGraph(thread) {
     // Nhánh song song (po.cjs lanes): mỗi nhánh là một làn khối nối tiếp → QA và Art Director · review của nhánh → Lead Dev · review của
     // nhánh; issue/reject chỉ quay về khối của nhánh đó (Lead triage riêng mỗi nhánh). Bước sau (Release / Hoàn tất) nối từ review của mọi
     // nhánh và chờ đủ các nhánh pass. Art Director và Lead Dev chạy các bước của từng nhánh song song (pipeline.cjs parallelLane).
-    const width = Math.max(...lanes.map(lane => lane.blocks.length)), perLane = Math.max(1, qas.length + (ad ? 1 : 0)), band = perLane * 100 + 60;
+    // Trong nhánh, các khối cùng loại liền nhau (Art, Art #2…) là một chặng chạy song song: PO thêm khối cùng loại để chia việc, không phải
+    // để chờ nhau (trước đây Art → Art #2 nối tiếp nên nhánh Hero chỉ vẽ từng ảnh một trong khi nhánh khác đã xong). Chặng khác loại vẫn
+    // nối tiếp (Art → Anim → Dev: khối sau dùng sản phẩm khối trước).
+    const stagesOf = blocks => blocks.reduce((stages, label) => { const last = stages.at(-1); if (last && type(last[0]) === type(label)) last.push(label); else stages.push([label]); return stages; }, []);
+    const laneStages = lanes.map(lane => stagesOf(lane.blocks));
+    const width = Math.max(...laneStages.map(stages => stages.length)), deepest = Math.max(...laneStages.flatMap(stages => stages.map(stage => stage.length)));
+    const perLane = Math.max(1, qas.length + (ad ? 1 : 0), deepest), band = perLane * 100 + 60;
     const checkColumn = column + width, x = col => 40 + col * COLUMN, ends = [];
     lanes.forEach((lane, index) => {
-      const y = index * band, mark = { lane: lane.name }, first = lane.blocks[0], last = lane.blocks.at(-1);
-      lane.blocks.forEach((label, step) => add(label, label, '', { x: x(column + step), y }));
-      linkAll(tail, [first]); lane.blocks.slice(1).forEach((label, step) => link(lane.blocks[step], label));
+      const stages = laneStages[index], y = index * band, mark = { lane: lane.name }, first = stages[0], last = stages.at(-1);
+      stages.forEach((stage, step) => stage.forEach((label, row) => add(label, label, '', { x: x(column + step), y: y + row * 100 })));
+      linkAll(tail, first); stages.slice(1).forEach((stage, step) => linkAll(stages[step], stage));
       const qaIds = qas.map((label, row) => add(laneId(label, lane.name), label, '', { x: x(checkColumn), y: y + row * 100, ...mark }));
       const adId = ad ? add(laneId(phaseId(ad, 'review'), lane.name), ad, 'review', { x: x(checkColumn), y: y + qas.length * 100, ...mark }) : '';
       const checks = [...qaIds, ...(adId ? [adId] : [])]; checks.forEach(id => checkerIds.add(id));
-      linkAll([last], checks);
+      linkAll(last, checks);
       const review = lead ? add(laneId(leadId('review'), lane.name), lead, 'review', { x: x(checkColumn + 2), y, ...mark }) : '';
-      if (review) { linkOn(checks.length ? checks : [last], review); link(review, first, 'reject'); checkerIds.add(review); ends.push(review); }
-      else ends.push(...(checks.length ? checks : [last]));
+      if (review) { linkOn(checks.length ? checks : last, review); linkAll([review], first, 'reject'); checkerIds.add(review); ends.push(review); }
+      else ends.push(...(checks.length ? checks : last));
       const triage = lead ? add(laneId(leadId('triage'), lane.name), lead, 'triage', { x: x(checkColumn + 1), y, ...mark }) : '';
-      if (triage) link(triage, first);
-      linkAll(qaIds, [triage || first], 'issue');
+      if (triage) linkAll([triage], first);
+      linkAll(qaIds, triage ? [triage] : first, 'issue');
       if (adId) {
         linkAll([adId], lane.blocks.filter(label => ['Art', 'Anim'].includes(type(label))), 'reject');
-        link(adId, triage || first, 'issue');
+        linkAll([adId], triage ? [triage] : first, 'issue');
         linkAll(lane.blocks.filter(label => ART_CONSUMER_TYPES.includes(type(label))), [adId], 'reject');
       }
     });
     // Khối thêm tay ngoài mọi nhánh: chạy song song sau lập kế hoạch, không qua kiểm của nhánh nào.
     const loose = devs.filter(label => !lanes.some(lane => lane.blocks.includes(label)));
     loose.forEach((label, row) => { add(label, label, '', { x: x(column), y: (lanes.length + row) * band }); linkAll(tail, [label]); ends.push(label); });
-    fixTargets = [...lanes.map(lane => lane.blocks[0]), ...loose];
+    fixTargets = [...laneStages.flatMap(stages => stages[0]), ...loose];
     // Lead triage chung: Issue không thuộc nhánh nào (Release, bạn tự báo, chỉnh sửa) giao được cho khối của mọi nhánh.
     if (lead) triageOf();
     column = checkColumn + (lead ? 3 : 1); tail = ends;
@@ -185,6 +191,18 @@ function ensureGraph(thread) {
 }
 // Danh sách khối đổi: sơ đồ chưa được người dùng sửa thì dựng lại mặc định; đã sửa (custom) thì giữ và chỉ bỏ nút của khối đã xoá.
 function syncGraph(thread) { if (!thread.graph?.custom) { thread.graph = defaultGraph(thread); return thread.graph; } return ensureGraph(thread); }
+// Khối chuyển sang nhánh khác giữa mốc (pipeline.cjs lendBlocks) trên sơ đồ người dùng đã sửa: bỏ cạnh cũ, nối và đặt như khối
+// cùng loại (peer) của nhánh mới, nên chạy song song với peer và cùng được bước kiểm của nhánh đó trả về / giao tiếp.
+function moveNode(thread, label, peer) {
+  const graph = ensureGraph(thread), node = graph.nodes.find(item => item.id === label), sample = graph.nodes.find(item => item.id === peer);
+  if (!node || !sample || label === peer) return graph;
+  graph.edges = graph.edges.filter(edge => edge.from !== label && edge.to !== label);
+  const copies = [...graph.edges.filter(edge => edge.to === peer).map(edge => ({ from: edge.from, to: label, when: edge.when })), ...graph.edges.filter(edge => edge.from === peer).map(edge => ({ from: label, to: edge.to, when: edge.when }))];
+  for (const edge of copies) if (!graph.edges.some(item => item.from === edge.from && item.to === edge.to && item.when === edge.when)) graph.edges.push({ id: `${edge.from}>${edge.to}:${edge.when}`, ...edge });
+  const stack = graph.nodes.filter(item => item.id !== label && item.x === sample.x && item.y >= sample.y && labelType(thread, item.label) === labelType(thread, label));
+  Object.assign(node, { x: sample.x, y: Math.max(...stack.map(item => item.y)) + 100 });
+  return graph;
+}
 // Khối mới thêm vào sơ đồ người dùng đã sửa: Dev/VFX nối như các Dev khác (song song), loại khác đặt riêng, chưa nối.
 function addNode(thread, label) {
   if (!thread.graph?.custom) return syncGraph(thread);
@@ -239,4 +257,4 @@ function ready(thread) {
   return queued.slice(0, 1);
 }
 const nodesFor = (thread, label) => ensureGraph(thread).nodes.filter(node => node.label === label);
-module.exports = { laneId, laneable, syncGraph, recoverRunning, END, LEAD_PHASES, PHASED, phaseId, CONDITIONS, CONDITION_NAMES, PHASE_NAMES, leadId, nodeLabel, matches, defaultGraph, validate, ensureGraph, addNode, runOf, stateOf, resetRun, entries, finish, queue, ready, nodesFor, incoming, outgoing };
+module.exports = { laneId, laneable, syncGraph, moveNode, recoverRunning, END, LEAD_PHASES, PHASED, phaseId, CONDITIONS, CONDITION_NAMES, PHASE_NAMES, leadId, nodeLabel, matches, defaultGraph, validate, ensureGraph, addNode, runOf, stateOf, resetRun, entries, finish, queue, ready, nodesFor, incoming, outgoing };

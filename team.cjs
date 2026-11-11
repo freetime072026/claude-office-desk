@@ -195,8 +195,11 @@ function applyMilestone(team, item, k, log, busy = []) {
   // Điểm bắt đầu mốc: khi mốc xong, app đếm lượt/lỗi/Issue từ đây để PO xem lại kế hoạch các mốc sau (po.milestoneReport).
   item.poPlan.mark = { messages: (item.messages || []).length, issues: (item.issues || []).length, round: item.round || 1, at: new Date().toISOString() };
   // Nhánh của mốc (po.parseLanes): sơ đồ mặc định dựng thành làn; mốc không chia nhánh thì chạy như thường.
-  if (milestone.lanes?.length) item.lanes = milestone.lanes; else delete item.lanes;
-  item.poPlan.current = k; flowgraph.syncGraph(item);
+  if (milestone.lanes?.length) item.lanes = structuredClone(milestone.lanes); else delete item.lanes;
+  delete item.lentBlocks; // khối cho nhánh khác mượn ở mốc trước: mốc mới chia nhánh lại theo kế hoạch (pipeline.cjs lendBlocks)
+  // Mốc mới luôn dựng lại sơ đồ theo khối và nhánh của mốc: sơ đồ đã sửa của mốc trước (custom) không có khối mới thêm ở mốc này
+  // (vd. Dev #3, Dev #4 của nhánh Vào game) nên task của chúng nằm chờ mãi. Muốn sơ đồ riêng cho mốc thì sửa trong thẻ kế hoạch (po-graph).
+  item.poPlan.current = k; item.graph = flowgraph.defaultGraph(item);
   // Sơ đồ bạn sửa cho mốc này trong thẻ kế hoạch (po-graph) thay sơ đồ của session; không còn khớp khối thật (nhãn khối đổi khi thêm)
   // thì giữ sơ đồ vừa dựng và báo.
   const edited = item.poPlan.graphs?.[k];

@@ -183,16 +183,24 @@ function ownLaneLine({ ownLane }) {
   return `Bạn thuộc nhánh ${ownLane.name} (${ownLane.blocks.join(' → ')}): chỉ làm phần của nhánh, trong thư mục ${ownLane.files.join(', ')}; các nhánh khác chạy song song với bạn, không sửa tệp của họ.${ownLane.penpot ? ` Penpot: chỉ tạo/sửa board trên page "${ownLane.penpot}" (mở page đó trước khi tạo shape).` : ''}`;
 }
 // Lượt theo nhánh (QA, Art Director · review, Lead triage của một nhánh) hoặc người lập kế hoạch thấy mọi nhánh.
-function laneLines({ lanes = [], runLane, type, lead, phase, adPhase }) {
+// Khối nhánh khác cho mượn (pipeline.cjs lendBlocks): người giao việc của nhánh phải chia phần còn lại cho cả các khối này.
+function helperLine(runLane, lent = {}) {
+  const helpers = Object.entries(lent).filter(([label, item]) => item.to === runLane.name && runLane.blocks.includes(label));
+  if (!helpers.length) return '';
+  const from = [...new Set(helpers.map(([, item]) => item.from))].join(', ');
+  return ` ${helpers.map(([label]) => label).join(', ')} từ nhánh ${from} (đã xong) sang giúp nhánh này: chia phần việc còn lại của nhánh cho MỌI khối của nhánh, mỗi khối một phần riêng (chat / mục / thư mục tạm riêng, files trong thư mục nhánh này), các khối cùng loại chạy song song; không dồn hết cho khối cũ.`;
+}
+function laneLines({ lanes = [], runLane, type, lead, phase, adPhase, lentBlocks }) {
   if (!lanes.length) return '';
   if (runLane) {
     const extra = lead ? ' Chỉ giao task cho khối của nhánh, files trong thư mục nhánh (app từ chối khối hoặc tệp ngoài nhánh).' : type === 'QA' || type === ART_DIRECTOR ? ' Issue bạn báo thuộc nhánh này (app tự gắn nhãn nhánh); Issue của nhánh khác không phải việc lượt này.' : '';
-    return `Lượt này chỉ cho nhánh ${laneText(runLane)}. Chỉ xét các khối đó và mục của chúng trong CHANGES.md.${extra}`;
+    const helpers = lead || type === ART_DIRECTOR ? helperLine(runLane, lentBlocks) : '';
+    return `Lượt này chỉ cho nhánh ${laneText(runLane)}. Chỉ xét các khối đó và mục của chúng trong CHANGES.md.${extra}${helpers}`;
   }
   const planner = (lead && phase !== 'triage') || (type === ART_DIRECTOR && adPhase === 'planning');
   if (!planner) return '';
   const rule = lead && phase === 'review' ? 'Review xét mọi nhánh; khi reject, task của khối trong nhánh vẫn chỉ dùng files trong thư mục nhánh.' : 'Task của khối trong nhánh chỉ dùng files trong thư mục nhánh (app từ chối tệp ngoài nhánh); thứ tự trong nhánh do sơ đồ lo, không cần dependsOn giữa các khối cùng nhánh. Mỗi nhánh xong được QA và Art Director kiểm riêng.';
-  return 'Nhánh song song (mỗi khối làm việc thuộc một nhánh; trong nhánh các khối chạy theo thứ tự):\n' + lanes.map(lane => '- ' + laneText(lane)).join('\n') + '\n' + rule;
+  return 'Nhánh song song (mỗi khối làm việc thuộc một nhánh; trong nhánh khối khác loại chạy theo thứ tự, khối cùng loại như Art, Art #2 chạy song song):\n' + lanes.map(lane => '- ' + laneText(lane)).join('\n') + '\n' + rule;
 }
 function turnLines(options) {
   if (!options.label) return [];
@@ -263,6 +271,6 @@ function rolePrompt(team, thread, label, options) {
   const lanes = thread.lanes || [], runLane = lanes.find(lane => lane.name === (options?.lane || thread.runLane?.[label])) || null, counters = runLane ? thread.laneState?.[runLane.name] || {} : thread;
   const ownLane = label && isDevType(labelType(thread, label)) ? lanes.find(lane => lane.blocks.includes(label)) || null : null;
   const issues = (thread.issues || []).filter(issue => !issue.closed && !issue.accepted && (!runLane || issue.lane === runLane.name));
-  return buildPrompt({ label, type: label ? labelType(thread, label) : '', issues, lanes, runLane, ownLane, lead: Boolean(label) && labelType(thread, label) === LEAD, phase: thread.leadPhase || 'planning', round: counters.qaFailRounds || 0, context: label ? roleContext(team, thread, label) : {}, task: thread.workers?.[label]?.task || '', roster: label && labelType(thread, label) === LEAD ? rosterOf(thread) : '', devFiles: thread.workers?.[label]?.files || [], qaPhase: counters.qaPhase || 'functional', tweak: Boolean(thread.tweak), poProblems: thread.poProblems || '', preset: thread.preset || '', poProduct: thread.poProduct || '', poPlan: thread.poPlan?.status === 'approved', planProblems: counters.planProblems || '', reviewRejects: counters.reviewRejects || 0, adPlanProblems: counters.adPlanProblems || '', uiuxReview: thread.uiuxReview || '', artRework: (thread.artRework || []).filter(item => !runLane || item.lane === runLane.name), adPhase: thread.adPhase || 'planning', hasAd: hasArtDirector(thread), artGenerator: team?.artGenerator || 'chatgpt', reassign: (thread.reassign || []).filter(item => !runLane || item.lane === runLane.name), flow: thread.flow || [], messages: thread.messages || [], folders: [...new Set([thread.folder, ...(thread.relatedFolders || [])].filter(Boolean))], ...options });
+  return buildPrompt({ label, type: label ? labelType(thread, label) : '', issues, lanes, runLane, ownLane, lentBlocks: thread.lentBlocks || {}, lead: Boolean(label) && labelType(thread, label) === LEAD, phase: thread.leadPhase || 'planning', round: counters.qaFailRounds || 0, context: label ? roleContext(team, thread, label) : {}, task: thread.workers?.[label]?.task || '', roster: label && labelType(thread, label) === LEAD ? rosterOf(thread) : '', devFiles: thread.workers?.[label]?.files || [], qaPhase: counters.qaPhase || 'functional', tweak: Boolean(thread.tweak), poProblems: thread.poProblems || '', preset: thread.preset || '', poProduct: thread.poProduct || '', poPlan: thread.poPlan?.status === 'approved', planProblems: counters.planProblems || '', reviewRejects: counters.reviewRejects || 0, adPlanProblems: counters.adPlanProblems || '', uiuxReview: thread.uiuxReview || '', artRework: (thread.artRework || []).filter(item => !runLane || item.lane === runLane.name), adPhase: thread.adPhase || 'planning', hasAd: hasArtDirector(thread), artGenerator: team?.artGenerator || 'chatgpt', reassign: (thread.reassign || []).filter(item => !runLane || item.lane === runLane.name), flow: thread.flow || [], messages: thread.messages || [], folders: [...new Set([thread.folder, ...(thread.relatedFolders || [])].filter(Boolean))], ...options });
 }
 module.exports = { PROMPT_LIMITS, FILE_ROLES, roleContext, inheritedRole, buildPrompt, rolePrompt };

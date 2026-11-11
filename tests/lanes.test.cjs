@@ -62,7 +62,9 @@ test('approving a plan puts the milestone lanes on the session and builds lane n
   update(team, 'po-propose', { id, plan, steps: po.timeline(plan, thread.flow), previews: [] }); update(team, 'po-approve', { id, busy: [] });
   assert.deepEqual(thread.lanes.map(lane => lane.name), ['Hero', 'Enemy']);
   assert.ok(thread.graph.nodes.some(node => node.id === 'QA~Enemy' && node.lane === 'Enemy'));
+  thread.graph.custom = true; // sơ đồ người dùng sửa ở mốc 1 không được mang sang mốc 2 (khối/nhánh khác)
   update(team, 'po-next', { id, busy: [] });
+  assert.equal(thread.graph.custom, undefined, 'next milestone rebuilds the graph from its own blocks');
   assert.equal(thread.lanes, undefined); assert.equal(thread.graph.nodes.some(node => node.lane), false, 'a milestone without lanes runs as before');
 });
 
@@ -80,6 +82,65 @@ test('lane graph: each lane is a chain with its own QA, triage and Lead review; 
   assert.throws(() => graph.validate(thread, { nodes: [{ id: 'QA~Boss', label: 'QA', lane: 'Boss', x: 0, y: 0 }], edges: [] }), /nhánh "Boss"/);
   assert.throws(() => graph.validate(thread, { nodes: [{ id: 'Dev~Hero', label: 'Dev', lane: 'Hero', x: 0, y: 0 }], edges: [] }), /không chia theo nhánh/);
   assert.equal(graph.nodeLabel(g.nodes.find(node => node.id === 'Lead Dev@triage~Hero')), 'Lead Dev · triage · Hero');
+});
+
+test('lane graph: blocks of the same type in one lane run side by side; the next type and the lane checks wait for all of them', () => {
+  const team = initial(); const id = update(team, 'create', { request: 'Game' });
+  for (const type of ['GD', 'Art Director', 'Lead Dev', 'Art', 'Art', 'Art', 'Dev', 'Dev']) update(team, 'add-worker', { id, type });
+  const thread = team.threads[0];
+  thread.lanes = [{ name: 'Hero', blocks: ['Art', 'Art #2', 'Dev'], files: ['hero/'] }, { name: 'Pet', blocks: ['Art #3', 'Dev #2'], files: ['pet/'] }];
+  graph.syncGraph(thread); const g = thread.graph, edge = (from, to, when = 'done') => g.edges.some(item => item.from === from && item.to === to && item.when === when);
+  assert.ok(edge('Lead Dev@planning', 'Art') && edge('Lead Dev@planning', 'Art #2'), 'both Hero artists start after planning');
+  assert.equal(edge('Art', 'Art #2'), false, 'Art #2 does not wait for Art');
+  assert.ok(edge('Art', 'Dev') && edge('Art #2', 'Dev'), 'Dev waits for every Art of its lane');
+  assert.ok(edge('Dev', 'Art Director@review~Hero') && edge('Art Director@review~Hero', 'Art', 'reject') && edge('Art Director@review~Hero', 'Art #2', 'reject'));
+  assert.ok(edge('Lead Dev@triage~Hero', 'Art') && edge('Lead Dev@triage~Hero', 'Art #2') && edge('Lead Dev@review~Hero', 'Art #2', 'reject'));
+  assert.notEqual(g.nodes.find(node => node.id === 'Art').y, g.nodes.find(node => node.id === 'Art #2').y, 'stacked, not drawn on top of each other');
+  assert.doesNotThrow(() => graph.validate(thread, g));
+  graph.finish(thread, 'Lead Dev@planning', 'done');
+  assert.deepEqual(graph.ready(thread).map(node => node.id).filter(id => /^Art/.test(id)).sort(), ['Art', 'Art #2', 'Art #3']);
+  graph.stateOf(thread, 'Art').status = 'running'; graph.stateOf(thread, 'Art #2').status = 'running';
+  graph.finish(thread, 'Art', 'done'); graph.stateOf(thread, 'Art #3').status = 'idle';
+  assert.equal(graph.ready(thread).some(node => node.id === 'Dev'), false, 'Dev still waits for Art #2');
+});
+
+test('a lane that finished early lends its Art blocks to the lane still drawing; Art Director is told to split the rest', async () => {
+  const team = initial(); const id = update(team, 'create', { request: 'Game' });
+  for (const type of ['GD', 'Art Director', 'Lead Dev', 'Art', 'Art', 'Art', 'Art', 'Dev']) update(team, 'add-worker', { id, type });
+  const thread = team.threads[0], logs = [];
+  thread.lanes = [{ name: 'Hero', blocks: ['Art', 'Art #2'], files: ['hero/'] }, { name: 'Lính', blocks: ['Art #3', 'Art #4'], files: ['soldier/'] }, { name: 'Vào game', blocks: ['Dev'], files: ['src/'] }];
+  graph.syncGraph(thread); thread.auto = { enabled: true }; thread.status = 'working';
+  const set = (nodeId, status, outcome) => Object.assign(graph.stateOf(thread, nodeId), { status, ...(outcome ? { outcome } : {}) });
+  for (const nodeId of ['GD', 'Art Director@planning', 'Lead Dev@planning']) set(nodeId, 'done', 'done');
+  set('Art', 'blocked', 'blocked'); set('Art #2', 'done', 'done');
+  for (const nodeId of ['Art #3', 'Art #4']) set(nodeId, 'done', 'done');
+  for (const nodeId of ['Art Director@review~Lính', 'Lead Dev@review~Lính']) set(nodeId, 'done', 'pass');
+  thread.dispatch = [{ worker: 'Art', task: 'C71', files: ['hero/c71/'], status: 'blocked', by: 'Art Director' }, { worker: 'Dev', task: 'Ghép', files: ['src/'], status: 'pending' }, { worker: 'Art #4', task: 'SD004', files: ['soldier/'], status: 'finished' }];
+  const auto = createAutoRun({ update: (item, action, payload) => update(team, action, { ...payload, id: item.id }), send: async () => true, pump: async () => {}, log: (item, role, text) => logs.push(text), changed: () => {}, approve: async () => true, isRunning: () => false });
+  await auto.runStage(thread);
+  assert.deepEqual(thread.lanes.find(lane => lane.name === 'Hero').blocks, ['Art', 'Art #2', 'Art #3', 'Art #4']);
+  assert.deepEqual(thread.lanes.find(lane => lane.name === 'Lính').blocks, []);
+  assert.deepEqual(thread.lanes.find(lane => lane.name === 'Vào game').blocks, ['Dev'], 'Dev has no Dev peer in Hero: stays');
+  assert.deepEqual(thread.lentBlocks['Art #3'], { from: 'Lính', to: 'Hero' });
+  const edge = (from, to, when) => thread.graph.edges.some(item => item.from === from && item.to === to && item.when === when);
+  assert.ok(edge('Art Director@review~Hero', 'Art #3', 'reject') && edge('Art #4', 'Art Director@review~Hero', 'done'), 'helpers are wired into the Hero lane');
+  assert.equal(edge('Art #3', 'Art Director@review~Lính', 'done'), false);
+  assert.ok(logs.some(text => /Nhánh Lính đã xong · Art #3, Art #4 sang giúp nhánh Hero\. Art Director chia/.test(text)));
+  // Art Director review của Hero được giao cho khối mượn: khối tasks của nhánh Hero nhận Art #3 với tệp của Hero.
+  assert.ok(taskPlan(fence('tasks', { tasks: [{ worker: 'Art #3', task: 'C73', files: ['hero/c73/'] }] }), thread, [], { lane: thread.lanes[0] }));
+  const { brief, body } = rolePrompt(team, thread, 'Art Director', { lane: 'Hero', adPhase: 'review', content: 'x', files: null });
+  assert.match(brief + body, /Art #3, Art #4 từ nhánh Lính \(đã xong\) sang giúp nhánh này/);
+  await auto.runStage(thread); assert.equal(logs.filter(text => /sang giúp/.test(text)).length, 1, 'lent once');
+});
+
+test('moveNode: on a hand-edited graph a lent block is rewired like its peer in the new lane', () => {
+  const { thread } = setup(['GD', 'Art Director', 'Lead Dev', 'Art', 'Art', 'Dev', 'Dev']);
+  thread.graph = graph.validate(thread, thread.graph);
+  graph.moveNode(thread, 'Art #2', 'Art');
+  const g = thread.graph, edge = (from, to, when = 'done') => g.edges.some(item => item.from === from && item.to === to && item.when === when);
+  assert.ok(edge('Lead Dev@planning', 'Art #2') && edge('Art #2', 'Dev') && edge('Art Director@review~Hero', 'Art #2', 'reject'));
+  assert.equal(edge('Art #2', 'Dev #2'), false); assert.equal(edge('Art Director@review~Enemy', 'Art #2', 'reject'), false);
+  assert.equal(g.nodes.find(node => node.id === 'Art #2').y, g.nodes.find(node => node.id === 'Art').y + 100);
 });
 
 test('a finished lane is checked at once, and its issue goes back only to that lane', async () => {

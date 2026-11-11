@@ -89,7 +89,57 @@ function parallelLane(thread, node) {
   return node.lane && ((type === ART_DIRECTOR && node.phase === 'review') || (type === LEAD && ['triage', 'review'].includes(node.phase))) ? node.lane : '';
 }
 // Nhánh còn bước đang chờ / chạy / bị chặn (khối của nhánh hoặc nút gắn nhánh).
-const busyLane = thread => (thread.lanes || []).find(lane => graph.ensureGraph(thread).nodes.some(item => (item.lane === lane.name || (!item.lane && lane.blocks.includes(item.label))) && ['queued', 'running', 'blocked'].includes(graph.stateOf(thread, item.id).status))) || null;
+const laneNodes = (thread, lane) => graph.ensureGraph(thread).nodes.filter(item => item.lane === lane.name || (!item.lane && lane.blocks.includes(item.label)));
+const laneRunning = (thread, lane) => laneNodes(thread, lane).some(item => ['queued', 'running', 'blocked'].includes(graph.stateOf(thread, item.id).status));
+const busyLane = thread => (thread.lanes || []).find(lane => laneRunning(thread, lane)) || null;
+// ---- Nhánh xong sớm cho nhánh còn bận mượn khối (vd. Lính, Pet xong trong khi Hero còn nhiều ảnh): khối của nhánh xong chuyển sang
+// nhánh bận có khối cùng loại, để Art Director chia phần còn lại của nhánh đó cho cả các khối này thay vì chúng đứng chờ hết mốc.
+// thread.lentBlocks[khối] = { from, to }; vòng mới trả khối về nhánh cũ, mốc mới thì nhánh dựng lại theo kế hoạch PO (team.cjs).
+const openTasks = (thread, lane) => (thread.dispatch || []).filter(task => lane.blocks.includes(task.worker) && !['finished', 'cancelled'].includes(task.status)).length;
+function laneFinished(thread, lane) {
+  const nodes = laneNodes(thread, lane), state = item => graph.stateOf(thread, item.id);
+  if (!lane.blocks.length || !nodes.length || laneRunning(thread, lane) || openTasks(thread, lane)) return false;
+  const review = nodes.find(item => item.lane && item.phase === 'review' && labelType(thread, item.label) === LEAD);
+  const checks = review ? [review] : nodes.filter(item => item.lane && item.phase !== 'triage');
+  return checks.length ? checks.every(item => state(item).outcome === 'pass') : nodes.some(item => state(item).status === 'done');
+}
+// Khối vào nhánh mới đứng ngay sau khối cùng loại cuối cùng (cùng chặng song song trên sơ đồ, flowgraph.cjs).
+function joinLane(thread, lane, label) {
+  const kind = labelType(thread, label), at = lane.blocks.findLastIndex(item => labelType(thread, item) === kind);
+  lane.blocks.splice(at < 0 ? lane.blocks.length : at + 1, 0, label);
+  return at < 0 ? '' : lane.blocks[at];
+}
+// Sơ đồ mặc định dựng lại theo nhánh mới; sơ đồ bạn đã sửa thì chỉ nối lại khối như khối cùng loại của nhánh mới.
+function rewire(thread, label, peer) {
+  if (!thread.graph?.custom) thread.graph = graph.defaultGraph(thread);
+  else if (peer) graph.moveNode(thread, label, peer);
+}
+function lendBlocks(thread) {
+  const lanes = thread.lanes || [], moved = [];
+  if (lanes.length < 2) return moved;
+  for (const lane of lanes) {
+    if (!laneFinished(thread, lane)) continue;
+    for (const label of [...lane.blocks]) {
+      const kind = labelType(thread, label);
+      const targets = lanes.filter(other => other !== lane && other.blocks.some(item => labelType(thread, item) === kind) && (laneRunning(thread, other) || openTasks(thread, other)));
+      if (!targets.length) continue;
+      const target = targets.reduce((best, other) => openTasks(thread, other) > openTasks(thread, best) ? other : best);
+      lane.blocks = lane.blocks.filter(item => item !== label); rewire(thread, label, joinLane(thread, target, label));
+      const before = thread.lentBlocks?.[label]; (thread.lentBlocks ||= {})[label] = { from: before?.from || lane.name, to: target.name };
+      moved.push({ label, from: lane.name, to: target.name });
+    }
+  }
+  return moved;
+}
+// Vòng mới trong cùng mốc: khối đã cho mượn về lại nhánh cũ.
+function returnBlocks(thread) {
+  for (const [label, { from, to }] of Object.entries(thread.lentBlocks || {})) {
+    const home = laneByName(thread, from), away = laneByName(thread, to);
+    if (!home || !away?.blocks.includes(label)) continue;
+    away.blocks = away.blocks.filter(item => item !== label); rewire(thread, label, joinLane(thread, home, label));
+  }
+  delete thread.lentBlocks;
+}
 // Nút không thuộc nhánh nhưng nối từ bước của nhánh (Release, khối tuỳ chỉnh sau các nhánh).
 const laneFed = (thread, node) => graph.incoming(graph.ensureGraph(thread), node.id).some(edge => graph.ensureGraph(thread).nodes.find(item => item.id === edge.from)?.lane);
 function stageText(thread, label, nodePhase = '') {
@@ -108,7 +158,7 @@ function createAutoRun(deps) {
   const STALE_RUN_MS = 60 * 1000;
   // Xoá trạng thái của vòng trước (dùng khi GD mở vòng mới và khi kế hoạch PO sang mốc mới); giữ phiên CLI của các khối.
   function resetRound(thread) {
-    graph.resetRun(thread); thread.leadPhase = 'planning'; thread.qaFailRounds = 0; delete thread.tweak; delete thread.laneState; delete thread.runLane;
+    returnBlocks(thread); graph.resetRun(thread); thread.leadPhase = 'planning'; thread.qaFailRounds = 0; delete thread.tweak; delete thread.laneState; delete thread.runLane;
     delete thread.qaPhase; delete thread.reviewRejects; delete thread.qaPassedAt; delete thread.planProblems; delete thread.reassign; delete thread.reassignRounds; delete thread.adPhase; delete thread.uiuxRejects; delete thread.adRejects; delete thread.uiuxReview; delete thread.adPlanProblems; delete thread.artRework; delete thread.artReworks; delete thread.artRedo;
   }
   const active = thread => Boolean(thread.auto?.enabled) && !isHalted(thread) && thread.status !== 'done';
@@ -270,6 +320,12 @@ function createAutoRun(deps) {
   // Chạy mọi nút sẵn sàng cho tới khi không còn gì đổi (nút bị bỏ qua kích hoạt tiếp nút sau ngay trong vòng lặp).
   async function advance(thread) {
     let startedAny = false;
+    const lent = active(thread) ? lendBlocks(thread) : [];
+    for (const to of new Set(lent.map(item => item.to))) {
+      const here = lent.filter(item => item.to === to), from = [...new Set(here.map(item => item.from))];
+      const planner = hasArtDirector(thread) && here.every(item => ['Art', 'Anim'].includes(labelType(thread, item.label))) ? 'Art Director' : 'Lead Dev';
+      note(thread, `Nhánh ${from.join(', ')} đã xong · ${here.map(item => item.label).join(', ')} sang giúp nhánh ${to}. ${planner} chia phần còn lại của nhánh ${to} cho cả các khối này ở lượt review kế tiếp của nhánh; muốn chạy ngay thì nhắn ${planner} giao task cho chúng.`);
+    }
     for (let guard = 0; guard < 100 && active(thread); guard++) {
       settleStale(thread);
       const next = graph.ready(thread); let moved = false;
