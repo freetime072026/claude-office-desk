@@ -159,7 +159,7 @@ function phaseGuide({ lead, phase }) { if (!lead) return ''; if (phase === 'revi
 // không cộng dồn vào lịch sử mỗi lượt). Phần đổi theo lượt (kế hoạch bị từ chối, Issue đang mở) nằm ở body.
 function briefLines(options) {
   const { label, context, task, roster } = options; if (!label) return [];
-  return [header(options), field('Trách nhiệm', context.responsibility), field('Đầu ra', context.output), field('Yêu cầu riêng của session', context.instructions), field('Task của khối', task), roster ? 'Đội hiện có:\n' + roster : '', folderRule(options), ownLaneLine(options), options.files?.decisions ? DECISION_RULE(options.files) : '', phaseGuide(options), fileGuide(options), options.type === 'Release' ? options.release : '', options.files ? WORK_GUIDE : '', options.files && SHELL_TYPES.includes(options.type) ? READER_GUIDE : '', SHELL_TYPES.includes(options.type) ? options.unity : '', options.penpot ? penpotGuide(options.type) : '', handoffGuide(options)];
+  return [header(options), field('Trách nhiệm', context.responsibility), field('Đầu ra', context.output), field('Yêu cầu riêng của session', context.instructions), field('Task của khối', task), roster ? 'Đội hiện có:\n' + roster : '', folderRule(options), ownLaneLine(options), options.files?.decisions ? DECISION_RULE(options.files) : '', phaseGuide(options), fileGuide(options), options.type === 'Release' ? options.release : '', options.type === 'QA' ? options.qaKit : '', options.files ? WORK_GUIDE : '', options.files && SHELL_TYPES.includes(options.type) ? READER_GUIDE : '', SHELL_TYPES.includes(options.type) ? options.unity : '', options.penpot ? penpotGuide(options.type) : '', handoffGuide(options)];
 }
 // Người giao task (Lead, Art Director) cần biết gốc của đường dẫn tương đối trong files: app resolve theo thư mục chính,
 // nên khi project nằm ở thư mục liên quan (thư mục chính là kho tài nguyên) phải ghi đường dẫn tuyệt đối.
@@ -254,7 +254,7 @@ const attachmentBlock = attachments => attachments.length ? 'Ảnh tham chiếu 
 // text: prompt đầy đủ cho phiên chưa có brief trong system prompt (terminal, phiên cũ); resumed thì chỉ tiêu đề + body.
 // brief/body: main.cjs gửi brief qua system prompt và body làm tin người dùng.
 function buildPrompt(input) {
-  const options = { label: '', type: '', issues: [], lead: false, phase: 'planning', round: 0, resumed: false, history: true, context: {}, task: '', roster: '', flow: [], messages: [], content: '', attachments: [], limits: PROMPT_LIMITS, files: null, qaPhase: 'functional', devFiles: [], unity: '', projectDocs: '', skills: '', release: '', adPhase: 'planning', hasAd: false, artGenerator: 'chatgpt', ...input };
+  const options = { label: '', type: '', issues: [], lead: false, phase: 'planning', round: 0, resumed: false, history: true, context: {}, task: '', roster: '', flow: [], messages: [], content: '', attachments: [], limits: PROMPT_LIMITS, files: null, qaPhase: 'functional', devFiles: [], unity: '', projectDocs: '', skills: '', release: '', qaKit: '', adPhase: 'planning', hasAd: false, artGenerator: 'chatgpt', ...input };
   options.label ||= '';
   const past = historyOf(options), join = lines => lines.filter(Boolean).join('\n');
   // Danh sách skill (skills.cjs) ổn định trong phiên nên nằm ở brief, kể cả chat thường (không có brief vai trò).

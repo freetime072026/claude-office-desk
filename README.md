@@ -178,6 +178,12 @@ Bảng tệp session có nút **Release**. Model mặc định Sonnet, 30 lượ
 - **Build preview** / **Build production** (khi dự án có skill `build_preview` / `build_production` trong `.claude/skills`, như template-pla): mở hộp chọn network cho riêng lần build đó, mặc định là network đích. Giữ nguyên thì gửi `/build_preview` (build theo `build.json`); bỏ hoặc thêm network thì gửi `/build_preview applovin google`… cho khối Release; `build.json` không đổi.
 - Giá trị được kiểm trước khi lưu: ít nhất một network, network nằm trong danh sách của playable-scripts 1.1.4, `playable_id`/package name chỉ gồm chữ, số, `. _ -`, link store phải là https.
 
+### Kit QA PLA (Playwright + harness)
+- Thứ Office Desk cần và dùng lại được giữ trong Office Desk. Kit QA PLA nằm ở `kits/pla-qa/` (`lib/harness.js`, `smoke.js`, `KIT.md`); `playwright-core` là dependency của Office Desk.
+- Trước lượt QA của session PLA (preset hoặc sản phẩm PO là PLA), app chép các tệp kit còn thiếu vào `<project>/.office-desk/qa/` (`qa-kit.cjs`), ghi `lib/kit.json` (version kit, đường dẫn Office Desk để tìm `playwright-core` khi project không cài), và dặn QA dùng kit thay vì tự dựng harness. Tệp đã có trong project không bao giờ bị ghi đè.
+- Bản trong project thuộc về project: sửa và thêm kịch bản ở đó. Bản trong Office Desk chỉ sửa khi có bug hoặc nâng cấp, không sửa theo một project. Nâng `version` trong `kits/pla-qa/lib/kit.json` khi đổi kit: QA của project có bản cũ được báo có bản mới, tự chọn chép phần sửa lỗi.
+- Project template-pla vẫn kiểm bằng `npm run verify -- dev` trước; kit dùng cho luồng chơi theo AC, tracking theo GDD, thời gian vào game và bản build trong `dist/` (`node .office-desk/qa/smoke.js --file <html>`).
+
 ## Cấu hình riêng từng khối
 
 **Tay nắm của panel khối** (nút nhỏ ‹ › ở giữa mép trái panel):
