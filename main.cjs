@@ -495,7 +495,7 @@ app.whenReady().then(() => {
       throw Error('Thao tác dev server không hợp lệ');
     }
     if (action === 'open-url') { let url; try { url = new URL(String(payload.url || '')); } catch { throw Error('Link không hợp lệ'); } if (!['http:', 'https:'].includes(url.protocol)) throw Error('Chỉ mở link http/https'); await shell.openExternal(url.href); return true; }
-    if (action === 'file-read') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); return require('./files.cjs').readProjectFile(payload.path, foldersOf(thread), { sessionId: thread.id, readOnlyRoots: [require('node:os').tmpdir()] }); }
+    if (action === 'file-read') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); return require('./files.cjs').readProjectFile(payload.path, foldersOf(thread), { sessionId: thread.id, readOnlyRoots: [require('node:os').tmpdir(), codex.imagesDir()] }); }
     if (action === 'chat-stop') { const thread = metadata.team.threads.find(item => item.id === payload.id); for (const task of thread?.dispatch || []) if (task.worker === payload.role && ACTIVE_TASK.includes(task.status)) task.status = 'cancelled'; if (thread) for (const key of runsOf(thread, payload.role)) { const run = chats.get(key); if (run?.message) run.message.stopped = true; run?.cancel(); } persist(); publish(); return true; }
     // Nút Restart trong panel khối: như /role <khối> start. Khối đang chạy thì /role pause trước (huỷ lượt, task chuyển paused,
     // phiên CLI được giữ) và chờ tiến trình thoát, rồi start chạy tiếp task đó hoặc chạy khối như /role start.

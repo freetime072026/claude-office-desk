@@ -28,7 +28,7 @@ function targetOf(input = {}) {
 }
 function progressOf(message) { return message.progress ||= { startedAt: message.time || new Date().toISOString(), steps: 0, lastTool: '', target: '' }; }
 // Nhật ký bước của lượt (message.steps): mỗi tool một mục, kết quả rút gọn; giữ STEP_LIMIT mục cuối để workspace không phình.
-const STEP_LIMIT = 40, RESULT_CLIP = 200, DETAIL_CLIP = 200;
+const STEP_LIMIT = 40, RESULT_CLIP = 200, DETAIL_CLIP = 200; const STEP_IMAGE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 const oneLine = (value, limit) => { const text = String(value ?? '').replace(/\s+/g, ' ').trim(); return text.length > limit ? text.slice(0, limit) + '…' : text; };
 function detailOf(name, input = {}) {
   if (input.command) return oneLine(input.command, DETAIL_CLIP);
@@ -39,7 +39,9 @@ function detailOf(name, input = {}) {
 }
 const resultText = content => typeof content === 'string' ? content : Array.isArray(content) ? content.map(part => part.type === 'text' ? part.text : part.type === 'image' ? '[ảnh]' : '').join(' ') : '';
 function addStep(message, block, sub) {
-  const steps = message.steps ||= []; steps.push({ id: block.id || '', tool: block.name, detail: detailOf(block.name, block.input), at: new Date().toISOString(), ...(sub ? { sub: true } : {}) });
+  // Read một ảnh (Art duyệt ảnh Codex / inbox): giữ đủ đường dẫn để nhật ký bước mở được ảnh (team-ui stepLine), detail bị cắt 200 ký tự.
+  const image = block.name === 'Read' && STEP_IMAGE.test(block.input?.file_path || '') ? String(block.input.file_path).slice(0, 1000) : '';
+  const steps = message.steps ||= []; steps.push({ id: block.id || '', tool: block.name, detail: detailOf(block.name, block.input), at: new Date().toISOString(), ...(image ? { image } : {}), ...(sub ? { sub: true } : {}) });
   if (steps.length > STEP_LIMIT) steps.splice(0, steps.length - STEP_LIMIT);
 }
 function finishStep(message, result) {

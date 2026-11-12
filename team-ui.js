@@ -601,7 +601,11 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     const item = make('li', { className: running ? 'running' : step.end && !step.ok ? 'failed' : '' });
     item.append(make('span', { className: 'step-head', textContent: `${mark} ${clock(step.at)} · ${step.sub ? '↳ ' : ''}${step.tool} · ${took}` }));
     if (step.detail) item.append(make('code', { textContent: step.detail }));
-    if (step.result) item.append(make('span', { className: 'step-result', textContent: step.result }));
+    // Bước Read một ảnh: nút xem ảnh (khung xem ảnh của chat, openChatFile) thay cho chữ [ảnh].
+    // Bước ghi trước khi có step.image: lấy detail nếu là đường dẫn ảnh đủ (không bị cắt bằng …).
+    const imagePath = step.image || (step.tool === 'Read' && step.result === '[ảnh]' && /\.(png|jpe?g|gif|webp|bmp)$/i.test(step.detail || '') ? step.detail : '');
+    if (imagePath && step.end && step.ok !== false) item.append(make('button', { type: 'button', className: 'step-image', textContent: '🖼 Xem ảnh', title: imagePath, onclick: event => { event.preventDefault(); window.openChatFile(imagePath); } }));
+    else if (step.result) item.append(make('span', { className: 'step-result', textContent: step.result }));
     return item;
   }
   function updateSteps(card, message) {
