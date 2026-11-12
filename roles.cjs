@@ -45,7 +45,10 @@ const isDevType = type => DEV_TYPES.includes(type);
 const ART_CONSUMER_TYPES = Object.freeze(['Dev', 'VFX', 'Anim']);
 const ART_REJECT_REASONS = Object.freeze({ 'ui-mismatch': 'không ghép được đúng UI/UX', 'over-detail': 'art thừa chi tiết so với đặc tả', 'missing-layers': 'chưa tách đủ layer' });
 const DEFAULT_MAX_TURNS = 30;
+// Art chế độ Codex: mỗi ảnh tốn vài lượt (ghi lệnh, codex exec, tìm ảnh, Read, ghi trạng thái) và một task thường 10–40 ảnh,
+// 40 lượt hết giữa chừng; sinh cả đợt rồi duyệt + redo cần nhiều lượt hơn.
+const CODEX_ART_MAX_TURNS = 150;
 // Ngưỡng tự compact của CLI (--autocompact, 100k–1M). Mỗi lần gọi model gửi lại toàn bộ ngữ cảnh (đọc từ cache), nên chi phí
 // là kích thước ngữ cảnh × số lần gọi: với 1M, Dev chạy tới ~177k token mỗi lần gọi. 200k giữ ngữ cảnh mỗi lần gọi dưới ~200k.
 const AUTOCOMPACT_WINDOW = '200k';
-module.exports = { ART_DIRECTOR, AD_PHASES, RELEASE, ART_CONSUMER_TYPES, ART_REJECT_REASONS, defaults, roleKey, LEGACY_LEAD, DEFAULT_MODELS, FALLBACK_MODEL, PHASE_MODELS, modelFor, DEFAULT_MODES, SHELL_TYPES, MAX_TURNS, DEFAULT_MAX_TURNS, AUTOCOMPACT_WINDOW, DEV_TYPES, isDevType };
+module.exports = { ART_DIRECTOR, AD_PHASES, RELEASE, ART_CONSUMER_TYPES, ART_REJECT_REASONS, defaults, roleKey, LEGACY_LEAD, DEFAULT_MODELS, FALLBACK_MODEL, PHASE_MODELS, modelFor, DEFAULT_MODES, SHELL_TYPES, MAX_TURNS, DEFAULT_MAX_TURNS, CODEX_ART_MAX_TURNS, AUTOCOMPACT_WINDOW, DEV_TYPES, isDevType };

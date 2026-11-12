@@ -66,7 +66,7 @@ test('Codex mode: Art checks Codex login, runs codex exec per image, reviews the
   assert.match(brief, /ART-….txt\)" < \/dev\/null`/); assert.match(brief, /ls ".*generated_images\/<session id>"/); assert.match(brief, /không dùng ảnh mới nhất của cả thư mục/);
   assert.match(brief, /Codex không sinh được ảnh/); assert.match(brief, /không sinh lại vì nền/); assert.match(brief, /inbox chỉ chứa ảnh đã duyệt/);
   // Duyệt tại thư mục Codex: trượt thì không chép, ghi đường dẫn từng lần; đạt mới cp vào inbox; lỗi nền không tính là trượt.
-  assert.match(brief, /Duyệt ngay trong thư mục ảnh của Codex, chưa chép gì: Read ảnh tại đường dẫn đó/); assert.match(brief, /Nền \/ alpha \/ viền, cỡ canvas và thiếu frame giữa KHÔNG tính là trượt/);
+  assert.match(brief, /ngay trong thư mục ảnh của Codex, chưa chép gì: lần lượt Read từng ảnh chờ duyệt tại đường dẫn đó/); assert.match(brief, /Nền \/ alpha \/ viền, cỡ canvas và thiếu frame giữa KHÔNG tính là trượt/);
   assert.match(brief, /Trượt: không chép vào inbox; ghi trong mục "Lần N: <đường dẫn ảnh trong thư mục Codex>/); assert.match(brief, /liệt kê đường dẫn và số đo từng lần để người dùng chọn ảnh giữ/);
   assert.match(brief, /Đạt: `cp` đúng tệp đó \(giữ nguyên pixel\) vào .*[\\/]s[\\/]inbox[\\/]ART-….png/); assert.match(brief, /xoá ảnh đó khỏi inbox và quay lại bước 2/);
   assert.doesNotMatch(brief, /Ảnh được tạo bằng ChatGPT do người dùng thao tác/); assert.doesNotMatch(brief, /tool MCP sinh ảnh nếu role được bật/);
@@ -128,4 +128,18 @@ test('Codex mode: quota exhaustion returns a quota handoff for the app to schedu
   const brief = rolePrompt({ artGenerator: 'codex' }, thread, 'Art', { content: 'x', files }).brief;
   assert.match(brief, /"quota":"codex","retryAt"/); assert.match(brief, /không chạy lại, trả ngay/);
   assert.match(brief, /— chờ duyệt" mà tệp đó vẫn còn/); assert.match(brief, /ghi ngay vào mục của ảnh/);
+});
+
+test('Codex mode: Art generates the whole batch first, then reviews it, then redoes the failed items as one batch', () => {
+  const files = filesOf({ id: 's', folder: 'E:\game' });
+  const thread = { flow: ['Lead Dev', 'Art'], workers: { Art: { type: 'Art', task: 'ART-3 nút', files: ['ArtGen/ui/'] } }, messages: [], attachments: [] };
+  const brief = rolePrompt({ artGenerator: 'codex' }, thread, 'Art', { content: 'x', files }).brief;
+  assert.match(brief, /SINH CẢ ĐỢT TRƯỚC, CHƯA DUYỆT/); assert.match(brief, /KHÔNG Read \/ duyệt ảnh trong lúc sinh/);
+  assert.match(brief, /DUYỆT CẢ ĐỢT/); assert.match(brief, /Duyệt hết cả đợt rồi mới REDO: sinh lại mọi mục trượt thành một đợt/);
+  assert.doesNotMatch(brief, /duyệt ngay ảnh đó/);
+});
+
+test('Art in Codex mode gets 150 tool turns', () => {
+  const { MAX_TURNS, CODEX_ART_MAX_TURNS } = require('../roles.cjs');
+  assert.equal(CODEX_ART_MAX_TURNS, 150); assert.equal(MAX_TURNS.Art, 40);
 });
