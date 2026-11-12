@@ -121,3 +121,11 @@ test('blocks are told to make Edit old_string unique in briefs that repeat text 
   const brief = rolePrompt({}, { flow: ['Art'], workers: { Art: { type: 'Art', task: 't', files: ['a/'] } }, messages: [], attachments: [] }, 'Art', { content: 'x', files }).brief;
   assert.match(brief, /old_string của Edit phải kèm dòng nhận diện duy nhất của mục đó/); assert.match(brief, /Found N matches/);
 });
+
+test('Codex mode: quota exhaustion returns a quota handoff for the app to schedule, and the next turn reviews images already generated', () => {
+  const files = filesOf({ id: 's', folder: 'E:\game' });
+  const thread = { flow: ['Lead Dev', 'Art'], workers: { Art: { type: 'Art', task: 'ART-3 nút', files: ['ArtGen/ui/'] } }, messages: [], attachments: [] };
+  const brief = rolePrompt({ artGenerator: 'codex' }, thread, 'Art', { content: 'x', files }).brief;
+  assert.match(brief, /"quota":"codex","retryAt"/); assert.match(brief, /không chạy lại, trả ngay/);
+  assert.match(brief, /— chờ duyệt" mà tệp đó vẫn còn/); assert.match(brief, /ghi ngay vào mục của ảnh/);
+});

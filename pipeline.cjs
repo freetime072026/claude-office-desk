@@ -41,7 +41,9 @@ function parseHandoff(text) {
   // bộ chạy chuyển sang Lead triage thay vì dừng.
   // reject của Dev/VFX/Anim kèm reason: ảnh đã qua Art Director nhưng không ghép được (ART_REJECT_REASONS) → Art Director review lại.
   const artReject = data.status === 'reject' && Object.hasOwn(ART_REJECT_REASONS, data.reason) ? { reason: data.reason, art: Array.isArray(data.art) ? data.art.filter(id => typeof id === 'string' && id.trim()).slice(0, 20).map(id => id.trim().slice(0, 80)) : [] } : {};
-  return { status: data.status, summary: clipText(data.summary, SUMMARY_LIMIT), retested, ...artReject, ...(data.status === 'blocked' && data.reassign === true ? { reassign: true } : {}) };
+  // quota: Art chế độ Codex hết hạn mức gói ChatGPT ("quota":"codex", retryAt: giờ Codex ghi) → main.cjs hẹn giờ chạy lại task.
+  const quota = data.status === 'blocked' && data.quota === 'codex' ? { quota: 'codex', ...(typeof data.retryAt === 'string' && data.retryAt.trim() ? { retryAt: data.retryAt.trim().slice(0, 60) } : {}) } : {};
+  return { status: data.status, summary: clipText(data.summary, SUMMARY_LIMIT), retested, ...artReject, ...quota, ...(data.status === 'blocked' && data.reassign === true ? { reassign: true } : {}) };
 }
 
 // Lệnh điều khiển trong chat: /role <khối> start|pause, /auto on|off, /chot.

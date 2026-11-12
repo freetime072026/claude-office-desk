@@ -249,6 +249,7 @@
     if (runningOf(thread, role)) text = '● Đang thực hiện';
     else if (thread.workers?.[role]?.paused) text = '⏸ Tạm dừng';
     else if (thread.workers?.[role]?.idle) text = '◌ Tạm nghỉ ở mốc này (kế hoạch PO)';
+    else if (task?.status === 'blocked' && task.retryAt) text = `⏰ Codex hết hạn mức · tự chạy lại lúc ${new Date(task.retryAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}`;
     else if (task) text = taskNames[task.status] || task.status;
     else if (index < thread.stage || thread.status === 'done') text = ['Dev', 'VFX', 'Art', 'Anim', 'Sound'].includes(thread.workers?.[role]?.type) && thread.flow[thread.stage] === 'QA' ? '✓ Đã làm · chờ QA' : '✓ Đã bàn giao';
     else text = index === thread.stage ? names[thread.status] : 'Chưa đến bước';
@@ -345,7 +346,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   function paintDispatch(thread) {
     const tasks = thread.dispatch || [], count = status => tasks.filter(task => task.status === status).length;
     const parts = [thread.auto?.enabled ? '⚙ Tự động: bật' : 'Tự động: tắt (/chot hoặc /auto on)'];
-    if (tasks.length) { parts.push(`Dev ${count('finished')}/${tasks.length} đã xong`); for (const [status, title] of [['running', 'đang chạy'], ['queued', 'chờ'], ['paused', 'tạm dừng'], ['blocked', 'bị chặn'], ['failed', 'lỗi']]) if (count(status)) parts.push(`${count(status)} ${title}`); }
+    if (tasks.length) { parts.push(`Dev ${count('finished')}/${tasks.length} đã xong`); for (const [status, title] of [['running', 'đang chạy'], ['queued', 'chờ'], ['paused', 'tạm dừng'], ['blocked', 'bị chặn'], ['failed', 'lỗi']]) if (count(status)) parts.push(`${count(status)} ${title}`); const timed = tasks.filter(task => task.status === 'blocked' && task.retryAt).length; if (timed) parts.push(`${timed} hẹn chạy lại (Codex hết hạn mức)`); }
     // Dòng khối gọn (thay dải khối cũ): nhãn nhỏ có chấm trạng thái, bấm để chọn khối; cuối dòng là tình trạng tự động/Dev.
     const line = get('#dispatch-summary'); line.hidden = !thread.flow.length;
     const chips = thread.flow.map((role, index) => {

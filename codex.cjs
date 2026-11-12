@@ -31,4 +31,40 @@ function openLogin({ installed, spawn = require('node:child_process').spawn, pla
   return command;
 }
 
-module.exports = { home, imagesDir, status, openLogin, loginCommand, INSTALL_COMMAND, LOGIN_COMMAND };
+// ---- Hết hạn mức gói ChatGPT giữa chừng: khối Art trả handoff blocked kèm "quota":"codex" (prompt.cjs artCodexGuide), app hẹn giờ
+// chạy lại task đó (main.cjs) thay vì để nó nằm chặn tới khi bạn bấm Thử lại. Giờ chạy lại lấy từ lời Codex, ví dụ
+// "You've hit your usage limit … try again in 2 days 3 hours 4 minutes" hoặc "… try again at Nov 14th, 2026 2:30 PM" / "at 3:42 PM".
+const QUOTA_RE = /usage limit|hit your limit|limit reached|rate limit|quota|hết hạn mức|hạn mức/i;
+const QUOTA_FALLBACK_MS = 60 * 60 * 1000;   // Codex không ghi giờ: thử lại sau 1 giờ (hết nữa thì hẹn tiếp)
+const QUOTA_MARGIN_MS = 2 * 60 * 1000;      // chạy lại sau giờ Codex ghi một chút để hạn mức chắc chắn đã mở
+const QUOTA_MAX_MS = 8 * 24 * 60 * 60 * 1000;
+const isQuota = text => QUOTA_RE.test(String(text || ''));
+const UNITS = { d: 86400000, day: 86400000, h: 3600000, hr: 3600000, hour: 3600000, m: 60000, min: 60000, minute: 60000, s: 1000, sec: 1000, second: 1000 };
+function inDuration(text) {
+  const match = /try again in\s+([^.\n]+)/i.exec(text); if (!match) return 0;
+  let total = 0;
+  for (const [, amount, unit] of match[1].matchAll(/(\d+(?:\.\d+)?)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b/gi)) total += Number(amount) * (UNITS[unit.toLowerCase().replace(/s$/, '')] || UNITS[unit.toLowerCase()] || 0);
+  return total;
+}
+function atTime(text, now) {
+  const match = /try again at\s+([^\n]+?)(?:\.(?:\s|$)|$)/i.exec(text); if (!match) return null;
+  const value = match[1].replace(/(\d)(st|nd|rd|th)\b/gi, '$1').replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+  const clock = /^(\d{1,2}):(\d{2})\s*(am|pm)?$/i.exec(value);
+  if (clock) {
+    let hours = Number(clock[1]) % (clock[3] ? 12 : 24); if (/pm/i.test(clock[3] || '')) hours += 12;
+    const at = new Date(now); at.setHours(hours, Number(clock[2]), 0, 0); if (at <= now) at.setDate(at.getDate() + 1);
+    return at;
+  }
+  const parsed = Date.parse(value); return Number.isNaN(parsed) ? null : new Date(parsed);
+}
+// Giờ chạy lại (Date) cho lỗi hết hạn mức; null nếu text không phải lỗi hạn mức. hinted: retryAt khối Art ghi trong handoff (ISO).
+function quotaRetryAt(text, { now = new Date(), hinted = '' } = {}) {
+  const value = String(text || '');
+  if (!isQuota(value) && !hinted) return null;
+  const sane = date => date && !Number.isNaN(date.getTime()) && date > now && date - now <= QUOTA_MAX_MS ? date : null;
+  const span = inDuration(value);
+  const at = sane(span ? new Date(now.getTime() + span) : null) || sane(atTime(value, now)) || sane(hinted ? new Date(hinted) : null);
+  return new Date((at ? at.getTime() + QUOTA_MARGIN_MS : now.getTime() + QUOTA_FALLBACK_MS));
+}
+
+module.exports = { home, imagesDir, status, openLogin, loginCommand, isQuota, quotaRetryAt, INSTALL_COMMAND, LOGIN_COMMAND, QUOTA_FALLBACK_MS };

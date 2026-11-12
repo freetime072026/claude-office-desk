@@ -44,3 +44,24 @@ test('Art always reads Codex generated_images (Read/Glob without asking, shell n
   // Đường dẫn nhà ngoài phạm vi vẫn bị báo, kèm đường dẫn thật thay vì "~/".
   assert.deepEqual(outsidePaths('cat ~/.ssh/id_rsa', folders), [os.homedir().split(path.sep).join('/') + '/.ssh/id_rsa']);
 });
+
+test('quotaRetryAt reads when Codex has quota again: "in" spans, "at" clock and date, a hinted ISO, else one hour', () => {
+  const now = new Date(2026, 10, 13, 10, 0, 0), margin = 2 * 60 * 1000, hour = 3600000;
+  const at = (text, hinted = '') => codex.quotaRetryAt(text, { now, hinted });
+  assert.equal(at('■ You\'ve hit your usage limit. Upgrade to Pro or try again in 2 days 3 hours 4 minutes.').getTime(), now.getTime() + (2 * 24 * 60 + 3 * 60 + 4) * 60000 + margin);
+  assert.equal(at('You\'ve hit your usage limit. Try again in 45 minutes.').getTime(), now.getTime() + 45 * 60000 + margin);
+  assert.equal(at('You\'ve hit your usage limit. Try again at 3:42 PM.').getTime(), new Date(2026, 10, 13, 15, 42).getTime() + margin);
+  assert.equal(at('You\'ve hit your usage limit. Try again at 9:15 AM.').getTime(), new Date(2026, 10, 14, 9, 15).getTime() + margin, 'a clock time already past means tomorrow');
+  assert.equal(at('You\'ve hit your usage limit. Upgrade to Plus or try again at Nov 14th, 2026 2:30 PM.').getTime(), new Date(2026, 10, 14, 14, 30).getTime() + margin);
+  assert.equal(at('Codex hết hạn mức', new Date(2026, 10, 13, 12, 0).toISOString()).getTime(), new Date(2026, 10, 13, 12, 0).getTime() + margin, 'retryAt from the handoff');
+  assert.equal(at('You\'ve hit your usage limit.').getTime(), now.getTime() + hour, 'no time given: one hour');
+  assert.equal(at('Codex hết hạn mức', '2020-01-01T00:00:00Z').getTime(), now.getTime() + hour, 'a time in the past is ignored');
+  assert.equal(at('image tool not available'), null, 'not a quota error');
+});
+
+test('a blocked Codex quota handoff keeps quota and retryAt; other handoffs do not', () => {
+  const { parseHandoff } = require('../pipeline.cjs');
+  const fence = value => '```handoff\n' + JSON.stringify(value) + '\n```';
+  assert.deepEqual(parseHandoff(fence({ status: 'blocked', quota: 'codex', retryAt: '2026-11-13T15:42:00+07:00', summary: 'Codex hết hạn mức: try again at 3:42 PM' })), { status: 'blocked', summary: 'Codex hết hạn mức: try again at 3:42 PM', retested: [], quota: 'codex', retryAt: '2026-11-13T15:42:00+07:00' });
+  assert.equal(parseHandoff(fence({ status: 'done', quota: 'codex', summary: 'x' })).quota, undefined);
+});

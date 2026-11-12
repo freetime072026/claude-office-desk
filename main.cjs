@@ -302,8 +302,32 @@ app.whenReady().then(() => {
   // ---- Bộ canh: lượt treo (không có tiến độ quá lâu) bị dừng để Fixer xử lý; luồng tự động đứng yên (task/nút chờ mãi vì
   // trùng tệp đang ghi rồi không ai gọi lại) được đẩy chạy lại, đứng tiếp thì gọi Fixer.
   const HANG_IDLE_MS = 15 * 60 * 1000, HANG_TOOL_MS = 40 * 60 * 1000, STUCK_TICKS = 3, stuck = new Map();
+  // ---- Codex hết hạn mức gói ChatGPT giữa chừng (Art chế độ 'codex'): task bị chặn được hẹn giờ chạy lại (task.retryAt, lưu cùng
+  // session nên còn sau khi tắt app); tới giờ, watch() đưa task về hàng chờ như bấm Thử lại. Ảnh đã duyệt nằm trong inbox, ảnh Codex
+  // đã sinh chưa duyệt được Art dùng lại (prompt.cjs artCodexGuide), nên lượt sau làm tiếp chứ không làm lại từ đầu.
+  const QUOTA_RETRY_LIMIT = 12;
+  const codexQuota = (role, handoff) => handoff?.status === 'blocked' && (handoff.quota === 'codex' || (role.type === 'Art' && metadata.team?.artGenerator === 'codex' && codex.isQuota(handoff.summary)));
+  const clock = date => date.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+  function scheduleQuotaRetry(thread, task, handoff) {
+    task.quotaRetries = (task.quotaRetries || 0) + 1;
+    if (task.quotaRetries > QUOTA_RETRY_LIMIT) { say(thread, 'Tự động', `${task.worker}: Codex vẫn hết hạn mức sau ${QUOTA_RETRY_LIMIT} lần hẹn chạy lại; app thôi hẹn. Kiểm hạn mức gói ChatGPT rồi bấm Thử lại task bị chặn.`); return; }
+    const at = codex.quotaRetryAt(handoff.summary, { hinted: handoff.retryAt }) || new Date(Date.now() + codex.QUOTA_FALLBACK_MS);
+    task.retryAt = at.toISOString(); task.error = `${task.error || 'Codex hết hạn mức'} · Tự chạy lại lúc ${clock(at)}`;
+    say(thread, 'Tự động', `${task.worker}: Codex hết hạn mức gói ChatGPT; app tự chạy lại task này lúc ${clock(at)}. Ảnh đã duyệt giữ nguyên, ảnh đã sinh chưa duyệt được dùng lại. Muốn chạy sớm hơn: bấm Thử lại task bị chặn.`);
+  }
+  function retryDue(now) {
+    for (const thread of metadata.team.threads) {
+      if (thread.archived || teamStore.isHalted(thread)) continue;
+      const due = (thread.dispatch || []).filter(task => task.status === 'blocked' && task.retryAt && Date.parse(task.retryAt) <= now && !getWorker(thread, task.worker)?.paused);
+      if (!due.length) continue;
+      for (const task of due) { task.status = 'queued'; delete task.error; delete task.retryAt; }
+      say(thread, 'Tự động', `Tới giờ hẹn: chạy lại ${due.map(task => task.worker).join(', ')} (Codex hết hạn mức lần trước).`);
+      persist(); publish(); pumpThread(thread).catch(() => {});
+    }
+  }
   function watch() {
     const now = Date.now();
+    retryDue(now);
     for (const [key, run] of chats) {
       const message = run.message; if (!message?.streaming || message.hang || message.stopped) continue;
       const open = (message.steps || []).findLast(step => !step.end), last = Date.parse(message.progress?.updatedAt || message.time) || now;
@@ -486,7 +510,7 @@ app.whenReady().then(() => {
       thread.messages.push({ role: 'Hệ thống', text: (wasRunning ? 'Restart ' + label + ': đã dừng lượt đang chạy. ' : 'Restart ' + label + ': ') + result.text, time: new Date().toISOString(), to: label });
       persist(); publish(); if (result.run) background(thread, result.run); return true;
     }
-    if (action === 'dispatch-retry') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); for (const task of thread.dispatch || []) if (['blocked', 'failed', 'cancelled'].includes(task.status)) { task.status = 'queued'; delete task.error; } await pumpThread(thread); return true; }
+    if (action === 'dispatch-retry') { const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại'); for (const task of thread.dispatch || []) if (['blocked', 'failed', 'cancelled'].includes(task.status)) { task.status = 'queued'; delete task.error; delete task.retryAt; } await pumpThread(thread); return true; }
     if (action === 'chat-send') {
       const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại');
       if (thread.archived) throw Error('Session đã lưu trữ; khôi phục để chạy tiếp.');
@@ -649,7 +673,7 @@ app.whenReady().then(() => {
         // Ghi phiên CLI của task (kể cả khi bị tạm dừng/huỷ giữa chừng) để lần chạy lại tiếp tục phiên này (sendTask).
         const ownTask = assigned || (thread.dispatch || []).find(task => task.worker === payload.role && ['paused', 'cancelled'].includes(task.status));
         if (ownTask && thread.cliSessions?.[sessionKey]) ownTask.session = taskSession(thread.cliSessions[sessionKey], sessionKey, run.message.usage);
-        if (assigned) { assigned.status = run.message.error ? 'failed' : 'finished'; if (!run.message.error) { assigned.finishedAt = new Date().toISOString(); delete assigned.error; } if (!run.message.error && handoff?.status === 'blocked') { assigned.status = 'blocked'; assigned.error = handoff.summary || payload.role + ' báo bị chặn'; } if (run.message.maxTurns) { assigned.status = 'blocked'; assigned.error = 'Chạm giới hạn số lượt tool; kiểm tra rồi Thử lại task bị chặn'; } }
+        if (assigned) { assigned.status = run.message.error ? 'failed' : 'finished'; if (!run.message.error) { assigned.finishedAt = new Date().toISOString(); delete assigned.error; } if (!run.message.error && handoff?.status === 'blocked') { assigned.status = 'blocked'; assigned.error = handoff.summary || payload.role + ' báo bị chặn'; } if (run.message.maxTurns) { assigned.status = 'blocked'; assigned.error = 'Chạm giới hạn số lượt tool; kiểm tra rồi Thử lại task bị chặn'; } delete assigned.retryAt; if (assigned.status === 'blocked' && codexQuota(worker, handoff)) scheduleQuotaRetry(thread, assigned, handoff); else delete assigned.quotaRetries; }
         // Dev/VFX/Anim trả ảnh đã duyệt về Art Director (handoff reject kèm reason): task giữ lại, chạy tiếp khi art được sửa (pipeline.cjs).
         if (assigned?.status === 'finished' && handoff?.reason && ART_CONSUMER_TYPES.includes(worker.type)) { assigned.status = 'pending'; delete assigned.finishedAt; assigned.artReject = { reason: handoff.reason, art: handoff.art, summary: handoff.summary || '' }; }
         // CHANGES.md do app ghi từ handoff của Dev (không tin model tự ghi), để QA và Lead review đọc.
