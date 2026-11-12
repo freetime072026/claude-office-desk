@@ -10,3 +10,5 @@ dist/
 audit.json
 # Ghi chú phiên do app ghi khi dùng repo này làm thư mục làm việc (US-05, AC-05.6)
 .office-desk/
+# Bytecode Python khi chạy kits/art-frames/frames.py
+__pycache__/

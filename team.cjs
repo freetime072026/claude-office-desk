@@ -9,7 +9,7 @@ const po = require('./po.cjs');
 const { PRESETS, PURPOSES, purposeConfig, validEngine, validSpine } = require('./presets.cjs');
 const releaseConfig = require('./release-config.cjs');
 const HALTED = ['awaiting-decision', 'cancelled'];
-const ART_GENERATORS = Object.freeze(['chatgpt', 'tool']);
+const ART_GENERATORS = Object.freeze(['chatgpt', 'codex', 'comfyui', 'tool']);
 const initial = () => ({ projects: [], roles: [], threads: [] });
 const isHalted = thread => HALTED.includes(thread.status);
 const indexOfType = (item, type) => item.flow.findIndex(label => typeOf(label) === type);
@@ -327,8 +327,8 @@ function update(team, action, payload) {
   if (action === 'po-graph') return editMilestoneGraph(item, payload);
   if (action === 'po-product') { chooseProduct(item, payload.product, log); return true; }
   // Công cụ sinh ảnh của Art (dùng chung mọi session): 'chatgpt' = Art viết prompt chi tiết, người dùng tạo ảnh bằng ChatGPT;
-  // 'tool' = Art tự gọi script/pipeline của project hoặc MCP sinh ảnh.
-  if (action === 'art-generator') { if (!ART_GENERATORS.includes(payload.mode)) throw Error('Công cụ sinh ảnh không hợp lệ'); team.artGenerator = payload.mode; log('Cấu hình', 'Art sinh ảnh bằng: ' + (payload.mode === 'chatgpt' ? 'ChatGPT (thủ công)' : 'script/MCP của project')); return true; }
+  // 'codex' = Art tự chạy Codex CLI đăng nhập tài khoản ChatGPT; 'comfyui' = Art tự sinh bằng ComfyUI chạy trên máy (kit comfy.py); 'tool' = Art tự gọi script/pipeline của project hoặc MCP sinh ảnh.
+  if (action === 'art-generator') { if (!ART_GENERATORS.includes(payload.mode)) throw Error('Công cụ sinh ảnh không hợp lệ'); team.artGenerator = payload.mode; log('Cấu hình', 'Art sinh ảnh bằng: ' + ({ chatgpt: 'ChatGPT (thủ công)', codex: 'Codex CLI (tự động, dùng gói ChatGPT)', comfyui: 'ComfyUI trên máy (tự động, miễn phí)' }[payload.mode] || 'script/MCP của project')); return true; }
   // US-08: MCP server bật cho từng loại role, dùng chung mọi session; role không có trong danh sách không nạp MCP nào.
   if (action === 'role-mcp') {
     const key = roleKey(text(payload.role, 40)); if (![...PIPELINE, ...item.flow.map(typeOf)].includes(key)) throw Error('Role không hợp lệ');

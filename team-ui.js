@@ -391,7 +391,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     get('#product-field').hidden = !isPo; setField(get('#po-product'), thread.poProduct || '', force);
     get('#engine-field').hidden = !pla; fillEngines(get('#worker-engine'), thread.preset || 'PLA'); setField(get('#worker-engine'), thread.engine || '', force);
     get('#spine-field').hidden = !pla; fillEngines(get('#worker-spine'), thread.preset || 'PLA', 'spine'); setField(get('#worker-spine'), thread.spine || '', force);
-    get('#art-gen-field').hidden = type !== 'Art'; setField(get('#art-generator'), team.artGenerator || 'chatgpt', force);
+    get('#art-gen-field').hidden = type !== 'Art'; setField(get('#art-generator'), team.artGenerator || 'chatgpt', force); paintArtTools(type);
     const effective = field => own[field] || preset[field] || template[field] || fallback[field] || '';
     setField(get('#role-responsibility'), effective('responsibility'), force); setField(get('#role-output'), effective('output'), force); setField(get('#role-instructions'), own.instructions || '', force);
   }
@@ -551,6 +551,16 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   get('#worker-spine').onchange = async () => { if (await act('preset-spine', { spine: get('#worker-spine').value })) get('#panel-saved').textContent = '✓ Đã lưu cách dùng Spine của session'; };
   // Công cụ sinh ảnh dùng chung cho mọi khối Art ở mọi session (team.artGenerator).
   get('#art-generator').onchange = async () => { if (await act('art-generator', { mode: get('#art-generator').value })) get('#panel-saved').textContent = '✓ Đã lưu công cụ sinh ảnh của Art'; };
+  function selectedType() { const thread = current(); return thread?.workers?.[selectedWorker]?.type || ''; }
+  // Khối Art: một dòng trạng thái công cụ sinh ảnh đang chọn (Codex / ComfyUI) + RIFE; cài và quản lý ở Settings > Plugins (settings-ui.js).
+  function paintArtTools(type) {
+    const mode = get('#art-generator').value || team.artGenerator || 'chatgpt', box = get('#art-tools'), on = type === 'Art' && mode !== 'tool';
+    box.hidden = !on; if (!on) return;
+    window.OfficeSettings.ensureArt(mode); get('#art-tools-status').textContent = window.OfficeSettings.artSummary(mode);
+  }
+  get('#art-tools-open').onclick = () => window.OfficeSettings.open({ tab: 'plugins', scope: 'discover' });
+  get('#art-generator').addEventListener('change', () => paintArtTools(selectedType()));
+  window.OfficeSettings.init({ showError, openUsage: () => openUsage(), usageLabel, onChange: () => paintArtTools(selectedType()) });
   async function saveRoleTexts() {
     const thread = current(); if (!thread?.flow.includes(selectedWorker)) return;
     try { await window.office.run('team', { action: 'role-config', id: selected, role: selectedWorker, responsibility: get('#role-responsibility').value, output: get('#role-output').value, instructions: get('#role-instructions').value }); get('#panel-saved').textContent = '✓ Đã lưu riêng cho ' + selectedWorker; } catch (error) { get('#panel-saved').textContent = error.message; }
@@ -815,7 +825,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   get('#usage-viewer').addEventListener('close', () => { if (usageId) window.office.run('close', { id: usageId }).catch(() => {}); usageId = undefined; usageTerm?.dispose(); usageTerm = undefined; get('#usage-terminal').replaceChildren(); });
 
   // ---- Trạng thái từ main.
-  const applyState = state => { paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; skillCatalog = state.skills || {}; releaseFiles = state.releaseFiles || {}; releaseNetworks = state.releaseNetworks || []; devServers = state.devServers || {}; penpotServer = state.penpotServer || null; team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
+  const applyState = state => { window.OfficeSettings.update(state); paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; skillCatalog = state.skills || {}; releaseFiles = state.releaseFiles || {}; releaseNetworks = state.releaseNetworks || []; devServers = state.devServers || {}; penpotServer = state.penpotServer || null;  team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
   window.office.onState(applyState);
   get('#search').oninput = sidebar;
   get('#new-thread').onclick = async () => { const id = await act('create', { project: current()?.archived ? '' : current()?.project || '' }); if (id) { select(id); get('#message').focus(); } };

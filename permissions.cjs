@@ -60,8 +60,12 @@ const SYSTEM_DIRS = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'],
   path.dirname(process.execPath)].filter(Boolean);
 const under = (target, roots) => { const file = norm(target); return roots.some(root => { const base = norm(root).replace(/[\\/]+$/, ''); return file === base || file.startsWith(base + path.sep); }); };
 // Đường dẫn tuyệt đối trong một lệnh shell: C:\x, C:/x, Git Bash /c/x, ~/x, $HOME, $TEMP/$TMP/%TEMP%, /tmp.
+// ~/x, $HOME/x, %USERPROFILE%\x, $CODEX_HOME/x đổi thành đường dẫn tuyệt đối trước khi xét: nhờ vậy thư mục chỉ đọc nằm trong thư mục
+// người dùng (ảnh Codex ở ~/.codex/generated_images cho Art) được nhận ra; đường dẫn nhà khác vẫn bị chặn như trước, kèm đường dẫn thật.
+const HOME_PREFIX = /(^|[\s'"=(<>|;&:])(~|\$HOME|\$\{HOME\}|%USERPROFILE%|\$USERPROFILE|\$CODEX_HOME|\$\{CODEX_HOME\}|%CODEX_HOME%)(?=[\\/])/g;
+const expandHome = text => text.replace(HOME_PREFIX, (all, lead, name) => lead + (/CODEX_HOME/.test(name) ? require('./codex.cjs').home() : require('node:os').homedir()).split(path.sep).join('/'));
 function outsidePaths(command, folders) {
-  let text = String(command || ''); const found = [];
+  let text = expandHome(String(command || '')); const found = [];
   // Đường dẫn trong nháy có thể chứa dấu cách ("C:/Program Files/…"): lấy nguyên chuỗi rồi bỏ khỏi lệnh trước khi quét phần còn lại.
   text = text.replace(/(["'])([A-Za-z]:[\\/][^"'\n]*)\1/g, (all, quote, inner) => { found.push(inner); return ' '; });
   // Dạng Git Bash trong nháy: "/c/Program Files (x86)/…" (trước đây bị cắt ở dấu cách thành C:/Program, nằm ngoài Program Files nên bị chặn).
@@ -78,7 +82,9 @@ const outsideMessage = (what, folders, extra = '') => `Ngoài thư mục của s
 // Mọi khối có phạm vi ghi đều ghi thêm được DECISIONS.md (quyết định người dùng nói trong chat) — tệp chung, không tính chồng phạm vi.
 function roleScope(type, files, devFiles = [], folder = '', assigner = 'Lead') {
   const scope = baseScope(type, files, devFiles, folder, assigner);
-  return scope && files.decisions ? { ...scope, paths: [...scope.paths, files.decisions], shared: [...(scope.shared || []), files.decisions] } : scope;
+  const withDecisions = scope && files.decisions ? { ...scope, paths: [...scope.paths, files.decisions], shared: [...(scope.shared || []), files.decisions] } : scope;
+  // Art luôn đọc được ảnh Codex vừa sinh (chế độ sinh ảnh 'codex'): Read/Glob/Grep không hỏi, lệnh shell không bị chặn vì ngoài session.
+  return withDecisions && type === 'Art' ? { ...withDecisions, readable: [...(withDecisions.readable || []), require('./codex.cjs').imagesDir()] } : withDecisions;
 }
 function baseScope(type, files, devFiles, folder, assigner) {
   if (!files) return null;
@@ -117,6 +123,12 @@ function scopesOverlap(first, second) { return first.some(entry => inScope(entry
 const isToolResult = (target, cliData) => Boolean(cliData) && under(target, [cliData]) && /[\\/]tool-results[\\/]/i.test(target);
 function decide({ scope, mode, tool, input = {}, cwd = '', folders = [], readable = [], cliData = '' }) {
   if (WEB.includes(tool)) return { action: 'ask' };
+  // scope.readable: thư mục chỉ đọc riêng của role (Art: ảnh Codex), luôn cho đọc mà không hỏi.
+  const ownReadable = scope?.readable || []; readable = [...readable, ...ownReadable];
+  if (READ_TOOLS.includes(tool) && ownReadable.length) {
+    const target = input.file_path || input.notebook_path || input.path || '';
+    if (target && path.isAbsolute(target) && under(target, ownReadable)) return { action: 'allow' };
+  }
   // Đọc/tìm ngoài thư mục của session (CLI chỉ hỏi khi đường dẫn nằm ngoài thư mục làm việc).
   if (folders.length && READ_TOOLS.includes(tool)) {
     const target = input.file_path || input.notebook_path || input.path || '';
