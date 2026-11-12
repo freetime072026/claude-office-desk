@@ -428,3 +428,17 @@ test('restarting a block with no step on the graph (Fixer) does nothing instead 
   await auto.enable(thread, 'test');
   await assert.doesNotReject(auto.runStage(thread, 'Fixer'));
 });
+
+test('art blocks of one lane share the lane folders at run time, so they run in parallel; dev blocks of a lane do not', () => {
+  const path = require('node:path');
+  const { laneShared } = require('../workers.cjs'); const { roleScope, exclusivePaths, scopesOverlap } = require('../permissions.cjs');
+  const folder = path.resolve('lane-shared-test'), files = { missingSounds: path.join(folder, 'M.md'), artPrompts: path.join(folder, 'P.md'), artLessons: path.join(folder, 'L.md') };
+  const thread = { folder, workers: {}, lanes: [{ name: 'Hero', blocks: ['Art', 'Art #2'], files: ['art/source/hero/'] }, { name: 'Vào game', blocks: ['Dev', 'Dev #2'], files: ['Assets/'] }] };
+  const scopeOf = (label, type, own) => { const base = roleScope(type, files, own, folder, 'Art Director'); const lane = laneShared(thread, label, base.paths); return { ...base, shared: [...(base.shared || []), ...lane] }; };
+  const art = scopeOf('Art', 'Art', ['art/source/hero/', 'art/inbox/C73/']), art2 = scopeOf('Art #2', 'Art', ['art/source/hero/', 'art/inbox/C74/']);
+  assert.equal(scopesOverlap(exclusivePaths(art), exclusivePaths(art2)), false, 'the hero image folder is shared, the inboxes stay apart');
+  const clash = scopeOf('Art #2', 'Art', ['art/source/hero/', 'art/inbox/C73/']);
+  assert.equal(scopesOverlap(exclusivePaths(art), exclusivePaths(clash)), true, 'a folder outside the lane still blocks');
+  const dev = scopeOf('Dev', 'Dev', ['Assets/Art/']), dev2 = scopeOf('Dev #2', 'Dev', ['Assets/Art/']);
+  assert.equal(scopesOverlap(exclusivePaths(dev), exclusivePaths(dev2)), true, 'Dev blocks of one lane (Unity) still run one at a time');
+});

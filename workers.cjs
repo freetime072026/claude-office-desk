@@ -109,6 +109,15 @@ function removable(thread, label, { busy = false } = {}) {
 const hasArtDirector = thread => (thread.flow || []).some(label => typeOf(label) === ART_DIRECTOR);
 const VISUAL_TYPES = Object.freeze(['Art', 'Anim']);
 const LEAD_TYPES_WITH_AD = Object.freeze(DEV_TYPES.filter(type => !VISUAL_TYPES.includes(type)));
+// Phạm vi ghi (đường dẫn đã resolve) nằm trong thư mục của nhánh, với khối Art / Anim: các khối vẽ cùng nhánh chạy song song trên sơ đồ
+// và cùng ghi thư mục ảnh của nhánh (art/source/hero/) — mỗi khối một nhóm ảnh khác tên, ảnh vào thư mục qua script (penpot_sync accept).
+// Tính các mục này là chung thì các khối vẽ không bắt nhau chờ (trước đây 5 khối Art nhánh Hero chạy lần lượt). Dev không áp dụng:
+// Dev cùng nhánh (vd "Vào game" dùng Unity) vẫn chạy lần lượt khi chồng tệp.
+function laneShared(thread, label, paths = []) {
+  const lane = laneFor(thread, label);
+  if (!lane?.files?.length || !VISUAL_TYPES.includes(labelType(thread, label))) return [];
+  return paths.filter(entry => insideLane(thread, lane, entry));
+}
 // Có Art Director: ở pha lập kế hoạch Art Director giao Art/Anim theo đặc tả ART.md; ở pha triage (sửa Issue, ví dụ nén ảnh cho đủ
 // dung lượng) Lead giao được cả Art/Anim cho kịp vòng sửa, Art Director vẫn review ảnh sau đó.
 const leadTypes = thread => hasArtDirector(thread) && (thread.leadPhase || 'planning') === 'planning' ? LEAD_TYPES_WITH_AD : DEV_TYPES;
@@ -196,4 +205,4 @@ function mergePlan(thread, planner, text, laneName = '') {
   if (busy.length) return { blocked: `${planner} đã xuất kế hoạch tasks hợp lệ nhưng ${busy.join(', ')} đang chạy hoặc tạm dừng nên chưa áp dụng. Chờ khối đó xong (hoặc dừng nó) rồi dùng /role ${planner} start.` };
   return { proposal, dispatch: [...others, ...proposal.map(task => ({ ...task, status: 'pending', ...(byAd ? { by: ART_DIRECTOR } : {}) }))] };
 }
-module.exports = { mergePlan, PIPELINE, SINGLE_TYPES, LEAD, QA_ROUND_LIMIT, REVIEW_RETRY_LIMIT, ACTIVE_TASK, BUSY_TASK, busyWorkers, hasArtDirector, leadTypes, AD_TYPES, ownedByAd, ownsSession, authoredBy, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, runKey, resumeKey, removable, taskPlan, FILES_PER_TASK };
+module.exports = { mergePlan, laneShared, PIPELINE, SINGLE_TYPES, LEAD, QA_ROUND_LIMIT, REVIEW_RETRY_LIMIT, ACTIVE_TASK, BUSY_TASK, busyWorkers, hasArtDirector, leadTypes, AD_TYPES, ownedByAd, ownsSession, authoredBy, typeOf, labelType, sortFlow, started, openIssues, worker, forgetWorker, addWorker, runKey, resumeKey, removable, taskPlan, FILES_PER_TASK };

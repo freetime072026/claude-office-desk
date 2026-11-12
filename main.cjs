@@ -11,7 +11,7 @@ const { defaults: roleDefaults } = require('./roles.cjs');
 const { PRESETS } = require('./presets.cjs');
 const chatEngine = require('./chat.cjs');
 const chats = new Map();
-const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK, mergePlan, labelType } = require('./workers.cjs');
+const { worker: getWorker, runKey, resumeKey, removable, QA_ROUND_LIMIT, PIPELINE, LEAD, ACTIVE_TASK, mergePlan, labelType, laneShared } = require('./workers.cjs');
 const { rolePrompt, FILE_ROLES } = require('./prompt.cjs');
 const { needsConfirm, needsTurnConfirm, ALWAYS_ASK, cliMode } = require('./modes.cjs');
 const { describeTool, decide, roleScope, scopesOverlap, exclusivePaths, withShell } = require('./permissions.cjs');
@@ -565,7 +565,7 @@ app.whenReady().then(() => {
       // Role trong flow làm việc với tệp .md của session (session-files.cjs) và bị giới hạn phạm vi ghi (permissions.roleScope).
       const files = payload.role ? sessionFiles.ensureFiles(thread) : null;
       const assigner = (thread.dispatch || []).find(task => task.worker === payload.role && task.status !== 'finished')?.by === ART_DIRECTOR ? ART_DIRECTOR : 'Lead';
-      const baseScope = payload.role ? withShell(roleScope(worker.type, files, worker.files || [], thread.folder, assigner), worker.shell) : null; /* Bước song song của nhánh: tệp ghi chú của Art Director/Lead (ART.md, STYLE.md, ASSETS.md, PROJECT.md…) ghi chung với lượt của nhánh khác, không coi là chồng phạm vi */ const scope = baseScope && laneRun ? { ...baseScope, shared: [...baseScope.paths] } : baseScope;
+      const baseScope = payload.role ? withShell(roleScope(worker.type, files, worker.files || [], thread.folder, assigner), worker.shell) : null; /* Bước song song của nhánh: tệp ghi chú của Art Director/Lead (ART.md, STYLE.md, ASSETS.md, PROJECT.md…) ghi chung với lượt của nhánh khác, không coi là chồng phạm vi */ const laneDirs = baseScope && !laneRun ? laneShared(thread, payload.role, baseScope.paths) : []; /* Khối vẽ cùng nhánh: thư mục của nhánh ghi chung (workers.laneShared) */ const scope = baseScope && laneRun ? { ...baseScope, shared: [...baseScope.paths] } : laneDirs.length ? { ...baseScope, shared: [...(baseScope.shared || []), ...laneDirs] } : baseScope;
       const writes = worker.mode !== 'read' || Boolean(scope);
       // Đọc & sửa/Auto không hỏi trước cả lượt nữa: từng thao tác ghi/sửa/shell/web được duyệt riêng (askPermission bên dưới).
       if (writes) { if (editOverlap(thread, exclusivePaths(scope))) throw retryable('Khối khác đang sửa cùng tệp/thư mục. Đợi lượt đó xong để tránh ghi đè; các lượt chỉ đọc vẫn chạy song song.'); if (needsTurnConfirm(worker.mode, foldersOf(thread)) && !autoApproved) { const answer = await dialog.showMessageBox(window, { type: 'warning', message: 'Bypass trên ổ hệ thống hoặc thư mục mạng: bỏ duyệt thao tác tệp và lệnh shell trong lượt này?', detail: foldersOf(thread).join('\n'), buttons: ['Hủy', 'Cho phép lần này'], defaultId: 0, cancelId: 0 }); if (answer.response !== 1) return false; } }
