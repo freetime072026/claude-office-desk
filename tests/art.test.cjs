@@ -55,6 +55,54 @@ test('ChatGPT mode (default): Art writes detailed English prompts from STYLE.md 
   update(team, 'art-generator', { id, mode: 'tool' }); assert.equal(team.artGenerator, 'tool');
   assert.throws(() => update(team, 'art-generator', { id, mode: 'midjourney' }), /không hợp lệ/);
 });
+test('Codex mode: Art checks Codex login, runs codex exec per image, reviews the image inside the Codex folder, copies only passing images into inbox, then post-processes', () => {
+  const files = filesOf({ id: 's', folder: 'E:\\game' });
+  const thread = { flow: ['Lead Dev', 'Art'], workers: { Art: { type: 'Art', task: 'ART-3 nút', files: ['ArtGen/ui/'] } }, messages: [], attachments: [] };
+  const brief = rolePrompt({ artGenerator: 'codex' }, thread, 'Art', { content: 'x', files }).brief;
+  assert.match(brief, /Codex CLI đăng nhập tài khoản ChatGPT/); assert.match(brief, /codex --version && codex login status/); assert.match(brief, /npm i -g @openai\/codex/);
+  assert.match(brief, /Style prompt chung lấy từ STYLE\.md/); assert.match(brief, /ART_LESSONS\.md/); assert.match(brief, /Prompt viết bằng tiếng Anh/);
+  assert.match(brief, /dòng đầu `\$imagegen`/); assert.match(brief, /codex exec --sandbox workspace-write --skip-git-repo-check "\$\(cat \.office-desk\/tmp\/ART-….txt\)"/);
+  assert.match(brief, /timeout 600000/); assert.match(brief, /-i <đường dẫn tương đối>/); assert.match(brief, /Do not copy, move or edit the generated image/);
+  assert.match(brief, /ART-….txt\)" < \/dev\/null`/); assert.match(brief, /ls ".*generated_images\/<session id>"/); assert.match(brief, /không dùng ảnh mới nhất của cả thư mục/);
+  assert.match(brief, /Codex không sinh được ảnh/); assert.match(brief, /không sinh lại vì nền/); assert.match(brief, /inbox chỉ chứa ảnh đã duyệt/);
+  // Duyệt tại thư mục Codex: trượt thì không chép, ghi đường dẫn từng lần; đạt mới cp vào inbox; lỗi nền không tính là trượt.
+  assert.match(brief, /Duyệt ngay trong thư mục ảnh của Codex, chưa chép gì: Read ảnh tại đường dẫn đó/); assert.match(brief, /Nền \/ alpha \/ viền, cỡ canvas và thiếu frame giữa KHÔNG tính là trượt/);
+  assert.match(brief, /Trượt: không chép vào inbox; ghi trong mục "Lần N: <đường dẫn ảnh trong thư mục Codex>/); assert.match(brief, /liệt kê đường dẫn và số đo từng lần để người dùng chọn ảnh giữ/);
+  assert.match(brief, /Đạt: `cp` đúng tệp đó \(giữ nguyên pixel\) vào .*[\\/]s[\\/]inbox[\\/]ART-….png/); assert.match(brief, /xoá ảnh đó khỏi inbox và quay lại bước 2/);
+  assert.doesNotMatch(brief, /Ảnh được tạo bằng ChatGPT do người dùng thao tác/); assert.doesNotMatch(brief, /tool MCP sinh ảnh nếu role được bật/);
+  const team = initial(); const id = update(team, 'create', { request: 'x' });
+  update(team, 'art-generator', { id, mode: 'codex' }); assert.equal(team.artGenerator, 'codex');
+  assert.equal(team.threads[0].messages.at(-1).text, 'Art sinh ảnh bằng: Codex CLI (tự động, dùng gói ChatGPT)');
+});
+test('ComfyUI mode: Art checks the local server with comfy.py status, picks an installed model, generates into .office-desk/tmp/comfy, copies only passing images into inbox', () => {
+  const files = filesOf({ id: 's', folder: 'E:\\game' });
+  const thread = { flow: ['Lead Dev', 'Art'], workers: { Art: { type: 'Art', task: 'ART-3 nút', files: ['ArtGen/ui/'] } }, messages: [], attachments: [] };
+  const brief = rolePrompt({ artGenerator: 'comfyui' }, thread, 'Art', { content: 'x', files }).brief;
+  assert.match(brief, /ComfyUI chạy trên máy người dùng/); assert.match(brief, /python \.office-desk\/art\/comfy\.py status/);
+  assert.match(brief, /Thoát mã 2 \(ComfyUI chưa chạy\)/); assert.match(brief, /"ComfyUI chưa chạy: mở ComfyUI/); assert.match(brief, /thoát mã 3 \(chưa cài model\)/);
+  assert.match(brief, /comfy\.py gen --model <id> --prompt-file \.office-desk\/tmp\/ART-….txt/); assert.match(brief, /--out \.office-desk\/tmp\/comfy\/ART-….png/); assert.match(brief, /timeout 600000/);
+  assert.match(brief, /prompt kiểu tag/); assert.match(brief, /prompt câu tự nhiên/); assert.match(brief, /plain flat solid #FF00FF background/);
+  assert.match(brief, /sinh từng KEY POSE thành một ảnh riêng/); assert.match(brief, /--keys-dir/); assert.match(brief, /ghi seed vào mục/);
+  assert.match(brief, /Đạt: `cp` đúng tệp đó \(giữ nguyên pixel\) vào .*[\\/]s[\\/]inbox[\\/]ART-….png/); assert.match(brief, /ART_LESSONS\.md/);
+  assert.doesNotMatch(brief, /codex exec/); assert.doesNotMatch(brief, /Ảnh được tạo bằng ChatGPT do người dùng thao tác/);
+  const team = initial(); const id = update(team, 'create', { request: 'x' });
+  update(team, 'art-generator', { id, mode: 'comfyui' }); assert.equal(team.artGenerator, 'comfyui');
+  assert.equal(team.threads[0].messages.at(-1).text, 'Art sinh ảnh bằng: ComfyUI trên máy (tự động, miễn phí)');
+});
+test('frame-by-frame animation, both modes: key count chosen per motion in batches, two pass levels, default frame pipeline, processing faults never regenerate', () => {
+  const files = filesOf({ id: 's', folder: 'E:\\game' });
+  const thread = { flow: ['Lead Dev', 'Art'], workers: { Art: { type: 'Art', task: 'ANIM hero attack', files: ['ArtGen/hero/'] } }, messages: [], attachments: [] };
+  for (const artGenerator of ['chatgpt', 'codex']) {
+    const brief = rolePrompt({ artGenerator }, thread, 'Art', { content: 'x', files }).brief;
+    assert.doesNotMatch(brief, /8–12/, artGenerator); assert.match(brief, /Số key không cố định/); assert.match(brief, /chia đợt: đợt sau đính kèm các key đã duyệt/); assert.match(brief, /Codex: `-i`/);
+    assert.match(brief, /KEY POSE ĐẠT \(lượt sinh ảnh đạt\)/); assert.match(brief, /nền sai \(không trong suốt, ô caro vẽ giả, nền màu\) và thiếu frame giữa KHÔNG tính là trượt/); assert.match(brief, /ANIMATION ĐẠT = đo trên bản phát cuối/);
+    for (const item of [/cùng một cách và cùng tham số/, /canvas cố định theo đường chân và tâm thân/, /script nội suy của project/, /tự chọn RIFE nếu Office Desk đã cài/, /RIFE chưa cài thì không tự tải, ghi đề xuất người dùng bấm Cài RIFE/, /optical flow OpenCV/, /chỉ chỉnh nhịp/, /không dùng hoà trộn alpha/]) assert.match(brief, item, artGenerator);
+    assert.match(brief, /do khâu xử lý .* KHÔNG sinh lại ảnh/); assert.match(brief, /sinh thêm key nằm giữa hai key đó/);
+    assert.match(brief, /Redo có giới hạn \(chỉ tính lần sinh lại vì key pose sai NỘI DUNG/);
+  }
+  const codex = rolePrompt({ artGenerator: 'codex' }, thread, 'Art', { content: 'x', files }).brief;
+  assert.match(codex, /sprite sheet animation chỉ xét mức KEY POSE ĐẠT/); assert.match(codex, /chạy quy trình frame và xét mức ANIMATION ĐẠT/);
+});
 test('GDD template has an Art section', () => {
   const { TEMPLATES } = require('../session-files.cjs');
   assert.match(TEMPLATES.gdd, /## VFX\n[^\n]*\n\n## Art\n<!-- Sprite\/icon\/ảnh UI cần làm[^\n]*\n\n## Anim\n/);

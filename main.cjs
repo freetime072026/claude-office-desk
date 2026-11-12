@@ -24,6 +24,7 @@ const po = require('./po.cjs');
 const fixer = require('./fixer.cjs');
 const flowgraphLib = require('./flowgraph.cjs');
 const penpot = require('./penpot.cjs');
+const codex = require('./codex.cjs');
 // Một khoá Penpot cho cả app: MCP Penpot chỉ thao tác trên page đang mở trong một tab trình duyệt.
 const penpotLock = penpot.createLock();
 let penpotServer = null; // tạo khi app sẵn sàng (cần publishSoon); xem penpot.createServer
@@ -34,6 +35,16 @@ const skills = require('./skills.cjs');
 const skillImport = require('./skill-import.cjs');
 const releaseConfig = require('./release-config.cjs');
 const qaKit = require('./qa-kit.cjs');
+const artKit = require('./art-kit.cjs');
+const { createRife } = require('./rife.cjs');
+// RIFE cho kit art-frames: cài một lần vào <userData>/tools/rife (rife.cjs). Tạo khi cần vì cần root và publishSoon.
+let rifeTool = null;
+const rifeOf = () => rifeTool ||= createRife({ root, changed: () => publishSoon() });
+// ComfyUI cho chế độ sinh ảnh 'comfyui' của Art: dò server/GPU, tải model vào thư mục models của ComfyUI (comfyui.cjs). Tạo khi cần như RIFE.
+const { createComfy } = require('./comfyui.cjs');
+const settingsData = require('./settings.cjs');
+let comfyTool = null;
+const comfyOf = () => comfyTool ||= createComfy({ root, changed: () => publishSoon() });
 const { MAX_TURNS, DEFAULT_MAX_TURNS, SHELL_TYPES, isDevType, modelFor, ART_DIRECTOR, ART_CONSUMER_TYPES } = require('./roles.cjs');
 // Hộp duyệt từng thao tác cho một lượt chat. Lượt tự động đã duyệt (autoApproved) tự cho phép mọi thao tác trừ web;
 // "Luôn cho phép" chỉ có hiệu lực tới hết lượt này và không áp dụng cho web.
@@ -135,7 +146,19 @@ function publish() { clearTimeout(publishTimer); publishTimer = null; if (window
 // Luồng stream gọi mỗi chunk; gửi trạng thái tối đa ~10 lần/giây thay vì mỗi chunk.
 let publishTimer = null;
 function publishSoon() { publishTimer ||= setTimeout(publish, 100); }
-function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, mcpServers: safeMcpNames(), skills: skillCatalog(), releaseFiles: releaseFiles(), releaseNetworks: releaseConfig.NETWORKS, devServers: devServers.all(), penpotServer: penpotServer?.state() || null, profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
+// Hỏi cài RIFE khi khối Art chạy mà máy chưa có: một lần mỗi lần mở app (chọn "Không lúc này" thì không hỏi lại tới khi mở lại),
+// không chặn lượt đang chạy (lượt này kit dùng flow / giữ frame; cài xong thì lượt sau dùng RIFE). Vẫn cài được ở Settings > Plugins.
+function askRife(rife) {
+  if (!rife.shouldAsk() || !window) return;
+  const info = rife.state();
+  dialog.showMessageBox(window, { type: 'question', title: 'Cài RIFE', message: 'Cài RIFE để Art bù frame animation đẹp hơn?', detail: `RIFE (rife-ncnn-vulkan, mã nguồn mở) là công cụ AI sinh frame giữa hai key pose, đẹp hơn optical flow với chuyển động vừa (đi, chạy, vung tay nhẹ). Chạy bằng GPU qua Vulkan, không cần Python.
+
+Tải khoảng ${info.sizeMb} MB từ GitHub (nihui/rife-ncnn-vulkan) vào ${info.home}; sau khi cài chỉ giữ model cần dùng. Tải chạy nền, khối Art vẫn làm tiếp.
+
+"Không lúc này": Office Desk không hỏi lại tới khi mở lại app; vẫn cài được ở Settings > Plugins (nút ⚙ cạnh menu tài khoản).`, buttons: ['Không lúc này', 'Cài RIFE'], defaultId: 1, cancelId: 0, noLink: true })
+    .then(answer => { if (answer.response === 1) rife.install().catch(() => {}); }).catch(() => {});
+}
+function snapshot() { return { activeProfileId: metadata.activeProfileId || metadata.profiles[0]?.id || '', team: metadata.team, removal: Object.fromEntries((metadata.team?.threads || []).map(thread => [thread.id, removalOf(thread)])), qaRoundLimit: QA_ROUND_LIMIT, pipeline: PIPELINE, mcpServers: safeMcpNames(), skills: skillCatalog(), releaseFiles: releaseFiles(), releaseNetworks: releaseConfig.NETWORKS, devServers: devServers.all(), penpotServer: penpotServer?.state() || null, rife: root ? rifeOf().state() : null, comfy: comfyTool ? comfyTool.state() : null, profiles: metadata.profiles.map(item => ({ ...item, usage: readUsage(item.id) })), executable, sessions: [...sessions.values()].map(({ id, profileId, folder, kind, running, code }) => ({ id, profileId, folder, kind, running, code })) }; }
 function requireTrusted(event) { const allowed = [entry, pathToFileURL(path.join(__dirname, 'dashboard.html')).href]; if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !allowed.includes(event.senderFrame.url)) throw Error('Unauthorized'); }
 function start(profileId, kind, task) {
   const item = profile(profileId);
@@ -408,6 +431,32 @@ app.whenReady().then(() => {
     if (action === 'copy-text') { if (typeof payload.text !== 'string' || payload.text.length > 2 * 1024 * 1024) throw Error('Nội dung copy quá dài'); clipboard.writeText(payload.text); return true; }
     // Dev server của session (khối PO, project PLA): scripts = script dev trong package.json; start/stop; open = mở localhost đang chạy.
     // Nút Chạy / Dừng Penpot MCP trong panel khối (role có tích Penpot): một server cho cả app.
+    // Chế độ sinh ảnh Codex của Art: status = codex --version + codex login status; login = mở cửa sổ chạy codex login (chưa cài thì cài trước).
+    if (action === 'codex') { if (payload.op === 'status') return codex.status(); if (payload.op === 'login') { const state = await codex.status(); if (state.loggedIn) return { ...state, opened: '' }; return { ...state, opened: codex.openLogin({ installed: state.installed }) }; } throw Error('Thao tác Codex không hợp lệ'); }
+    // Nút Cài RIFE ở Settings > Plugins: tải và giải nén chạy nền (vài phút), trạng thái/tiến độ đi qua snapshot (rife).
+    // Mục ComfyUI ở Settings > Plugins: status = dò server + GPU + model đã cài; install/cancel tải model chạy nền (tiến độ qua snapshot.comfy);
+    // pick-folder = chọn thư mục ComfyUI khi server chưa chạy; download-page = mở trang tải ComfyUI Desktop.
+    // Hộp Settings (nút ⚙ cạnh menu tài khoản), tab Connectors / Skills: mcp = danh sách MCP server (không gửi env/headers);
+    // open-mcp / open-skills mở tệp/thư mục; install-penpot thêm Penpot MCP; skill-add / skill-remove như lệnh /skills add|remove.
+    if (action === 'settings') {
+      if (payload.op === 'mcp') { let data = {}, error = ''; try { mcpServerNames(); data = JSON.parse(fs.readFileSync(mcp, 'utf8')); } catch (failure) { error = failure.message; } return { servers: settingsData.mcpEntries(data, metadata.team?.roleMcp), error, file: mcp, discover: settingsData.DISCOVER_CONNECTORS, discoverSkills: settingsData.DISCOVER_SKILLS, skillsDir: skillsDir() }; }
+      if (payload.op === 'open-mcp') { const failure = await shell.openPath(mcp); if (failure) throw Error('Không mở được: ' + failure); return true; }
+      if (payload.op === 'open-skills') { fs.mkdirSync(skillsDir(), { recursive: true }); const failure = await shell.openPath(skillsDir()); if (failure) throw Error('Không mở được: ' + failure); return true; }
+      if (payload.op === 'install-penpot') { mcpServerNames(); const text = penpot.install(mcp, metadata.team); persist(); publish(); return { text }; }
+      if (payload.op === 'skill-add') { if (typeof payload.url !== 'string' || !payload.url.trim()) throw Error('Nhập link GitHub của skill'); const result = await skillImport.add(payload.url.trim(), { appDir: skillsDir(), force: false, list: skills.list(skillsDir(), '') }); publish(); return { text: result.text }; }
+      if (payload.op === 'skill-remove') { const name = String(payload.name || ''); const result = skillImport.remove(name, { appDir: skillsDir(), force: false, list: skills.list(skillsDir(), '') }); if (result.removed) { for (const names of Object.values(metadata.team.roleSkills || {})) if (names.includes(name)) names.splice(names.indexOf(name), 1); persist(); } publish(); return { text: result.text }; }
+      throw Error('Thao tác Settings không hợp lệ');
+    }
+    if (action === 'comfyui') {
+      const tool = comfyOf();
+      if (payload.op === 'status') return tool.refresh();
+      if (payload.op === 'install') { if (typeof payload.model !== 'string') throw Error('Thiếu model'); tool.install(payload.model).catch(() => {}); return tool.state(); }
+      if (payload.op === 'cancel') return tool.cancel(String(payload.model || ''));
+      if (payload.op === 'pick-folder') { const result = await dialog.showOpenDialog(window, { title: 'Chọn thư mục ComfyUI (thư mục có models/, hoặc chính thư mục models)', properties: ['openDirectory'] }); if (result.canceled || !result.filePaths[0]) return tool.state(); tool.setBase(result.filePaths[0]); return tool.refresh(); }
+      if (payload.op === 'download-page') { await shell.openExternal(tool.state().downloadPage); return true; }
+      throw Error('Thao tác ComfyUI không hợp lệ');
+    }
+    if (action === 'rife') { const tool = rifeOf(); if (payload.op === 'install') { tool.install().catch(() => {}); return tool.state(); } if (payload.op === 'status') { tool.locate(); return tool.state(); } throw Error('Thao tác RIFE không hợp lệ'); }
     if (action === 'penpot-server') { penpotServer ||= penpot.createServer({ changed: () => publishSoon() }); if (payload.op === 'start') return penpotServer.start(); if (payload.op === 'stop') return penpotServer.stop(); throw Error('Thao tác Penpot không hợp lệ'); }
     if (action === 'dev-server') {
       const thread = metadata.team.threads.find(item => item.id === payload.id); if (!thread) throw Error('Session không tồn tại');
@@ -545,6 +594,8 @@ app.whenReady().then(() => {
       const images = payload.auto || compactOnly ? [] : attachments.take(thread);
       // Project Unity: khối chạy lệnh được biết Editor có đang mở project không và cách gọi Unity (unity.cjs; kiểm /health ~0,6 s).
       const unityInfo = payload.role && SHELL_TYPES.includes(worker.type) ? await unity.context(thread.folder) : null;
+      // Art chế độ ComfyUI: dò lại server + model đã cài ngay trước lượt để comfy.json của project đúng hiện trạng (vài trăm ms khi server tắt).
+      const comfyRun = !compactOnly && worker.type === 'Art' && metadata.team?.artGenerator === 'comfyui' ? await comfyOf().refresh().then(() => comfyOf(), () => comfyOf()) : null;
       // Giữ khoá cả lượt sau lần await cuối: từ đây tới launch chạy liền một mạch; lỗi giữa chừng thì trả khoá ở vòng sự kiện kế tiếp.
       let penpotLaunched = false; penpotBusy(); if (penpotTurn) setImmediate(() => { if (!penpotLaunched) penpotLock.releaseRun(penpotTurn); });
       unity.writeHelper(unityInfo); // .office-desk/unity.sh: dò cổng theo sổ đăng ký, chờ Unity nạp lại, luôn có timeout
@@ -562,7 +613,11 @@ app.whenReady().then(() => {
       // QA của session PLA: chép kit QA của Office Desk (harness Playwright) vào .office-desk/qa/ của project nếu còn thiếu (qa-kit.cjs).
       let qaKitGuide = '';
       if (files && !compactOnly && worker.type === 'QA' && qaKit.isPla(thread)) { const qaDir = sessionFiles.qaDir(files); try { qaKitGuide = qaKit.guide(qaKit.ensure(qaDir), qaDir); } catch (error) { qaKitGuide = `Chưa chép được kit QA PLA của Office Desk vào ${qaDir}: ${error.message}. Báo trong handoff; vẫn kiểm bằng công cụ của project.`; } }
-      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { qaKit: qaKitGuide, fixNote: payload.role ? takeFixNote(thread, payload.role) : '', content: projectSkill ? projectSkill.prompt : content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide, ...laneOptions });
+      // Art và Art Director: chép kit art-frames vào .office-desk/art/ nếu còn thiếu (art-kit.cjs). scene.py (đo cảnh so với ref) cho cả hai
+      // khối ở mọi chế độ sinh ảnh; frames.py (dựng animation từng frame từ key pose) chỉ cho Art chế độ ChatGPT/Codex/ComfyUI.
+      let artKitGuide = '';
+      if (files && !compactOnly && (worker.type === 'Art' || worker.type === ART_DIRECTOR)) { const artDir = artKit.dirOf(files), frames = worker.type === 'Art' && metadata.team?.artGenerator !== 'tool'; try { const rife = frames ? rifeOf() : null, info = artKit.ensure(artDir, { rife: rife ? rife.state() : null }); artKitGuide = [frames ? artKit.guide(info, artDir) : '', artKit.sceneGuide(info, artDir)].filter(Boolean).join(' '); if (frames && comfyRun) comfyRun.writeProjectConfig(artDir); if (rife) askRife(rife); } catch (error) { artKitGuide = `Chưa chép được kit art-frames của Office Desk vào ${artDir}: ${error.message}. Báo trong handoff; vẫn làm bằng script tự viết trong .office-desk/tmp/.`; } }
+      const built = compactOnly ? null : rolePrompt(metadata.team, thread, payload.role, { qaKit: qaKitGuide, artKit: artKitGuide, fixNote: payload.role ? takeFixNote(thread, payload.role) : '', content: projectSkill ? projectSkill.prompt : content, resumed, files, attachments: images, unity: unityGuide, projectDocs: docsGuide, penpot: penpotRun, skills: skills.guide(runSkills), release: releaseGuide, ...laneOptions });
       // Brief vai trò đi qua system prompt. CLI giữ system prompt của lần gọi đầu khi resume, nên brief đổi (task/pha mới) trong
       // phiên đang tiếp tục được gửi một lần trong tin; thread.briefSent nhớ bản phiên đã có.
       const briefHash = built?.brief ? createHash('sha1').update(built.brief).digest('hex') : '', briefKnown = !resumed || thread.briefSent?.[sessionKey] === briefHash;

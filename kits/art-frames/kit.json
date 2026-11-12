@@ -1,0 +1,5 @@
+{
+  "name": "art-frames",
+  "version": 2,
+  "_note": "Office Desk copies frames.py, comfy.py, scene.py and KIT.md into <project>/.office-desk/art/ before an Art turn and writes kit.json there with the copied version."
+}
