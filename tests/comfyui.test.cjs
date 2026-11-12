@@ -110,6 +110,53 @@ test('modelsRootOf accepts the ComfyUI root or the models folder itself; desktop
   assert.equal(comfy.desktopBase({ APPDATA: temp() }), '');
 });
 
+test('launcherOf finds a runnable ComfyUI: git/comfy-cli install with .venv, portable root or its ComfyUI folder; models-only or no Python is null', () => {
+  const touch = (...parts) => { const file = path.join(...parts); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, ''); return file; };
+  const cli = temp(); touch(cli, 'main.py'); assert.equal(comfy.launcherOf(cli, 'win32'), null);
+  const venvPython = touch(cli, '.venv', 'Scripts', 'python.exe');
+  assert.deepEqual(comfy.launcherOf(cli, 'win32'), { python: venvPython, main: path.join(cli, 'main.py'), cwd: cli, portable: false });
+  const portable = temp(), embedded = touch(portable, 'python_embeded', 'python.exe'); touch(portable, 'ComfyUI', 'main.py');
+  assert.deepEqual(comfy.launcherOf(portable, 'win32'), { python: embedded, main: path.join(portable, 'ComfyUI', 'main.py'), cwd: path.join(portable, 'ComfyUI'), portable: true });
+  assert.equal(comfy.launcherOf(path.join(portable, 'ComfyUI'), 'win32').python, embedded);
+  const models = temp(); fs.mkdirSync(path.join(models, 'checkpoints')); assert.equal(comfy.launcherOf(models, 'win32'), null);
+});
+
+test('launch starts ComfyUI detached on the saved port and polls until the server answers', async () => {
+  const root = temp(), base = temp(); fs.writeFileSync(path.join(base, 'main.py'), ''); fs.mkdirSync(path.join(base, '.venv', 'Scripts'), { recursive: true }); fs.writeFileSync(path.join(base, '.venv', 'Scripts', 'python.exe'), '');
+  let up = false; const spawned = [];
+  const fetchJson = async url => { if (!up) throw Error('down'); if (url.endsWith('/system_stats')) return { system: { comfyui_version: '0.45.0' }, devices: [] }; throw Error('n/a'); };
+  const spawn = (file, args, options) => { spawned.push({ file, args, options }); setTimeout(() => { up = true; }, 5); return { once() {}, unref() {} }; };
+  const tool = comfy.createComfy({ root, fetchJson, gpuProbe: async () => null, env: {}, spawn, pollMs: 10, waitMs: 2000 });
+  tool.setBase(base);
+  assert.equal(tool.state().launchable, true);
+  const pending = tool.launch(); assert.equal(tool.state().launching, true);
+  assert.equal(tool.launch(), pending); // bấm lại khi đang mở không chạy thêm tiến trình
+  const state = await pending;
+  assert.equal(state.server.ok, true); assert.equal(state.launching, false); assert.equal(spawned.length, 1);
+  assert.equal(spawned[0].file, path.join(base, '.venv', 'Scripts', 'python.exe'));
+  assert.deepEqual(spawned[0].args, [path.join(base, 'main.py'), '--listen', '127.0.0.1', '--port', '8188']);
+  assert.equal(spawned[0].options.detached, true); assert.equal(spawned[0].options.cwd, base);
+  // Server đã chạy: không mở thêm.
+  await tool.launch(); assert.equal(spawned.length, 1);
+  // Thư mục không chạy được: báo lỗi thay vì mở.
+  const empty = comfy.createComfy({ root: temp(), fetchJson, env: {} }); empty.setBase(temp());
+  assert.equal(empty.state().launchable, false); assert.throws(() => empty.launch(), /Không tìm thấy ComfyUI/);
+});
+
+test('cliBase finds a ComfyUI installed with comfy-cli: default_workspace first, then recent_workspace; missing folders are skipped', () => {
+  const local = temp(), dir = path.join(local, 'comfy-cli'), ini = text => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'config.ini'), text); };
+  const env = { LOCALAPPDATA: local }, recent = temp(), chosen = temp();
+  assert.equal(comfy.cliConfigDir(env, 'win32'), dir);
+  assert.equal(comfy.cliBase(env, 'win32'), '');
+  ini(`[DEFAULT]\nrecent_workspace = ${recent}\n`); assert.equal(comfy.cliBase(env, 'win32'), recent);
+  ini(`[DEFAULT]\ndefault_workspace = ${chosen}\nrecent_workspace = ${recent}\n`); assert.equal(comfy.cliBase(env, 'win32'), chosen);
+  ini(`[DEFAULT]\ndefault_workspace = ${path.join(chosen, 'gone')}\nrecent_workspace = ${recent}\n`); assert.equal(comfy.cliBase(env, 'win32'), recent);
+  // Office Desk dùng workspace comfy-cli khi chưa chọn thư mục và không có ComfyUI Desktop.
+  ini(`[DEFAULT]\ndefault_workspace = ${chosen}\n`);
+  const state = comfy.createComfy({ root: temp(), env: { ...env, APPDATA: temp() } }).state();
+  if (process.platform === 'win32') { assert.equal(state.base, chosen); assert.equal(state.baseSource, 'comfy-cli'); }
+});
+
 // comfy.py (kit): dựng workflow đúng node của ComfyUI theo family; chỉ chạy khi máy có Python.
 const PYTHON = ['python', 'python3', 'py'].find(cmd => spawnSync(cmd, ['--version'], { encoding: 'utf8' }).status === 0);
 test('comfy.py builds SDXL (LoRA, --fast) and Z-Image workflows from comfy.json', { skip: !PYTHON && 'no python' }, () => {

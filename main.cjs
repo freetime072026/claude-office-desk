@@ -454,6 +454,7 @@ app.whenReady().then(() => {
       if (payload.op === 'cancel') return tool.cancel(String(payload.model || ''));
       if (payload.op === 'pick-folder') { const result = await dialog.showOpenDialog(window, { title: 'Chọn thư mục ComfyUI (thư mục có models/, hoặc chính thư mục models)', properties: ['openDirectory'] }); if (result.canceled || !result.filePaths[0]) return tool.state(); tool.setBase(result.filePaths[0]); return tool.refresh(); }
       if (payload.op === 'download-page') { await shell.openExternal(tool.state().downloadPage); return true; }
+      if (payload.op === 'launch') { tool.launch().catch(() => {}); return tool.state(); }
       throw Error('Thao tác ComfyUI không hợp lệ');
     }
     if (action === 'rife') { const tool = rifeOf(); if (payload.op === 'install') { tool.install().catch(() => {}); return tool.state(); } if (payload.op === 'status') { tool.locate(); return tool.state(); } throw Error('Thao tác RIFE không hợp lệ'); }

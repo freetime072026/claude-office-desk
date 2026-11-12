@@ -1,5 +1,5 @@
 // ComfyUI cho chế độ sinh ảnh 'comfyui' của Art: model chạy trên máy, miễn phí, không giới hạn lượt.
-// Office Desk không cài ComfyUI (người dùng cài ComfyUI Desktop hoặc bản portable); module này dò server đang chạy, dò GPU,
+// Office Desk không cài ComfyUI (người dùng cài ComfyUI Desktop, bản portable hoặc comfy-cli); module này dò server đang chạy, dò GPU,
 // tìm thư mục models/ và tải model trong CATALOG vào đúng thư mục con. Art sinh ảnh bằng kit comfy.py (kits/art-frames/comfy.py)
 // qua API của ComfyUI, đọc preset của model đã cài trong <project>/.office-desk/art/comfy.json (projectConfig).
 // Thuần Node: không Electron (main.cjs nối nút và hộp chọn thư mục).
@@ -87,6 +87,38 @@ function desktopBase(env = process.env) {
   const appData = env.APPDATA || (process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support') : path.join(os.homedir(), '.config'));
   try { const config = JSON.parse(fs.readFileSync(path.join(appData, 'ComfyUI', 'config.json'), 'utf8')); return typeof config.basePath === 'string' ? config.basePath : ''; } catch { return ''; }
 }
+// ComfyUI cài bằng comfy-cli (pip install comfy-cli; comfy install): workspace ghi trong config.ini của comfy-cli
+// (%LOCALAPPDATA%\comfy-cli trên Windows). Ưu tiên default_workspace (comfy set-default), rồi recent_workspace (lần install/launch gần nhất).
+// Chỉ dựa vào env truyền vào (test truyền env rỗng thì không đọc config thật của máy).
+function cliConfigDir(env = process.env, platform = process.platform) {
+  const home = env.USERPROFILE || env.HOME || '';
+  if (platform === 'win32') return env.LOCALAPPDATA ? path.join(env.LOCALAPPDATA, 'comfy-cli') : home ? path.join(home, 'AppData', 'Local', 'comfy-cli') : '';
+  if (!home && !env.XDG_CONFIG_HOME) return '';
+  return platform === 'darwin' ? path.join(home, 'Library', 'Application Support', 'comfy-cli') : path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'comfy-cli');
+}
+function cliBase(env = process.env, platform = process.platform) {
+  const dir = cliConfigDir(env, platform); if (!dir) return '';
+  let text = ''; try { text = fs.readFileSync(path.join(dir, 'config.ini'), 'utf8'); } catch { return ''; }
+  const value = key => (new RegExp(`^\\s*${key}\\s*[=:]\\s*(.+?)\\s*$`, 'm').exec(text) || [])[1] || '';
+  return [value('default_workspace'), value('recent_workspace')].find(dir => dir && fs.existsSync(dir)) || '';
+}
+
+// Cách mở ComfyUI từ thư mục cài: bản git/comfy-cli (main.py + .venv hoặc venv) và bản portable (python_embeded + ComfyUI/main.py;
+// thư mục chọn có thể là gốc portable hoặc thư mục ComfyUI bên trong). Không tìm được (ComfyUI Desktop, hoặc chỉ chọn thư mục models)
+// thì null: UI giữ nút Tải ComfyUI. Python của hệ thống không dùng: thiếu torch của ComfyUI.
+function launcherOf(dir, platform = process.platform) {
+  if (!dir) return null;
+  const bin = platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python'];
+  const file = (...parts) => { const target = path.join(...parts); return fs.existsSync(target) && fs.statSync(target).isFile() ? target : ''; };
+  for (const [main, pythons] of [
+    [file(dir, 'main.py'), [file(dir, '.venv', ...bin), file(dir, 'venv', ...bin), file(dir, '..', 'python_embeded', 'python.exe')]],
+    [file(dir, 'ComfyUI', 'main.py'), [file(dir, 'python_embeded', 'python.exe')]],
+  ]) {
+    const python = pythons.find(Boolean);
+    if (main && python) return { python: path.resolve(python), main: path.resolve(main), cwd: path.dirname(path.resolve(main)), portable: /[\\/]python_embeded[\\/]/i.test(python) };
+  }
+  return null;
+}
 
 async function fetchJson(url, timeout = 2500) {
   const response = await fetch(url, { signal: AbortSignal.timeout(timeout) });
@@ -131,14 +163,15 @@ function download(url, target, { progress = () => {}, signal, redirects = 8 } = 
 }
 
 // root: thư mục dữ liệu của Office Desk (lưu <root>/tools/comfyui.json: thư mục ComfyUI và URL server người dùng chọn).
-function createComfy({ root, changed = () => {}, fetchJson: getJson = fetchJson, gpuProbe = nvidiaGpu, download: fetchFile = download, env = process.env, totalRam = os.totalmem() } = {}) {
+const LAUNCH_WAIT_MS = 120000, LAUNCH_POLL_MS = 2000;
+function createComfy({ root, changed = () => {}, fetchJson: getJson = fetchJson, gpuProbe = nvidiaGpu, download: fetchFile = download, env = process.env, totalRam = os.totalmem(), spawn = require('node:child_process').spawn, pollMs = LAUNCH_POLL_MS, waitMs = LAUNCH_WAIT_MS } = {}) {
   const configFile = path.join(root, 'tools', 'comfyui.json');
   const readConfig = () => { try { return JSON.parse(fs.readFileSync(configFile, 'utf8')) || {}; } catch { return {}; } };
   let config = readConfig();
   const state = { server: { ok: false, url: config.url || '', version: '', error: '' }, gpu: null, serverDirs: null, serverFiles: null, checking: false, checkedAt: 0 };
   const jobs = new Map(); // id -> { progress, done, total, error, controller, installing }
 
-  const base = () => config.base ? { dir: config.base, source: 'chosen' } : desktopBase(env) ? { dir: desktopBase(env), source: 'desktop' } : { dir: '', source: '' };
+  const base = () => config.base ? { dir: config.base, source: 'chosen' } : desktopBase(env) ? { dir: desktopBase(env), source: 'desktop' } : cliBase(env) ? { dir: cliBase(env), source: 'comfy-cli' } : { dir: '', source: '' };
   // Thư mục đích của một loại model: server đang chạy báo đường dẫn thật (kể cả extra_model_paths) thì dùng; không thì <base>/models/<dir>.
   function dirOf(kind) {
     const fromServer = state.serverDirs?.[kind]?.[0];
@@ -211,6 +244,36 @@ function createComfy({ root, changed = () => {}, fetchJson: getJson = fetchJson,
   // Huỷ giữ lại tệp .part để lần cài sau tải tiếp từ chỗ dở.
   function cancel(id) { jobs.get(id)?.controller?.abort(); return snapshot(); }
 
+  // Mở ComfyUI đã cài (launcherOf) ở cổng của URL đã lưu (mặc định 8188), tách khỏi app: đóng Office Desk không tắt ComfyUI.
+  // Log ghi vào <root>/tools/comfyui.log. Trả về ngay; dò server mỗi pollMs tới khi chạy hoặc quá waitMs.
+  let launching = null;
+  function launch() {
+    if (state.server.ok) return Promise.resolve(snapshot());
+    if (launching) return launching;
+    const run = launcherOf(base().dir); if (!run) throw Error('Không tìm thấy ComfyUI chạy được trong thư mục đã chọn (cần main.py và Python của ComfyUI)');
+    const port = (() => { try { return new URL(config.url || DEFAULT_URLS[0]).port || '8188'; } catch { return '8188'; } })();
+    const logFile = path.join(root, 'tools', 'comfyui.log'); fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    const log = fs.openSync(logFile, 'a');
+    const args = [...(run.portable ? ['-s'] : []), run.main, '--listen', '127.0.0.1', '--port', port, ...(run.portable ? ['--windows-standalone-build'] : [])];
+    let child;
+    try { child = spawn(run.python, args, { cwd: run.cwd, detached: true, windowsHide: true, stdio: ['ignore', log, log], env: { ...env, PYTHONIOENCODING: 'utf-8' } }); }
+    finally { fs.closeSync(log); }
+    let exited = null; child.once?.('exit', code => { exited = code; }); child.once?.('error', error => { exited = error.message; }); child.unref?.();
+    state.launch = { at: Date.now(), error: '', log: logFile }; changed();
+    launching = (async () => {
+      try {
+        let ok = false;
+        for (let waited = 0; waited < waitMs && !ok && exited === null; waited += pollMs) {
+          await new Promise(resolve => setTimeout(resolve, pollMs));
+          ok = (await refresh()).server.ok;
+        }
+        state.launch = ok ? null : { ...state.launch, error: exited !== null ? `ComfyUI thoát (${exited}); xem ${logFile}` : `ComfyUI chưa lên sau ${Math.round(waitMs / 1000)} giây; xem ${logFile}` };
+      } finally { launching = null; changed(); }
+      return snapshot();
+    })();
+    return launching;
+  }
+
   function models() {
     return CATALOG.map(model => {
       const job = jobs.get(model.id);
@@ -219,7 +282,7 @@ function createComfy({ root, changed = () => {}, fetchJson: getJson = fetchJson,
         installing: Boolean(job?.installing), progress: job?.total ? Math.min(1, job.done / job.total) : 0, error: job?.error || '' };
     });
   }
-  const snapshot = () => { const where = base(); return { server: { ...state.server }, gpu: state.gpu, checking: state.checking, checkedAt: state.checkedAt, base: where.dir, baseSource: where.source, modelsDir: state.serverDirs?.checkpoints?.[0] ? path.dirname(state.serverDirs.checkpoints[0]) : modelsRootOf(where.dir), models: models(), downloadPage: DOWNLOAD_PAGE }; };
+  const snapshot = () => { const where = base(); return { server: { ...state.server }, gpu: state.gpu, checking: state.checking, checkedAt: state.checkedAt, base: where.dir, baseSource: where.source, launchable: Boolean(launcherOf(where.dir)), launching: Boolean(launching), launchError: state.launch?.error || '', modelsDir: state.serverDirs?.checkpoints?.[0] ? path.dirname(state.serverDirs.checkpoints[0]) : modelsRootOf(where.dir), models: models(), downloadPage: DOWNLOAD_PAGE }; };
 
   // comfy.json cho kit comfy.py trong project: server + preset của model đã cài (tên tệp đúng như ComfyUI liệt kê).
   function projectConfig() {
@@ -233,7 +296,7 @@ function createComfy({ root, changed = () => {}, fetchJson: getJson = fetchJson,
     return data;
   }
 
-  return { refresh, setBase, install, cancel, state: snapshot, projectConfig, writeProjectConfig, dirOf };
+  return { refresh, setBase, install, cancel, launch, state: snapshot, projectConfig, writeProjectConfig, dirOf };
 }
 
-module.exports = { CATALOG, MODEL_DIRS, DEFAULT_URLS, DOWNLOAD_PAGE, createComfy, fitOf, recommended, modelsRootOf, desktopBase, download, nvidiaGpu, sizeOf };
+module.exports = { CATALOG, MODEL_DIRS, DEFAULT_URLS, DOWNLOAD_PAGE, createComfy, fitOf, recommended, modelsRootOf, desktopBase, cliBase, cliConfigDir, launcherOf, download, nvidiaGpu, sizeOf };
