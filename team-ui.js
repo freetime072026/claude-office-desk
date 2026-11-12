@@ -392,7 +392,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     get('#product-field').hidden = !isPo; setField(get('#po-product'), thread.poProduct || '', force);
     get('#engine-field').hidden = !pla; fillEngines(get('#worker-engine'), thread.preset || 'PLA'); setField(get('#worker-engine'), thread.engine || '', force);
     get('#spine-field').hidden = !pla; fillEngines(get('#worker-spine'), thread.preset || 'PLA', 'spine'); setField(get('#worker-spine'), thread.spine || '', force);
-    get('#art-gen-field').hidden = type !== 'Art'; setField(get('#art-generator'), team.artGenerator || 'chatgpt', force); paintArtTools(type);
+    get('#art-gen-field').hidden = type !== 'Art'; setField(get('#art-generator'), team.artGenerator || 'chatgpt', force); paintArtTools(type); paintCodex(type);
     const effective = field => own[field] || preset[field] || template[field] || fallback[field] || '';
     setField(get('#role-responsibility'), effective('responsibility'), force); setField(get('#role-output'), effective('output'), force); setField(get('#role-instructions'), own.instructions || '', force);
   }
@@ -559,6 +559,23 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
     box.hidden = !on; if (!on) return;
     window.OfficeSettings.ensureArt(mode); get('#art-tools-status').textContent = window.OfficeSettings.artSummary(mode);
   }
+  // Khối Art chế độ Codex: model chữ + mức suy nghĩ (dùng chung mọi session, team.codexModel / codexEffort). Danh sách theo tài khoản
+  // (cache Codex CLI); model đã chọn không còn trong danh sách thì app tự dùng luna và ghi chú ở đây.
+  let codexModels = null;
+  function paintCodex(type) {
+    const mode = get('#art-generator').value || team.artGenerator || 'chatgpt', box = get('#codex-field'), on = type === 'Art' && mode === 'codex';
+    box.hidden = !on; if (!on || !codexModels) return;
+    const { list, model, effort, saved } = codexModels, select = get('#codex-model');
+    const options = list.length ? list : [{ slug: model, name: model, description: '' }];
+    const key = options.map(item => item.slug).join(',');
+    if (select.dataset.key !== key) { select.replaceChildren(...options.map(item => make('option', { value: item.slug, textContent: item.name + (/-luna$/i.test(item.slug) ? ' · rẻ' : ''), title: item.description }))); select.dataset.key = key; }
+    setField(select, model); setField(get('#codex-effort'), effort);
+    get('#codex-note').textContent = !list.length ? 'Chưa có danh sách model (Codex CLI chưa chạy lần nào): dùng ' + model + '.'
+      : saved && saved !== model ? `${saved} không còn trong danh sách của tài khoản: đang dùng ${model}.` : 'Art chạy codex exec -m ' + model + ' · suy nghĩ ' + effort + '.';
+  }
+  const saveCodex = async () => { if (await act('codex-model', { model: get('#codex-model').value, effort: get('#codex-effort').value })) get('#panel-saved').textContent = '✓ Đã lưu model Codex của Art'; };
+  get('#codex-model').onchange = saveCodex; get('#codex-effort').onchange = saveCodex;
+  get('#art-generator').addEventListener('change', () => paintCodex(selectedType()));
   get('#art-tools-open').onclick = () => window.OfficeSettings.open({ tab: 'plugins', scope: 'discover' });
   get('#art-generator').addEventListener('change', () => paintArtTools(selectedType()));
   window.OfficeSettings.init({ showError, openUsage: () => openUsage(), usageLabel, onChange: () => paintArtTools(selectedType()) });
@@ -826,7 +843,7 @@ Vẫn xóa ${role}? Task của khối bị bỏ, Issue của nó chuyển cho Le
   get('#usage-viewer').addEventListener('close', () => { if (usageId) window.office.run('close', { id: usageId }).catch(() => {}); usageId = undefined; usageTerm?.dispose(); usageTerm = undefined; get('#usage-terminal').replaceChildren(); });
 
   // ---- Trạng thái từ main.
-  const applyState = state => { window.OfficeSettings.update(state); paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; skillCatalog = state.skills || {}; releaseFiles = state.releaseFiles || {}; releaseNetworks = state.releaseNetworks || []; devServers = state.devServers || {}; penpotServer = state.penpotServer || null;  team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
+  const applyState = state => { codexModels = state.codexModels || null; window.OfficeSettings.update(state); paintAccounts(state); removal = state.removal || {}; qaRoundLimit = state.qaRoundLimit; roleTypes = state.pipeline || []; mcpNames = state.mcpServers || []; skillCatalog = state.skills || {}; releaseFiles = state.releaseFiles || {}; releaseNetworks = state.releaseNetworks || []; devServers = state.devServers || {}; penpotServer = state.penpotServer || null;  team = state.team; if (team && (!selected || !current())) selected = team.threads.filter(thread => !thread.archived).at(-1)?.id || team.threads.at(-1)?.id; if (team) paint(); };
   window.office.onState(applyState);
   get('#search').oninput = sidebar;
   get('#new-thread').onclick = async () => { const id = await act('create', { project: current()?.archived ? '' : current()?.project || '' }); if (id) { select(id); get('#message').focus(); } };

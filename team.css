@@ -86,6 +86,7 @@ dialog{width:520px;max-width:90vw;border:1px solid #deded9;border-radius:15px;pa
 #penpot-run{display:grid;gap:4px;margin-top:6px}#penpot-run button{justify-self:start}#penpot-status{font-size:11px;color:#5d6560;line-height:1.5}
 /* Nút ⚙ Settings cạnh menu tài khoản và hộp Settings (settings-ui.js): Connectors / Skills / Plugins. */
 #account-row{display:flex;gap:6px}#account-row #console{flex:1;min-width:0}#settings-open{flex:none;width:38px;padding:0;font-size:16px;line-height:1}
+#codex-field{display:grid;grid-template-columns:1fr auto;gap:4px 8px;margin-top:6px}#codex-field small{grid-column:1/-1;font-size:11px;color:#5d6560;line-height:1.5}
 #art-tools{display:grid;gap:4px;margin-top:6px}#art-tools small{font-size:11px;color:#5d6560;line-height:1.5}#art-tools button{justify-self:start;padding:3px 8px;font-size:11px}
 dialog#settings{width:min(1040px,94vw);height:min(760px,90vh);padding:0;overflow:hidden;background:#fff}dialog#settings[open]{display:flex;flex-direction:column}
 .settings-top{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #ecebe6}.settings-top h2{margin:0;font-size:16px;font-weight:600}#settings-close{border:0;background:transparent;font-size:16px;padding:4px 8px}

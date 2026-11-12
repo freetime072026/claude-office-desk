@@ -31,14 +31,43 @@ function openLogin({ installed, spawn = require('node:child_process').spawn, pla
   return command;
 }
 
+// ---- Model chữ của Codex cho Art. Model này chỉ đọc lệnh vẽ (khối Art viết sẵn) rồi gọi công cụ tạo ảnh; chất lượng ảnh do công cụ
+// tạo ảnh quyết định, nên mặc định chọn bậc rẻ nhất ("luna") + suy nghĩ low. Danh sách lấy từ cache Codex CLI tự tải theo tài khoản
+// (<CODEX_HOME>/models_cache.json, chỉ mục visibility "list"): model trong config.toml không có trong danh sách thì Codex báo
+// model_not_found (2026-11-12: config "gpt-5.5" do app Codex desktop ghi làm cả 3 khối Art bị chặn).
+const DEFAULT_MODEL = 'gpt-5.6-luna', DEFAULT_EFFORT = 'low';
+const EFFORTS = Object.freeze(['low', 'medium', 'high']);
+const MODEL_RE = /^[a-z0-9][a-z0-9.-]{1,60}$/i;   // tên model đi vào lệnh shell của Art: chỉ chữ, số, dấu chấm, gạch nối
+function models({ env = process.env, read = file => require('node:fs').readFileSync(file, 'utf8') } = {}) {
+  try {
+    const list = JSON.parse(read(path.join(home(env), 'models_cache.json'))).models || [];
+    return list.filter(item => item && MODEL_RE.test(item.slug || '') && (item.visibility || 'list') === 'list')
+      .map(item => ({ slug: item.slug, name: item.display_name || item.slug, description: String(item.description || '').slice(0, 120) }));
+  } catch { return []; }
+}
+// Model dùng thật: model bạn chọn nếu còn trong danh sách; không thì luna đầu tiên (rẻ nhất), rồi model đầu danh sách.
+// Chưa có cache (Codex chưa chạy lần nào) thì tin model đã chọn / mặc định.
+function chooseModel(saved, list = []) {
+  const chosen = MODEL_RE.test(saved || '') ? saved : '';
+  if (!list.length) return chosen || DEFAULT_MODEL;
+  if (chosen && list.some(item => item.slug === chosen)) return chosen;
+  return (list.find(item => /-luna$/i.test(item.slug)) || list[0]).slug;
+}
+const chooseEffort = saved => EFFORTS.includes(saved) ? saved : DEFAULT_EFFORT;
+// Cờ thêm vào `codex exec` của Art (prompt.cjs artCodexGuide).
+const execFlags = ({ model = DEFAULT_MODEL, effort = DEFAULT_EFFORT } = {}) => `-m ${MODEL_RE.test(model) ? model : DEFAULT_MODEL} -c model_reasoning_effort=${EFFORTS.includes(effort) ? effort : DEFAULT_EFFORT}`;
+
 // ---- Hết hạn mức gói ChatGPT giữa chừng: khối Art trả handoff blocked kèm "quota":"codex" (prompt.cjs artCodexGuide), app hẹn giờ
 // chạy lại task đó (main.cjs) thay vì để nó nằm chặn tới khi bạn bấm Thử lại. Giờ chạy lại lấy từ lời Codex, ví dụ
 // "You've hit your usage limit … try again in 2 days 3 hours 4 minutes" hoặc "… try again at Nov 14th, 2026 2:30 PM" / "at 3:42 PM".
-const QUOTA_RE = /usage limit|hit your limit|limit reached|rate limit|quota|hết hạn mức|hạn mức/i;
+// Chỉ nhận câu Codex in ra (tiếng Anh). Không nhận "hạn mức": câu bàn giao blocked của Art luôn có "kiểm hạn mức gói ChatGPT" kể cả
+// khi lỗi khác (vd model_not_found), trước đây app hiểu nhầm là hết hạn mức và hẹn chạy lại mỗi giờ một lỗi không tự hết.
+const QUOTA_RE = /usage limit|hit your limit|rate limit|quota exceeded|insufficient_quota|try again (?:in|at) /i;
+const NOT_QUOTA_RE = /model_not_found|invalid_request_error|not supported|not logged in|unauthorized/i;
 const QUOTA_FALLBACK_MS = 60 * 60 * 1000;   // Codex không ghi giờ: thử lại sau 1 giờ (hết nữa thì hẹn tiếp)
 const QUOTA_MARGIN_MS = 2 * 60 * 1000;      // chạy lại sau giờ Codex ghi một chút để hạn mức chắc chắn đã mở
 const QUOTA_MAX_MS = 8 * 24 * 60 * 60 * 1000;
-const isQuota = text => QUOTA_RE.test(String(text || ''));
+const isQuota = text => QUOTA_RE.test(String(text || '')) && !NOT_QUOTA_RE.test(String(text || ''));
 const UNITS = { d: 86400000, day: 86400000, h: 3600000, hr: 3600000, hour: 3600000, m: 60000, min: 60000, minute: 60000, s: 1000, sec: 1000, second: 1000 };
 function inDuration(text) {
   const match = /try again in\s+([^.\n]+)/i.exec(text); if (!match) return 0;
@@ -57,14 +86,15 @@ function atTime(text, now) {
   }
   const parsed = Date.parse(value); return Number.isNaN(parsed) ? null : new Date(parsed);
 }
-// Giờ chạy lại (Date) cho lỗi hết hạn mức; null nếu text không phải lỗi hạn mức. hinted: retryAt khối Art ghi trong handoff (ISO).
-function quotaRetryAt(text, { now = new Date(), hinted = '' } = {}) {
+// Giờ chạy lại (Date) cho lỗi hết hạn mức; null nếu không phải lỗi hạn mức. hinted: retryAt khối Art ghi trong handoff (ISO).
+function quotaRetryAt(text, { now = new Date(), hinted = '', flagged = false } = {}) {
   const value = String(text || '');
-  if (!isQuota(value) && !hinted) return null;
+  // flagged: khối Art tự báo "quota":"codex". Lời Codex là lỗi khác (model không hỗ trợ, chưa đăng nhập) thì vẫn không hẹn.
+  if (NOT_QUOTA_RE.test(value) || (!isQuota(value) && !hinted && !flagged)) return null;
   const sane = date => date && !Number.isNaN(date.getTime()) && date > now && date - now <= QUOTA_MAX_MS ? date : null;
   const span = inDuration(value);
   const at = sane(span ? new Date(now.getTime() + span) : null) || sane(atTime(value, now)) || sane(hinted ? new Date(hinted) : null);
   return new Date((at ? at.getTime() + QUOTA_MARGIN_MS : now.getTime() + QUOTA_FALLBACK_MS));
 }
 
-module.exports = { home, imagesDir, status, openLogin, loginCommand, isQuota, quotaRetryAt, INSTALL_COMMAND, LOGIN_COMMAND, QUOTA_FALLBACK_MS };
+module.exports = { home, imagesDir, status, openLogin, loginCommand, isQuota, quotaRetryAt, models, chooseModel, chooseEffort, execFlags, MODEL_RE, EFFORTS, DEFAULT_MODEL, DEFAULT_EFFORT, INSTALL_COMMAND, LOGIN_COMMAND, QUOTA_FALLBACK_MS };

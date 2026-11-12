@@ -65,3 +65,42 @@ test('a blocked Codex quota handoff keeps quota and retryAt; other handoffs do n
   assert.deepEqual(parseHandoff(fence({ status: 'blocked', quota: 'codex', retryAt: '2026-11-13T15:42:00+07:00', summary: 'Codex hết hạn mức: try again at 3:42 PM' })), { status: 'blocked', summary: 'Codex hết hạn mức: try again at 3:42 PM', retested: [], quota: 'codex', retryAt: '2026-11-13T15:42:00+07:00' });
   assert.equal(parseHandoff(fence({ status: 'done', quota: 'codex', summary: 'x' })).quota, undefined);
 });
+
+test('a Codex model or login error is not a quota error, even when the summary says to check the ChatGPT plan limit', () => {
+  const now = new Date(2026, 10, 13, 10, 0, 0);
+  const summary = 'Codex không sinh được ảnh: ERROR 400 invalid_request_error "The \'gpt-5.5\' model is not supported when using Codex with a ChatGPT account." (code model_not_found); cập nhật bằng npm i -g @openai/codex@latest và kiểm hạn mức gói ChatGPT';
+  assert.equal(codex.isQuota(summary), false);
+  assert.equal(codex.quotaRetryAt(summary, { now, flagged: true }), null, 'even if the block flags it as quota');
+  assert.equal(codex.isQuota('Codex không sinh được ảnh: …; kiểm hạn mức gói ChatGPT'), false, 'the Vietnamese hint alone is not a quota error');
+  assert.equal(codex.quotaRetryAt('Codex hết hạn mức', { now, flagged: true }).getTime(), now.getTime() + 3600000, 'a block flagging quota without a time: one hour');
+});
+
+test('Codex models come from the account cache; the chosen model falls back to the cheapest luna when it is not offered', () => {
+  const cache = JSON.stringify({ models: [
+    { slug: 'gpt-6.1-sol', display_name: 'GPT-6.1-Sol', visibility: 'list', description: 'Latest workhorse' },
+    { slug: 'gpt-reserve', display_name: 'GPT-Reserve', visibility: 'hide' },
+    { slug: 'gpt-6-luna', display_name: 'GPT-6-Luna', visibility: 'list', description: 'Fast and affordable' },
+    { slug: 'gpt-5.6-luna', display_name: 'GPT-5.6-Luna', visibility: 'list' },
+    { slug: 'bad name; rm -rf', visibility: 'list' }] });
+  const list = codex.models({ env: { CODEX_HOME: 'X' }, read: () => cache });
+  assert.deepEqual(list.map(item => item.slug), ['gpt-6.1-sol', 'gpt-6-luna', 'gpt-5.6-luna'], 'hidden models and unsafe names are dropped');
+  assert.equal(codex.chooseModel('gpt-5.5', list), 'gpt-6-luna', 'a model the account does not offer (model_not_found) → first luna');
+  assert.equal(codex.chooseModel('gpt-6.1-sol', list), 'gpt-6.1-sol');
+  assert.equal(codex.chooseModel('', []), codex.DEFAULT_MODEL, 'no cache yet: the default');
+  assert.deepEqual(codex.models({ read: () => { throw new Error('none'); } }), []);
+  assert.equal(codex.chooseEffort('ultra'), 'low'); assert.equal(codex.chooseEffort('medium'), 'medium');
+  assert.equal(codex.execFlags({ model: 'gpt-6-luna', effort: 'low' }), '-m gpt-6-luna -c model_reasoning_effort=low');
+  assert.equal(codex.execFlags({ model: 'x; rm -rf /', effort: 'max' }), `-m ${codex.DEFAULT_MODEL} -c model_reasoning_effort=low`);
+});
+
+test('the Art Codex command carries the chosen model and effort; the team saves only valid values', () => {
+  const { rolePrompt } = require('../prompt.cjs'); const { initial, update } = require('../team.cjs');
+  const files = filesOf({ id: 's', folder: 'E:\game' });
+  const thread = { flow: ['Lead Dev', 'Art'], workers: { Art: { type: 'Art', task: 'ART-3 nút', files: ['ArtGen/ui/'] } }, messages: [], attachments: [] };
+  const brief = rolePrompt({ artGenerator: 'codex' }, thread, 'Art', { content: 'x', files, codex: { model: 'gpt-6-luna', effort: 'low' } }).brief;
+  assert.match(brief, /codex exec -m gpt-6-luna -c model_reasoning_effort=low --sandbox workspace-write/);
+  const team = initial(), id = update(team, 'create', { request: 'x' });
+  update(team, 'codex-model', { id, model: 'gpt-6-luna', effort: 'medium' }); assert.equal(team.codexModel, 'gpt-6-luna'); assert.equal(team.codexEffort, 'medium');
+  assert.throws(() => update(team, 'codex-model', { id, model: 'gpt; rm' }), /không hợp lệ/);
+  assert.throws(() => update(team, 'codex-model', { id, effort: 'ultra' }), /không hợp lệ/);
+});

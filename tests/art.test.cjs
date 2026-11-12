@@ -61,7 +61,7 @@ test('Codex mode: Art checks Codex login, runs codex exec per image, reviews the
   const brief = rolePrompt({ artGenerator: 'codex' }, thread, 'Art', { content: 'x', files }).brief;
   assert.match(brief, /Codex CLI đăng nhập tài khoản ChatGPT/); assert.match(brief, /codex --version && codex login status/); assert.match(brief, /npm i -g @openai\/codex/);
   assert.match(brief, /Style prompt chung lấy từ STYLE\.md/); assert.match(brief, /ART_LESSONS\.md/); assert.match(brief, /Prompt viết bằng tiếng Anh/);
-  assert.match(brief, /dòng đầu `\$imagegen`/); assert.match(brief, /codex exec --sandbox workspace-write --skip-git-repo-check "\$\(cat \.office-desk\/tmp\/ART-….txt\)"/);
+  assert.match(brief, /dòng đầu `\$imagegen`/); assert.match(brief, /codex exec -m gpt-5\.6-luna -c model_reasoning_effort=low --sandbox workspace-write --skip-git-repo-check "\$\(cat \.office-desk\/tmp\/ART-….txt\)"/, 'no model chosen yet: the default luna, low effort');
   assert.match(brief, /timeout 600000/); assert.match(brief, /-i <đường dẫn tương đối>/); assert.match(brief, /Do not copy, move or edit the generated image/);
   assert.match(brief, /ART-….txt\)" < \/dev\/null`/); assert.match(brief, /ls ".*generated_images\/<session id>"/); assert.match(brief, /không dùng ảnh mới nhất của cả thư mục/);
   assert.match(brief, /Codex không sinh được ảnh/); assert.match(brief, /không sinh lại vì nền/); assert.match(brief, /inbox chỉ chứa ảnh đã duyệt/);

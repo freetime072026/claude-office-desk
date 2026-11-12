@@ -329,6 +329,13 @@ function update(team, action, payload) {
   // Công cụ sinh ảnh của Art (dùng chung mọi session): 'chatgpt' = Art viết prompt chi tiết, người dùng tạo ảnh bằng ChatGPT;
   // 'codex' = Art tự chạy Codex CLI đăng nhập tài khoản ChatGPT; 'comfyui' = Art tự sinh bằng ComfyUI chạy trên máy (kit comfy.py); 'tool' = Art tự gọi script/pipeline của project hoặc MCP sinh ảnh.
   if (action === 'art-generator') { if (!ART_GENERATORS.includes(payload.mode)) throw Error('Công cụ sinh ảnh không hợp lệ'); team.artGenerator = payload.mode; log('Cấu hình', 'Art sinh ảnh bằng: ' + ({ chatgpt: 'ChatGPT (thủ công)', codex: 'Codex CLI (tự động, dùng gói ChatGPT)', comfyui: 'ComfyUI trên máy (tự động, miễn phí)' }[payload.mode] || 'script/MCP của project')); return true; }
+  // Model chữ + mức suy nghĩ của Codex khi Art chế độ 'codex' (dùng chung mọi session; codex.cjs chooseModel / execFlags).
+  if (action === 'codex-model') {
+    const { MODEL_RE, EFFORTS } = require('./codex.cjs'), pick = value => typeof value === 'string' ? value.trim().slice(0, 64) : '', model = pick(payload.model), effort = pick(payload.effort);
+    if (model && !MODEL_RE.test(model)) throw Error('Tên model Codex không hợp lệ'); if (effort && !EFFORTS.includes(effort)) throw Error('Mức suy nghĩ không hợp lệ');
+    if (model) team.codexModel = model; if (effort) team.codexEffort = effort;
+    log('Cấu hình', `Codex cho Art: model ${team.codexModel || 'tự chọn'} · suy nghĩ ${team.codexEffort || 'low'}`); return true;
+  }
   // US-08: MCP server bật cho từng loại role, dùng chung mọi session; role không có trong danh sách không nạp MCP nào.
   if (action === 'role-mcp') {
     const key = roleKey(text(payload.role, 40)); if (![...PIPELINE, ...item.flow.map(typeOf)].includes(key)) throw Error('Role không hợp lệ');
