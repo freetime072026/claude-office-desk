@@ -1,4 +1,5 @@
-// Hộp Settings (nút ⚙ cạnh menu tài khoản ở chân sidebar): mục Tài khoản, Usage và Tùy chỉnh. Tùy chỉnh có ba tab:
+// Hộp Settings (nút ⚙ cạnh menu tài khoản ở chân sidebar): mục Tài khoản, Usage, Tùy chỉnh và Preview asset (Build preview
+// bằng kit asset-preview, preview-kit.cjs). Tùy chỉnh có ba tab:
 // Connectors (MCP server trong mcp-servers.json), Skills (skill của app và của dự án) và Plugins (phần cài thêm: Codex CLI, RIFE,
 // ComfyUI và model của ComfyUI). Mỗi tab lọc Của bạn (đã có) / Khám phá (cài được), tìm theo tên, nút ＋ Thêm.
 // Dữ liệu: snapshot của main (team-ui gọi update) + main.cjs action settings / codex / rife / comfyui.
@@ -11,6 +12,7 @@
   let section = 'customize', tab = 'connectors', scope = 'yours', query = '', navQuery = '';
   let mcpInfo = null, mcpLoading = false, note = '';
   let codexState = null, codexChecking = false, codexPoll = null, comfyAsked = false;
+  const preview = { folders: null, folder: '', state: null, poll: null };
   const dialog = () => get('#settings');
   const isOpen = () => Boolean(dialog()?.open);
   const fail = error => { host.showError(error); setNote(error.message, true); };
@@ -23,6 +25,7 @@
     setNote(''); load(); paint();
   }
   function load() {
+    if (section === 'preview') { preview.folders = null; previewLoad(); return; }
     if (section !== 'customize') return;
     if ((tab === 'connectors' || tab === 'skills') && !mcpInfo && !mcpLoading) refreshMcp();
     if (tab === 'plugins') { if (!codexState && !codexChecking) checkCodex(); if (!snap?.comfy && !comfyAsked) { comfyAsked = true; comfy('status'); } }
@@ -188,11 +191,69 @@
       make('button', { type: 'button', className: 'set-btn', textContent: 'Xem usage chính thức (/usage)', disabled: !profiles.length, onclick: () => { dialog().close(); host.openUsage(); } }));
   }
 
+  // ---- Mục Preview asset: chọn thư mục session, Build preview (chạy nền, hỏi lại status mỗi giây), Mở preview, kit, KIT.md.
+  const timeOf = ms => new Date(ms).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+  const stopPoll = () => { clearInterval(preview.poll); preview.poll = null; };
+  async function previewLoad() {
+    try {
+      if (!preview.folders) preview.folders = (await run('asset-preview', { op: 'folders' })).folders;
+      if (!preview.folders.includes(preview.folder)) preview.folder = preview.folders[0] || '';
+      preview.state = preview.folder ? await run('asset-preview', { op: 'status', folder: preview.folder }) : null;
+    } catch (error) { fail(error); }
+    if (preview.state?.build?.running && !preview.poll) preview.poll = setInterval(previewTick, 1000);
+    paint();
+  }
+  async function previewTick() {
+    if (!isOpen() || section !== 'preview') return stopPoll();
+    try { preview.state = await run('asset-preview', { op: 'status', folder: preview.folder }); } catch (error) { fail(error); }
+    if (!preview.state?.build?.running) stopPoll();
+    paint();
+  }
+  async function previewDo(op) {
+    if (!preview.folder) return;
+    try {
+      if (op === 'build') { preview.state = await run('asset-preview', { op, folder: preview.folder }); if (preview.state?.build?.running && !preview.poll) preview.poll = setInterval(previewTick, 1000); return paint(); }
+      await run('asset-preview', { op, folder: preview.folder });
+    } catch (error) { fail(error); }
+  }
+  function paintPreview() {
+    const box = get('#settings-section-preview');
+    if (!box.dataset.ready) {
+      box.dataset.ready = '1';
+      const select = make('select', { id: 'set-preview-folder', onchange: event => { preview.folder = event.target.value; preview.state = null; stopPoll(); previewLoad(); } });
+      const button = (id, text, op, primary) => make('button', { type: 'button', id, className: primary ? 'set-btn primary' : 'set-btn', textContent: text, onclick: () => previewDo(op) });
+      const pick = make('div', { className: 'set-preview-row' }), actions = make('div', { className: 'set-preview-row' });
+      pick.append(make('b', { textContent: 'Project' }), select);
+      actions.append(button('set-preview-build', 'Build preview', 'build', true), button('set-preview-open', 'Mở preview', 'open'), button('set-preview-kit', 'Mở thư mục kit', 'open-kit'), button('set-preview-doc', 'Quy ước (KIT.md)', 'open-doc'));
+      box.replaceChildren(make('h3', { textContent: 'Preview asset' }),
+        make('p', { className: 'set-muted', textContent: 'Trang xem trước mọi ảnh trong assets/ và input/, anim Spine (mọi clip), anim frame-by-frame và VFX thật của game. Kit asset-preview của Office Desk: lần đầu chép vào <project>/.office-desk/preview/; kết quả là input/_preview/index.html, mở bằng trình duyệt, không cần server.' }),
+        pick, make('div', { className: 'set-card', id: 'set-preview-info' }), actions, make('pre', { className: 'set-preview-log', id: 'set-preview-log', hidden: true }));
+    }
+    const select = get('#set-preview-folder'), folders = preview.folders || [];
+    const sig = folders.join('|'); if (select.dataset.sig !== sig) { select.dataset.sig = sig; select.replaceChildren(...folders.map(folder => make('option', { value: folder, textContent: folder }))); }
+    select.value = preview.folder; select.disabled = !folders.length;
+    const st = preview.state, job = st?.build, info = get('#set-preview-info');
+    const newer = st && st.projectVersion != null && st.projectVersion < st.version ? ` · Office Desk có v${st.version} mới hơn (đọc KIT.md của Office Desk, chép phần sửa lỗi cần)` : '';
+    const lines = !folders.length ? ['Chưa có session nào có thư mục project.'] : !st ? ['Đang đọc…'] : [
+      st.kitMissing ? 'Kit: không thấy kits/asset-preview trong Office Desk' : st.copied ? `Kit: v${st.projectVersion ?? '?'} trong ${st.dir}${newer}` : `Kit: chưa chép (Build preview sẽ chép v${st.version} vào ${st.dir})`,
+      st.builtAt ? `Preview: build lúc ${timeOf(st.builtAt)} · ${st.index}` : 'Preview: chưa build',
+      st.vfx ? 'VFX: có vfx_entry.ts + vfx_effects.js' : 'VFX: chưa bật (chép vfx_*.example thành vfx_entry.ts / vfx_effects.js, xem KIT.md)',
+      job?.running ? `Đang build… ${Math.round((Date.now() - job.startedAt) / 1000)} s` : job ? (job.code === 0 ? `✓ Build xong trong ${Math.round((job.endedAt - job.startedAt) / 1000)} s` : '✕ Build lỗi: ' + (job.error || 'xem log')) : ''].filter(Boolean);
+    const isig = lines.join('\n'); if (info.dataset.sig !== isig) { info.dataset.sig = isig; info.replaceChildren(...lines.map(text => make('small', { className: 'set-sub', textContent: text }))); }
+    const busy = Boolean(job?.running), build = get('#set-preview-build');
+    build.disabled = !st || busy || st.kitMissing; build.textContent = busy ? 'Đang build…' : 'Build preview';
+    get('#set-preview-open').disabled = !st?.builtAt || busy; get('#set-preview-kit').disabled = !st; get('#set-preview-doc').disabled = !st;
+    const log = get('#set-preview-log'), text = job ? [...job.log, job.error && !job.running ? '! ' + job.error : ''].filter(Boolean).join('\n') : '';
+    log.hidden = !text; log.classList.toggle('is-bad', Boolean(job && !job.running && job.code !== 0));
+    if (log.textContent !== text) { const end = log.scrollTop + log.clientHeight >= log.scrollHeight - 4; log.textContent = text; if (end) log.scrollTop = log.scrollHeight; }
+  }
+
   function paint() {
     if (!isOpen()) return;
     for (const button of document.querySelectorAll('#settings-nav [data-section]')) { const on = button.dataset.section === section; button.setAttribute('aria-current', on ? 'page' : 'false'); button.hidden = Boolean(navQuery) && !button.textContent.toLowerCase().includes(navQuery.toLowerCase()); }
-    for (const name of ['account', 'usage', 'customize']) get('#settings-section-' + name).hidden = section !== name;
+    for (const name of ['account', 'usage', 'customize', 'preview']) get('#settings-section-' + name).hidden = section !== name;
     if (section === 'account') return paintAccount();
+    if (section === 'preview') return paintPreview();
     if (section === 'usage') return paintUsage();
     for (const button of document.querySelectorAll('#settings-tabs [data-tab]')) button.setAttribute('aria-selected', String(button.dataset.tab === tab));
     for (const button of document.querySelectorAll('#settings-scope [data-scope]')) button.setAttribute('aria-pressed', String(button.dataset.scope === scope));

@@ -1,0 +1,5 @@
+{
+  "name": "asset-preview",
+  "version": 2,
+  "_note": "Office Desk copies the kit into <project>/.office-desk/preview/ (missing files only) and runs build_preview.py there from Settings > Preview asset. kit.json there records the copied version."
+}

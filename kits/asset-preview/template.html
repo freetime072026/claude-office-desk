@@ -1,0 +1,943 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ Asset Preview</title>
+<style>
+  :root {
+    --bg: #f4f4f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e2e2dc;
+    --accent: #c4561c; --chip: #efefea; --err: #b3261e;
+    --chk1: #ffffff; --chk2: #e6e6e1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --panel: #1f1f1d; --ink: #ecebe6; --muted: #9a9a93; --line: #33332f;
+      --accent: #f08a4b; --chip: #2a2a27; --err: #f2b8b5; --chk1: #2b2b28; --chk2: #222220; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.4 system-ui, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  header .stat { color: var(--muted); }
+  input[type=search] { flex: 1 1 220px; min-width: 160px; padding: 6px 10px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; color: var(--muted); padding: 5px 10px; font: inherit; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  label.sz { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+  .wrap { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - var(--hh, 52px)); }
+  nav { position: sticky; top: var(--hh, 52px); height: calc(100vh - var(--hh, 52px)); overflow: auto; padding: 10px 6px 40px;
+    border-right: 1px solid var(--line); background: var(--panel); }
+  nav a { display: flex; justify-content: space-between; gap: 6px; padding: 3px 8px; border-radius: 4px;
+    color: var(--ink); text-decoration: none; white-space: nowrap; }
+  nav a span:first-child { overflow: hidden; text-overflow: ellipsis; }
+  nav a:hover { background: var(--chip); }
+  nav a .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+  nav a.top { font-weight: 600; margin-top: 8px; }
+  main { padding: 8px 16px 60px; min-width: 0; }
+  section { margin: 18px 0 8px; }
+  section h2 { font-size: 13px; margin: 0 0 8px; font-weight: 600; display: flex; gap: 8px; align-items: baseline;
+    position: sticky; top: var(--hh, 52px); background: var(--bg); padding: 6px 0; z-index: 2; word-break: break-all; }
+  section h2 .n { color: var(--muted); font-weight: 400; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--cell, 150px), 1fr)); gap: 10px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: zoom-in; }
+  .card:hover { border-color: var(--accent); }
+  .thumb { aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; }
+  .thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  body.bg-checker .thumb, body.bg-checker .lb-img { background: repeating-conic-gradient(var(--chk1) 0 25%, var(--chk2) 0 50%) 0 0 / 16px 16px; }
+  body.bg-dark .thumb, body.bg-dark .lb-img { background: #111; }
+  body.bg-light .thumb, body.bg-light .lb-img { background: #fff; }
+  body.bg-green .thumb, body.bg-green .lb-img { background: #6f8f4e; }
+  .meta { padding: 5px 7px; border-top: 1px solid var(--line); }
+  .meta .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta .sub { color: var(--muted); font-size: 11px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag { font-size: 10px; padding: 0 5px; border-radius: 3px; background: var(--chip); color: var(--muted); }
+  .tag.psd { background: #2f5d9a; color: #fff; }
+  .tag.asset { background: #2e7d4f; color: #fff; }
+  .card.err .thumb { color: var(--err); font-size: 11px; padding: 8px; text-align: center; }
+  .others { margin-top: 8px; color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .others .tag { font-size: 11px; }
+  .lb { position: fixed; inset: 0; background: rgba(0,0,0,.82); display: none; z-index: 20; padding: 24px;
+    grid-template-rows: 1fr auto; gap: 10px; }
+  .lb.open { display: grid; }
+  .lb-img { display: grid; place-items: center; overflow: auto; border-radius: 8px; min-height: 0; }
+  .lb-img img { max-width: 100%; max-height: calc(100vh - 110px); object-fit: contain; }
+  .lb-img.zoom img { max-width: none; max-height: none; }
+  .lb-bar { color: #eee; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .lb-bar a { color: #ffb68a; }
+  .lb-bar .path { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+  .lb-bar .hint { color: #aaa; margin-left: auto; }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  .card.rig { border-color: #7a4fd0; }
+  .card.rig .thumb { position: relative; }
+  .card.rig .play { position: absolute; inset: auto 6px 6px auto; background: #7a4fd0; color: #fff; border-radius: 12px;
+    padding: 1px 9px; font-size: 12px; font-weight: 600; }
+  .tag.spine { background: #7a4fd0; color: #fff; }
+  .tag.used { background: #2e7d4f; color: #fff; }
+  /* Spine player: same layout and colours as Game-12 input/preview/anim_preview.html */
+  .ap { --bg: #15102a; --panel: #241a44; --text: #f3eefe; --muted: #b3a8d3; --accent: #ff4fd8; --used: #4fe3a0; --line: #4a3c7d;
+    position: fixed; inset: 0; z-index: 30; display: none; flex-direction: column; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, sans-serif; }
+  .ap.open { display: flex; }
+  .ap header { position: static; display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 8px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--line); }
+  .ap .row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+  .ap header h1 { font-size: 15px; margin: 0 6px 0 0; }
+  .ap .group { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .ap .group > span { color: var(--muted); margin-right: 2px; }
+  .ap button, .ap select, .ap input { background: #34275f; color: var(--text); border: 1px solid #5a4791; border-radius: 6px;
+    padding: 3px 9px; font: inherit; font-size: 13px; }
+  .ap button, .ap select { cursor: pointer; }
+  .ap input { width: 130px; }
+  .ap button.on { background: var(--accent); border-color: var(--accent); color: #15102a; font-weight: 600; }
+  .ap #apClose { margin-left: auto; }
+  #apNote { padding: 5px 16px; color: var(--muted); font-size: 13px; border-bottom: 1px solid var(--line); }
+  #apNote i { color: var(--used); font-style: normal; }
+  #apNote code { color: var(--text); }
+  .ap-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  .ap-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #apLabels { position: absolute; inset: 0; }
+  .clip { position: absolute; border: 1px dashed rgba(180, 160, 255, 0.18); border-radius: 8px; cursor: zoom-in; }
+  .clip:hover { border-color: rgba(255, 79, 216, 0.7); }
+  .solo .clip { cursor: zoom-out; }
+  .clip .lb2 { position: absolute; left: 0; right: 0; bottom: 3px; text-align: center; font-size: 12px; text-shadow: 0 1px 2px #000; pointer-events: none; }
+  .clip .lb2 b { font-size: 13px; }
+  .clip .lb2 small { color: var(--muted); }
+  .clip.used { border-color: rgba(79, 227, 160, 0.55); border-style: solid; }
+  .clip.used .lb2 b { color: var(--used); }
+  #apMsg { position: absolute; left: 16px; top: 16px; color: var(--muted); white-space: pre-wrap; }
+  #apMsg.err { color: #ff8080; }
+  /* VFX view: same frame as the anim view */
+  #vfxNote { padding: 5px 16px; color: var(--muted); font-size: 13px; border-bottom: 1px solid var(--line); }
+  #vfxNote code { color: var(--text); }
+  #vfxStage { background: #15102a; }
+  #vfxStage.bg-map { background: #15102a url('__ROOT__/assets/images/map/bg_portrait.webp') center / cover; }
+  #vfxStage.bg-checker { background: repeating-conic-gradient(#2b2350 0 25%, #221b40 0 50%) 0 0 / 20px 20px; }
+  #vfxGame, #vfxGame canvas { position: absolute; inset: 0; }
+  #vfxLabels { position: absolute; inset: 0; pointer-events: none; }
+  #vfxLabels .clip { pointer-events: auto; }
+  #vfxLabels .clip .lb2 small { display: block; }
+  #vfxMsg { position: absolute; left: 16px; top: 16px; color: #ff8080; white-space: pre-wrap; }
+  #frStage { background: #15102a; }
+  #frStage.bg-map { background: #15102a url('__ROOT__/assets/images/map/bg_portrait.webp') center / cover; }
+  #frStage.bg-checker { background: repeating-conic-gradient(#2b2350 0 25%, #221b40 0 50%) 0 0 / 20px 20px; }
+  #frStage.bg-light { background: #f4f4f2; }
+  #frCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #frInfo { position: absolute; left: 16px; bottom: 10px; color: var(--muted); font-size: 12px; text-shadow: 0 1px 2px #000; }
+  #frStrip { display: flex; gap: 4px; overflow-x: auto; padding: 6px 16px; border-top: 1px solid var(--line); background: var(--panel); min-height: 74px; }
+  #frStrip button { padding: 2px; display: flex; flex-direction: column; align-items: center; gap: 2px; flex: none; }
+  #frStrip img { height: 48px; max-width: 90px; object-fit: contain; display: block;
+    background: repeating-conic-gradient(#3a3060 0 25%, #2b2350 0 50%) 0 0 / 10px 10px; }
+  #frStrip span { font-size: 10px; color: var(--muted); }
+  #frStrip button.on span { color: #15102a; }
+  .vfx-open-btn { border: 1px solid #7a4fd0; background: #7a4fd0; color: #fff; border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; }
+  @media (max-width: 760px) {
+    .wrap { grid-template-columns: 1fr; }
+    nav { display: none; }
+    header { position: static; }
+    section h2 { top: 0; }
+  }
+</style>
+</head>
+<body class="bg-checker">
+<header>
+  <h1>__TITLE__ · Asset Preview</h1>
+  <span class="stat" id="stat"></span>
+  <input type="search" id="q" placeholder="Lọc theo đường dẫn / tên file…">
+  <div class="seg" id="scope">
+    <button data-v="all" class="on">Tất cả</button><button data-v="assets">assets/</button><button data-v="input">input/</button><button data-v="psd">PSD/PSB</button><button data-v="anim">Anim Spine</button><button data-v="frames">Frame anim</button>
+  </div>
+  <button class="vfx-open-btn" id="openVfx" title="Hiệu ứng chạy bằng Phaser">▶ VFX</button>
+  <button class="vfx-open-btn" id="openFrames" title="Anim / VFX từ ảnh frame-by-frame">▶ Frames</button>
+  <div class="seg" id="bg" title="Nền ô ảnh">
+    <button data-v="checker" class="on">▦</button><button data-v="light">Sáng</button><button data-v="dark">Tối</button><button data-v="green">Cỏ</button>
+  </div>
+  <label class="sz">Cỡ <input type="range" id="cell" min="90" max="320" value="150"></label>
+</header>
+<div class="wrap">
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+<div class="lb" id="lb">
+  <div class="lb-img" id="lbImg"><img alt=""></div>
+  <div class="lb-bar" id="lbBar"></div>
+</div>
+<div class="ap" id="ap">
+  <header>
+    <div class="row"><h1>__TITLE__ – Anim Spine</h1><div class="group" id="apG0"></div><button id="apClose" title="Esc">✕ Về gallery</button></div>
+    <div class="row"><div class="group" id="apG1"></div></div>
+    <div class="row">
+      <div class="group" id="apSkins"></div>
+      <div class="group"><span>Lọc clip</span><input id="apFilter" placeholder="vd: Walk"></div>
+      <div class="group" id="apSpeed"><span>Tốc độ</span>
+        <button data-speed="0.25">0.25×</button><button data-speed="0.5">0.5×</button><button data-speed="1" class="on">1×</button><button data-speed="1.5">1.5×</button>
+      </div>
+      <div class="group"><button id="apMirror">Lật ngang</button><button id="apPause">Tạm dừng</button><button id="apRestart">Chạy lại từ đầu</button></div>
+    </div>
+  </header>
+  <div id="apNote"></div>
+  <div class="ap-stage"><canvas id="apCanvas"></canvas><div id="apLabels"></div><div id="apMsg"></div></div>
+</div>
+<script>
+  // ?raf=timer: frames on a timer (checks in a hidden / background tab, where rAF does not run)
+  if (/[?&]raf=timer/.test(location.search)) window.requestAnimationFrame = cb => setTimeout(() => cb(performance.now()), 16);
+</script>
+<div class="ap" id="fr">
+  <header>
+    <div class="row"><h1>__TITLE__ – Frame anim</h1><div class="group" id="frPick"></div><button id="frClose" title="Esc" style="margin-left:auto">✕ Về gallery</button></div>
+    <div class="row">
+      <div class="group" id="frFps"><span>FPS</span>
+        <button data-fps="6">6</button><button data-fps="12">12</button><button data-fps="15">15</button><button data-fps="24" class="on">24</button><button data-fps="30">30</button><button data-fps="60">60</button>
+      </div>
+      <div class="group" id="frMode"><span>Chạy</span><button data-mode="loop" class="on">Lặp</button><button data-mode="pingpong">Tới-lui</button><button data-mode="once">1 lần</button></div>
+      <div class="group" id="frDelay" title="Chạy hết một lượt rồi nghỉ (sân khấu trống, như fx đã tắt) trước khi lặp lại"><span>Nghỉ trước khi lặp</span>
+        <button data-delay="0">0</button><button data-delay="0.5">0.5 s</button><button data-delay="1" class="on">1 s</button><button data-delay="2">2 s</button>
+        <input id="frDelayIn" type="number" min="0" max="30" step="0.1" value="1" style="width:64px" aria-label="Nghỉ (giây)"><span>s</span>
+      </div>
+      <div class="group"><button id="frPause">Tạm dừng</button><button id="frPrevF" title="Frame trước">◀ frame</button><button id="frNextF" title="Frame sau">frame ▶</button></div>
+      <div class="group" id="frFit"><span>Cỡ</span><button data-fit="fit" class="on">Vừa khung</button><button data-fit="1">1:1</button><button data-fit="2">2×</button></div>
+      <div class="group" id="frBg"><span>Nền</span><button data-bg="" class="on">Tối</button><button data-bg="bg-checker">Ô caro</button><button data-bg="bg-light">Sáng</button><button data-bg="bg-map">Map game</button></div>
+    </div>
+  </header>
+  <div id="frNote" style="padding:5px 16px;color:var(--muted);font-size:13px;border-bottom:1px solid var(--line)"></div>
+  <div class="ap-stage" id="frStage"><canvas id="frCanvas"></canvas><div id="frInfo"></div></div>
+  <div id="frStrip"></div>
+</div>
+<div class="ap" id="vfx">
+  <header>
+    <div class="row"><h1>__TITLE__ – VFX</h1><div class="group" id="vfxG0"></div><button id="vfxClose" title="Esc" style="margin-left:auto">✕ Về gallery</button></div>
+    <div class="row"><div class="group" id="vfxG2"></div></div>
+    <div class="row">
+      <div class="group"><button id="vfxAll" class="on">Xem tất cả</button></div>
+      <div class="group" id="vfxSpeed"><span>Tốc độ</span>
+        <button data-speed="0.25">0.25×</button><button data-speed="0.5">0.5×</button><button data-speed="1" class="on">1×</button><button data-speed="1.5">1.5×</button>
+      </div>
+      <div class="group" id="vfxBg"><span>Nền</span><button data-bg="" class="on">Tối</button><button data-bg="bg-map">Map game</button><button data-bg="bg-checker">Ô caro</button></div>
+      <div class="group"><button id="vfxPause">Tạm dừng</button><button id="vfxReplay">Phát lại</button></div>
+    </div>
+  </header>
+  <div id="vfxNote"></div>
+  <div class="ap-stage" id="vfxStage"><div id="vfxGame"></div><div id="vfxLabels"></div><div id="vfxMsg"></div></div>
+</div>
+<script>/*__SPINE__*/</script>
+<script>
+const DATA = /*__DATA__*/null;
+const VFXDATA = /*__VFX__*/null;
+const items = DATA.items, others = DATA.others, rigs = DATA.rigs || [];
+const $ = s => document.querySelector(s);
+let scope = 'all', query = '', visible = [], cur = -1;
+
+const dir = p => p.slice(0, p.lastIndexOf('/'));
+const base = p => p.slice(p.lastIndexOf('/') + 1);
+const ext = p => p.slice(p.lastIndexOf('.') + 1).toLowerCase();
+const fmtKb = kb => kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : kb + ' KB';
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const isLayered = p => /\.(psd|psb)$/i.test(p);
+
+function match(it) {
+  if (scope === 'anim' || scope === 'frames') return false;
+  if (scope === 'assets' && !it.p.startsWith('assets/')) return false;
+  if (scope === 'input' && !it.p.startsWith('input/')) return false;
+  if (scope === 'psd' && !isLayered(it.p)) return false;
+  return !query || it.p.toLowerCase().includes(query);
+}
+function rigMatch(r) {
+  if (scope === 'psd' || scope === 'frames') return false;
+  if (scope === 'assets' && !r.src.startsWith('assets/')) return false;
+  if (scope === 'input' && !r.src.startsWith('input/')) return false;
+  return !query || r.src.toLowerCase().includes(query) || r.clips.some(c => c.toLowerCase().includes(query));
+}
+const seqs = DATA.seqs || [];
+function seqMatch(q) {
+  if (scope === 'psd' || scope === 'anim') return false;
+  if (scope !== 'frames' && !q.anim) return false;   // numbered stills (tiers, tiles…) only under "Frame anim"
+  if (scope === 'assets' && !q.dir.startsWith('assets/')) return false;
+  if (scope === 'input' && !q.dir.startsWith('input/')) return false;
+  return !query || (q.dir + '/' + q.name).toLowerCase().includes(query);
+}
+function seqCard(q) {
+  const pg = byPath.get(q.frames[Math.floor(q.frames.length / 2)]);
+  const img = pg && !pg.err ? `<img loading="lazy" src="${encodeURI(pg.t)}" alt="">` : '';
+  return `<div class="card rig" data-seq="${q.id}" title="Xem frame anim: ${esc(q.dir + '/' + q.name)}"><div class="thumb">${img}<span class="play">▶ Frames</span></div>
+    <div class="meta"><div class="name">${esc(q.name)}</div><div class="sub"><span class="tag spine">${q.frames.length} frame</span>${q.anim ? '' : '<span class="tag">ảnh đánh số</span>'}<span>${q.w}×${q.h}</span></div></div></div>`;
+}
+const rigPage = r => r.pages && r.pages[0] ? r.dir + '/' + r.pages[0] : '';
+const byPath = new Map(items.map(i => [i.p, i]));
+
+function rigCard(r) {
+  const pg = byPath.get(rigPage(r));
+  const img = pg && !pg.err ? `<img loading="lazy" src="${encodeURI(pg.t)}" alt="">` : '';
+  const used = r.used.length ? `<span class="tag used">game dùng ${r.used.length}</span>` : '';
+  return `<div class="card rig" data-rig="${r.id}" title="Xem anim: ${esc(r.src)}"><div class="thumb">${img}<span class="play">▶ Anim</span></div>
+    <div class="meta"><div class="name">${esc(r.name)}</div><div class="sub"><span class="tag spine">spine ${esc(r.ver || '?')}</span>${used}<span>${r.clips.length} clip</span></div></div></div>`;
+}
+
+function render() {
+  visible = items.filter(match);
+  const vrigs = rigs.filter(rigMatch), vseqs = seqs.filter(seqMatch);
+  const groups = new Map();
+  for (const it of visible) { const d = dir(it.p); if (!groups.has(d)) groups.set(d, []); groups.get(d).push(it); }
+  for (const r of vrigs) if (!groups.has(r.dir)) groups.set(r.dir, []);
+  for (const q of vseqs) if (!groups.has(q.dir)) groups.set(q.dir, []);
+  const rigsIn = d => vrigs.filter(r => r.dir === d);
+  let html = '', nav = '', lastTop = '', idx = 0;
+  const totalKb = visible.reduce((a, b) => a + b.kb, 0);
+  $('#stat').textContent = `${visible.length} ảnh · ${fmtKb(totalKb)} · ${vrigs.length} anim · ${vseqs.length} frame anim`;
+  for (const [d, list] of groups) {
+    const rs = rigsIn(d), qs = vseqs.filter(q => q.dir === d), n = list.length + rs.length + qs.length;
+    const top = d.split('/').slice(0, d.startsWith('input/resource') ? 3 : 2).join('/');
+    if (top !== lastTop) {
+      const tn = visible.filter(i => i.p.startsWith(top + '/')).length + vrigs.filter(r => r.dir.startsWith(top)).length + vseqs.filter(q => q.dir.startsWith(top)).length;
+      nav += `<a class="top" href="#g-${idx}"><span>${esc(top)}</span><span class="n">${tn}</span></a>`;
+      lastTop = top;
+    }
+    const label = d.startsWith(top + '/') ? d.slice(top.length + 1) : '·';
+    nav += `<a href="#g-${idx}" style="padding-left:${16 + Math.min(4, label.split('/').length - 1) * 8}px" title="${esc(d)}"><span>${rs.length || qs.length ? '▶ ' : ''}${esc(label)}</span><span class="n">${n}</span></a>`;
+    html += `<section id="g-${idx}"><h2>${esc(d)} <span class="n">${n}</span></h2><div class="grid">`;
+    html += rs.map(rigCard).join('') + qs.map(seqCard).join('');
+    for (const it of list) {
+      const i = visible.indexOf(it);
+      const tags = [];
+      if (it.p.startsWith('assets/')) tags.push('<span class="tag asset">asset</span>');
+      if (isLayered(it.p)) tags.push(`<span class="tag psd">${ext(it.p)}</span>`);
+      if (it.err) {
+        html += `<div class="card err" data-i="${i}" title="${esc(it.p)}"><div class="thumb">Không đọc được<br>${esc(it.err)}</div>
+          <div class="meta"><div class="name">${esc(base(it.p))}</div><div class="sub">${tags.join('')}<span>${fmtKb(it.kb)}</span></div></div></div>`;
+      } else {
+        html += `<div class="card" data-i="${i}" title="${esc(it.p)}"><div class="thumb"><img loading="lazy" decoding="async" src="${encodeURI(it.t)}" alt=""></div>
+          <div class="meta"><div class="name">${esc(base(it.p))}</div><div class="sub">${tags.join('')}<span>${it.w}×${it.h}</span><span>${fmtKb(it.kb)}</span></div></div></div>`;
+      }
+    }
+    html += '</div>';
+    const o = others[d] || [];
+    if (o.length && scope !== 'psd') html += `<div class="others">File khác: ${o.map(f => `<span class="tag">${esc(f.n)}</span>`).join('')}</div>`;
+    html += '</section>';
+    idx++;
+  }
+  $('#main').innerHTML = html || '<div class="empty">Không có ảnh khớp bộ lọc.</div>';
+  $('#nav').innerHTML = nav;
+}
+
+function open(i) {
+  cur = i; const it = visible[i]; if (!it) return;
+  const box = $('#lbImg'); box.classList.remove('zoom');
+  box.querySelector('img').src = encodeURI(it.err ? '' : it.f);
+  const note = isLayered(it.p) ? ' (ảnh ghép, thu nhỏ)' : '';
+  $('#lbBar').innerHTML = `<span class="path">${esc(it.p)}</span><span>${it.w}×${it.h}${note}</span><span>${fmtKb(it.kb)}</span>
+    <a href="${encodeURI(it.src)}" target="_blank">Mở file gốc</a><span class="hint">← → chuyển · Z phóng to · Esc đóng</span>`;
+  $('#lb').classList.add('open');
+}
+const close = () => { $('#lb').classList.remove('open'); cur = -1; };
+
+$('#main').addEventListener('click', e => {
+  const c = e.target.closest('.card'); if (!c) return;
+  if (c.dataset.seq) location.hash = 'frames=' + c.dataset.seq; else if (c.dataset.vfx) location.hash = 'vfx'; else if (c.dataset.rig) location.hash = 'anim=' + c.dataset.rig; else open(+c.dataset.i);
+});
+$('#lb').addEventListener('click', e => { if (e.target.id === 'lb' || e.target.id === 'lbImg') close(); });
+$('#lbImg').addEventListener('dblclick', () => $('#lbImg').classList.toggle('zoom'));
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && ($('#ap').classList.contains('open') || $('#vfx').classList.contains('open') || $('#fr').classList.contains('open'))) return closeAnim();
+  if (cur < 0) return;
+  if (e.key === 'Escape') close();
+  else if (e.key === 'ArrowRight') open(Math.min(visible.length - 1, cur + 1));
+  else if (e.key === 'ArrowLeft') open(Math.max(0, cur - 1));
+  else if (e.key.toLowerCase() === 'z') $('#lbImg').classList.toggle('zoom');
+});
+let t; $('#q').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { query = e.target.value.trim().toLowerCase(); render(); }, 150); });
+for (const [id, fn] of [['#scope', v => { scope = v; render(); }], ['#bg', v => { document.body.className = 'bg-' + v; }]]) {
+  $(id).addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    $(id).querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); fn(b.dataset.v);
+  });
+}
+$('#cell').addEventListener('input', e => document.documentElement.style.setProperty('--cell', e.target.value + 'px'));
+const hh = () => document.documentElement.style.setProperty("--hh", document.querySelector("header").offsetHeight + "px");
+addEventListener("resize", hh); hh();
+render();
+
+/* ---------- Spine player: every clip of a rig in a grid (spine-webgl, same runtime version as the game) ---------- */
+const AP = (() => {
+  const PAD = 1.18, byId = {}, datas = {};
+  rigs.forEach(r => byId[r.id] = r);
+  let am = null, started = false, pending = null, cur = null, speed = 1, paused = false, mirror = false, filter = '';
+  const labels = $('#apLabels'), msg = $('#apMsg');
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const say = (t, err) => { msg.textContent = t || ''; msg.className = err ? 'err' : ''; };
+
+  // Like Game-12: one button per rig the game ships (assets/); the many source rigs (input/) in a list by folder
+  const g0 = $('#apG0'); g0.appendChild(el('span', null, 'Đang dùng (assets/):'));
+  rigs.filter(r => r.src.startsWith('assets/')).forEach(r => {
+    const b = el('button', null, r.name); b.dataset.rig = r.id; b.title = r.src;
+    b.onclick = () => location.hash = 'anim=' + r.id;
+    g0.appendChild(b);
+  });
+  const src = rigs.filter(r => r.src.startsWith('input/'));
+  const g1 = $('#apG1'); g1.appendChild(el('span', null, `Nguồn (input/, ${src.length} rig):`));
+  const sel = el('select'); sel.id = 'apInput';
+  const none = el('option', null, '— chọn rig nguồn —'); none.value = ''; sel.appendChild(none);
+  const folders = new Map();
+  src.forEach(r => { const f = r.dir.split('/').slice(2, 4).join('/'); if (!folders.has(f)) folders.set(f, []); folders.get(f).push(r); });
+  for (const [f, list] of folders) {
+    const og = document.createElement('optgroup'); og.label = f;
+    list.forEach(r => { const o = el('option', null, `${r.name}  ·  ${r.dir.split('/').slice(4).join('/') || '.'}  (${r.clips.length} clip)`); o.value = r.id; og.appendChild(o); });
+    sel.appendChild(og);
+  }
+  sel.onchange = () => { if (sel.value) location.hash = 'anim=' + sel.value; };
+  g1.appendChild(sel);
+  // Back / Next through every rig (assets/ buttons, then the list above in its order), with "n / total"
+  const order = rigs.filter(r => r.src.startsWith('assets/')).map(r => r.id)
+    .concat([...sel.querySelectorAll('option')].map(o => o.value).filter(Boolean));
+  const navBox = el('div', 'group'); navBox.style.marginLeft = '6px';
+  const prevBtn = el('button', null, '◀ Back'), nextBtn = el('button', null, 'Next ▶'), counter = el('span', null, '');
+  prevBtn.title = 'Rig trước (phím ←)'; nextBtn.title = 'Rig sau (phím →)';
+  counter.style.cssText = 'min-width:64px;text-align:center;font-variant-numeric:tabular-nums;color:var(--text)';
+  const step = d => {
+    const i = order.indexOf(cur ? cur.r.id : (location.hash.match(/^#anim=(.+)$/) || [])[1]);
+    location.hash = 'anim=' + order[(i < 0 ? 0 : i + d + order.length) % order.length];
+  };
+  prevBtn.onclick = () => step(-1); nextBtn.onclick = () => step(1);
+  navBox.append(prevBtn, counter, nextBtn);
+  g1.appendChild(navBox);
+  document.addEventListener('keydown', e => {
+    if (!$('#ap').classList.contains('open') || /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+    if (e.key === 'ArrowLeft') step(-1); else if (e.key === 'ArrowRight') step(1);
+  });
+  window.__ap = { datas, byId };   // debug handle (deep checks)
+  const markRig = id => {
+    document.querySelectorAll('#ap button[data-rig]').forEach(b => b.classList.toggle('on', b.dataset.rig === id));
+    const isSrc = src.some(r => r.id === id);
+    sel.value = isSrc ? id : ''; sel.classList.toggle('on', isSrc);
+    counter.textContent = `${order.indexOf(id) + 1} / ${order.length}`;
+  };
+  // rig data lives in rigs/<id>.js (window.__rigData), loaded on first open
+  const payloads = {}, waiting = {};
+  window.__rigData = (id, d) => { payloads[id] = d; (waiting[id] || []).forEach(f => f()); delete waiting[id]; };
+  const fetchRig = r => new Promise((res, rej) => {
+    if (payloads[r.id]) return res(payloads[r.id]);
+    (waiting[r.id] = waiting[r.id] || []).push(() => res(payloads[r.id]));
+    const sc = document.createElement('script');
+    sc.src = r.data; sc.onerror = () => rej(new Error('không nạp được ' + r.data + ' (chạy lại build_preview.py)'));
+    document.head.appendChild(sc);
+  });
+
+  function start() {
+    if (started) return; started = true;
+    new spine.SpineCanvas($('#apCanvas'), {
+      pathPrefix: '',
+      webglConfig: { alpha: true },
+      app: {
+        loadAssets: cv => { am = cv.assetManager; },
+        initialize: () => { if (pending) { const id = pending.id; pending = null; load(id); } },
+        update: (cv, dt) => {
+          if (pending && am && am.isLoadingComplete() && pending.loading) finishLoad();
+          if (!cur) return;
+          const d = paused ? 0 : dt * speed;
+          cur.cells.forEach(k => {
+            if (!k.on) return;
+            k.st.update(d); k.st.apply(k.sk);
+            k.sk.x = k.x; k.sk.y = k.y; k.sk.scaleX = mirror ? -1 : 1;
+            k.sk.updateWorldTransform(spine.Physics.update);
+            const e = k.st.getCurrent(0);
+            if (e) k.time.textContent = (e.trackTime % k.dur || 0).toFixed(2) + ' / ' + k.dur.toFixed(2) + ' s';
+          });
+        },
+        render: cv => {
+          const r = cv.renderer, cam = r.camera, cnv = cv.htmlCanvas;
+          r.resize(spine.ResizeMode.Expand);
+          cv.clear(0.082, 0.063, 0.165, 1);
+          if (!cur || !cur.vis.length || !$('#ap').classList.contains('open')) return;
+          layout(cnv);
+          cam.position.x = cur.gw / 2; cam.position.y = -cur.gh / 2;
+          cam.zoom = Math.max(cur.gw / cnv.width, cur.gh / cnv.height);
+          cam.update();
+          r.begin(); cur.vis.forEach(k => r.drawSkeleton(k.sk, cur.r.pma)); r.end();
+          placeLabels(cnv, cam);
+        },
+      },
+    });
+  }
+
+  function load(id, now) {
+    const r = byId[id];
+    if (datas[id]) return show(id);
+    if (!am) { pending = { id }; return; }
+    if (pending && pending.busy) { pending.next = id; return; }
+    const p = pending = { id, busy: true, loading: false };
+    cur = null; labels.innerHTML = '';
+    say('Đang nạp ' + r.name + '…');
+    fetchRig(r).then(d => {
+      am.setRawDataURI(id + '/skel.json', d.skel);
+      am.setRawDataURI(id + '/rig.atlas', d.atlas);
+      Object.keys(d.files).forEach(f => am.setRawDataURI(f, d.files[f]));
+      am.loadJson(id + '/skel.json');
+      am.loadTextureAtlas(id + '/rig.atlas');
+      p.loading = true;   // finishLoad() runs once the asset manager is done
+    }, e => {
+      if (pending === p) pending = null;
+      say(r.name + ': ' + e.message, true);
+      if (p.next) load(p.next);
+    });
+  }
+
+  function finishLoad() {
+    const { id, next } = pending, r = byId[id];
+    pending = null;
+    try {
+      if (am.hasErrors()) throw new Error(JSON.stringify(am.getErrors()));
+      const reader = new spine.SkeletonJson(new spine.AtlasAttachmentLoader(am.require(id + '/rig.atlas')));
+      datas[id] = reader.readSkeletonData(am.require(id + '/skel.json'));
+    } catch (e) { say(r.name + ': ' + e.message, true); return; }
+    const want = next || id;
+    want === id ? show(id) : load(want);
+  }
+
+  /** Skins picked per group ({gun: 'gun/x', hat: 'hat/y'}), combined like a game does for mix-and-match rigs */
+  function applySkin(sk, data, pick) {
+    const names = Object.values(pick || {}).filter(Boolean);
+    if (!names.length) { sk.setSkin(null); return; }
+    if (names.length === 1) { sk.setSkinByName(names[0]); return; }
+    const combo = new spine.Skin('preview');
+    names.forEach(n => { const k = data.findSkin(n); if (k) combo.addSkin(k); });
+    sk.setSkin(combo);
+  }
+  function clipBounds(data, skin, clip) {
+    const sk = new spine.Skeleton(data), st = new spine.AnimationState(new spine.AnimationStateData(data));
+    applySkin(sk, data, skin);
+    sk.setSlotsToSetupPose();
+    const a = data.findAnimation(clip), n = 8, off = new spine.Vector2(), size = new spine.Vector2();
+    let b = null;
+    st.setAnimation(0, clip, true);
+    for (let i = 0; i <= n; i++) {
+      st.update(i ? a.duration / n : 0); st.apply(sk);
+      sk.updateWorldTransform(spine.Physics.update);
+      sk.getBounds(off, size, []);
+      if (!isFinite(off.x) || !isFinite(size.x) || size.x <= 0) continue;
+      if (!b) b = { x0: off.x, y0: off.y, x1: off.x + size.x, y1: off.y + size.y };
+      else { b.x0 = Math.min(b.x0, off.x); b.y0 = Math.min(b.y0, off.y); b.x1 = Math.max(b.x1, off.x + size.x); b.y1 = Math.max(b.y1, off.y + size.y); }
+    }
+    return b;
+  }
+  const setupBounds = (data, skin) => {
+    const sk = new spine.Skeleton(data); applySkin(sk, data, skin); sk.setSlotsToSetupPose(); sk.updateWorldTransform(spine.Physics.update);
+    const off = new spine.Vector2(), size = new spine.Vector2(); sk.getBounds(off, size, []);
+    return isFinite(size.x) && size.x > 0 ? { x0: off.x, y0: off.y, x1: off.x + size.x, y1: off.y + size.y } : null;
+  };
+
+  function show(id) {
+    const r = byId[id], data = datas[id];
+    say('');
+    markRig(id);
+    const skins = data.skins.filter(s => s.name !== 'default').map(s => s.name);
+    // Skins in folders (gun/…, hat/…, shirt/…) are parts to combine: one picker per folder. Otherwise one picker.
+    const groups = new Map();
+    skins.forEach(n => { const g = n.includes('/') ? n.split('/')[0] : ''; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(n); });
+    if (groups.size === 1 && groups.has('')) {
+      // No folders: tiny skins (≤ 1/4 of the biggest, e.g. Mix_Stock_Bag = 1 slot) are add-ons for a full skin
+      const size = n => new Set(data.findSkin(n).getAttachments().map(e => e.slotIndex)).size;
+      const max = Math.max(...skins.map(size));
+      const addons = skins.filter(n => max >= 4 && size(n) * 4 <= max);
+      if (addons.length && addons.length < skins.length) {
+        groups.set('', skins.filter(n => !addons.includes(n)));
+        groups.set('Phụ kiện', addons);
+      }
+    }
+    const multi = groups.size > 1;
+    const skin = {};
+    const box = $('#apSkins'); box.innerHTML = '';
+    if (!skins.length) { box.appendChild(el('span', null, 'Skin')); const ss = el('select'); const o = el('option', null, '(default)'); o.value = ''; ss.appendChild(o); ss.disabled = true; box.appendChild(ss); }
+    for (const [g, list] of groups) {
+      box.appendChild(el('span', null, multi ? (g || 'Skin') : 'Skin'));
+      const ss = el('select');
+      if (multi) { const o = el('option', null, '(không)'); o.value = ''; ss.appendChild(o); }
+      list.forEach(n => { const o = el('option', null, g && n.startsWith(g + '/') ? n.slice(g.length + 1) : n); o.value = n; ss.appendChild(o); });
+      skin[g] = g === 'Phụ kiện' ? '' : (multi && list.find(n => /default/i.test(n))) || list[0];
+      ss.value = skin[g];
+      ss.onchange = () => { if (!cur) return; cur.skin = { ...cur.skin, [g]: ss.value }; sizeCells(); applyAll(); refresh(); };
+      box.appendChild(ss);
+    }
+    const note = $('#apNote'); note.innerHTML = '';
+    note.appendChild(el('code', null, r.src));
+    note.appendChild(document.createTextNode(` · Spine ${r.ver || '?'} · ${data.animations.length} clip, ${skins.length || 1} skin${multi ? ' (ghép theo nhóm ' + [...groups.keys()].map(g => g || 'Skin').join(' + ') + ')' : ''} · skeleton + atlas + ảnh ${fmtKb(r.kb)}. `));
+    if (r.fixes && r.fixes.length) note.appendChild(document.createTextNode('Preview đã: ' + r.fixes.join('; ') + '. '));
+    if (r.used.length) note.appendChild(el('i', null, 'Khung xanh = clip có tên trong src/ (game dùng). '));
+    note.appendChild(document.createTextNode('Bấm một ô để xem riêng clip đó.'));
+    cur = { r, data, cells: [], vis: [], skin, solo: null };
+    labels.innerHTML = '';
+    const clips = data.animations.length ? data.animations : [null];
+    clips.forEach(a => {
+      const k = { sk: new spine.Skeleton(data), st: new spine.AnimationState(new spine.AnimationStateData(data)), clip: a ? a.name : '', dur: a ? a.duration || 0.0001 : 1 };
+      const box = el('div', 'clip' + (a && r.used.includes(a.name) ? ' used' : ''));
+      const lb = el('div', 'lb2'); lb.appendChild(el('b', null, a ? a.name : '(setup pose)')); lb.appendChild(document.createElement('br'));
+      k.time = el('small'); lb.appendChild(k.time); box.appendChild(lb);
+      box.onclick = () => { cur.solo = cur.solo === k ? null : k; refresh(); };
+      k.box = box; cur.cells.push(k);
+    });
+    sizeCells(); applyAll(); refresh();
+  }
+
+  const box = (half, y0, y1) => { const h = Math.max(1, y1 - y0); return { cw: Math.max(1, half) * 2 * PAD, ch: h * (PAD + 0.12), strip: h * 0.12, oy: y0 }; };
+  const setBox = b => Object.assign(cur, { cw: b.cw, ch: b.ch, strip: b.strip, oy: b.oy });
+  const pct = (v, p) => { v.sort((a, b) => a - b); return v[Math.round(p * (v.length - 1))]; };
+  function boundsOf(k) { return k.clip ? clipBounds(cur.data, cur.skin, k.clip) : setupBounds(cur.data, cur.skin); }
+  function sizeCells() {
+    let ok = cur.cells.map(boundsOf).filter(Boolean);
+    if (!ok.length) ok = [{ x0: -100, x1: 100, y0: 0, y1: 300 }];
+    const half = pct(ok.map(b => Math.max(Math.abs(b.x0), Math.abs(b.x1))), 0.75);
+    cur.grid = box(half, pct(ok.map(b => b.y0), 0.25), pct(ok.map(b => b.y1), 0.75));
+    if (!cur.solo) setBox(cur.grid);
+  }
+  function refresh() {
+    const f = filter.toLowerCase();
+    cur.vis = cur.cells.filter(k => cur.solo ? k === cur.solo : !f || k.clip.toLowerCase().includes(f));
+    const b = cur.solo && boundsOf(cur.solo);
+    setBox(b ? box(Math.max(Math.abs(b.x0), Math.abs(b.x1)), b.y0, b.y1) : cur.grid);
+    cur.cells.forEach(k => k.on = cur.vis.includes(k));
+    labels.innerHTML = '';
+    labels.classList.toggle('solo', !!cur.solo);
+    cur.vis.forEach(k => labels.appendChild(k.box));
+  }
+  function applyAll() {
+    cur.cells.forEach(k => {
+      applySkin(k.sk, cur.data, cur.skin);
+      k.sk.setToSetupPose();
+      k.st.clearTracks();
+      if (k.clip) k.st.setAnimation(0, k.clip, true);
+    });
+  }
+  function layout(cnv) {
+    const n = cur.vis.length; let best = 1, bestZ = Infinity;
+    for (let cols = 1; cols <= n; cols++) {
+      const z = Math.max(cols * cur.cw / cnv.width, Math.ceil(n / cols) * cur.ch / cnv.height);
+      if (z < bestZ) { bestZ = z; best = cols; }
+    }
+    cur.gw = best * cur.cw; cur.gh = Math.ceil(n / best) * cur.ch;
+    cur.vis.forEach((k, i) => {
+      k.cx = i % best; k.cy = Math.floor(i / best);
+      k.x = (k.cx + 0.5) * cur.cw;
+      k.y = -(k.cy + 1) * cur.ch - cur.oy + cur.strip;
+    });
+  }
+  function placeLabels(cnv, cam) {
+    const rect = cnv.getBoundingClientRect(), s = rect.width / cnv.width / cam.zoom;
+    const left = rect.width / 2 - cam.position.x * s, top = rect.height / 2 + cam.position.y * s;
+    cur.vis.forEach(k => {
+      const st = k.box.style;
+      st.left = (left + k.cx * cur.cw * s + 3) + 'px'; st.top = (top + k.cy * cur.ch * s + 3) + 'px';
+      st.width = (cur.cw * s - 6) + 'px'; st.height = (cur.ch * s - 6) + 'px';
+    });
+  }
+
+  $('#apFilter').oninput = e => { filter = e.target.value.trim(); if (cur) { cur.solo = null; refresh(); } };
+  $('#apSpeed').addEventListener('click', e => {
+    const b = e.target.closest('[data-speed]'); if (!b) return;
+    speed = +b.dataset.speed; $('#apSpeed').querySelectorAll('[data-speed]').forEach(x => x.classList.toggle('on', x === b));
+  });
+  $('#apMirror').onclick = () => { mirror = !mirror; $('#apMirror').classList.toggle('on', mirror); };
+  $('#apPause').onclick = () => { paused = !paused; $('#apPause').textContent = paused ? 'Chạy tiếp' : 'Tạm dừng'; $('#apPause').classList.toggle('on', paused); };
+  $('#apRestart').onclick = () => { if (cur) applyAll(); };
+  $('#apClose').onclick = () => closeAnim();
+
+  return {
+    open(id) { if (!byId[id]) return; markRig(id); $('#ap').classList.add('open'); start(); load(id); },
+    close() { $('#ap').classList.remove('open'); },
+  };
+})();
+function closeAnim() { if (/^#(anim=|vfx|frames)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search); AP.close(); VX.close(); FR.close(); }
+function route() {
+  const m = location.hash.match(/^#anim=(.+)$/), v = location.hash.match(/^#vfx(?:=(.+))?$/);
+  if (m) { VX.close(); AP.open(decodeURIComponent(m[1])); } else AP.close();
+  if (v) VX.open(v[1] ? decodeURIComponent(v[1]) : null); else VX.close();
+  const f = location.hash.match(/^#frames(?:=(.+))?$/);
+  if (f) FR.open(f[1] ? decodeURIComponent(f[1]) : null); else FR.close();
+}
+$('#openVfx').onclick = () => location.hash = 'vfx';
+if (!VFXDATA.ok) $('#openVfx').hidden = true;   // project has no vfx_entry.ts / vfx_effects.js (KIT.md)
+if (!(DATA.seqs || []).length) $('#openFrames').hidden = true;
+$('#openFrames').onclick = () => location.hash = 'frames';
+/* ---------- VFX: the game's own effect code (vfx_entry.ts of the project) bundled into vfx/game_fx.js, in Phaser ---------- */
+const VX = (() => {
+  const CW = 420, CH = 340;   // cell size in game world px
+  const FB = (a, b) => Phaser.Math.FloatBetween(a, b);
+  let FX = null;
+  // The project's effects (vfx_effects.js next to build_preview.py, see KIT.md) set VFX_IMAGES and EFFECTS
+  let VFX_IMAGES = [], EFFECTS = [], VFX_SOURCE = 'src', VFX_NOTE = '';
+/*__VFX_EFFECTS__*/
+  const byId = {}; EFFECTS.forEach(e => byId[e.id] = e);
+  let game = null, scene = null, cells = [], solo = null, speed = 1, paused = false, ready = false, wantSolo = null, loading = false;
+  const labels = $('#vfxLabels'), stage = $('#vfxStage'), msg = $('#vfxMsg');
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  const g0 = $('#vfxG0'); g0.appendChild(el('span', null, 'Game (' + VFX_SOURCE + '):'));
+  EFFECTS.forEach(e => {
+    const b = el('button', null, e.name); b.dataset.fx = e.id; b.title = `${e.src} · ${e.note}`; b.disabled = !VFXDATA.ok;
+    b.onclick = () => location.hash = solo === e.id ? 'vfx' : 'vfx=' + e.id;
+    g0.appendChild(b);
+  });
+  const g2 = $('#vfxG2'); g2.appendChild(el('span', null, 'Spine:'));
+  const sp = rigs.find(r => r.src.startsWith('assets/vfx/'));
+  if (sp) { const b = el('button', null, sp.name + ' → Anim'); b.title = sp.src; b.onclick = () => location.hash = 'anim=' + sp.id; g2.appendChild(b); }
+
+  function note() {
+    const n = $('#vfxNote'); n.innerHTML = '';
+    if (!VFXDATA.ok) { n.textContent = 'Không đóng gói được code VFX của game: xem log của build_preview.py.'; return; }
+    n.appendChild(document.createTextNode('Chạy đúng code game: '));
+    n.appendChild(el('code', null, VFX_SOURCE));
+    n.appendChild(document.createTextNode(` (đóng gói lúc build trang, Phaser ${Phaser.VERSION} của project). ` +
+      'Toạ độ theo px world của game. ' + (VFX_NOTE ? VFX_NOTE + ' ' : '') + 'Bấm một ô để xem riêng.'));
+  }
+
+  const addScript = src => new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = src; sc.onload = res;
+    sc.onerror = () => rej(new Error('không nạp được ' + src)); document.head.appendChild(sc);
+  });
+  function start() {
+    if (game || loading) return;
+    if (!VFXDATA.ok) { note(); return; }
+    loading = true; msg.textContent = 'Đang nạp Phaser và code VFX của game…';
+    // Phaser straight from node_modules (same version as the game), then the bundle that needs it
+    const webglSpine = window.spine;   // the anim view's spine-webgl; spine-phaser in the bundle sets its own window.spine
+    (window.Phaser ? Promise.resolve() : addScript('__ROOT__/node_modules/phaser/dist/phaser.min.js'))
+      .then(() => addScript('vfx/game_fx.js?v=' + VFXDATA.stamp))
+      .then(() => {
+        window.spine = webglSpine;
+        FX = window.GAME_FX; msg.textContent = ''; note();
+        game = new Phaser.Game({
+          type: Phaser.WEBGL, parent: 'vfxGame', transparent: true, banner: false, audio: { noAudio: true },
+          scale: { mode: Phaser.Scale.RESIZE, width: stage.clientWidth || 800, height: stage.clientHeight || 600 },
+          plugins: FX.SpinePlugin ? { scene: [{ key: 'spine.SpinePlugin', plugin: FX.SpinePlugin, mapping: 'spine' }] } : {},
+          scene: { preload, create, update },
+        });
+        window.__vfxGame = game; // debug handle
+        // Phaser loaded after the page sometimes misses its own textures-ready event (game never starts): nudge it
+        const nudge = () => { if (game.isBooted && !game.isRunning && game.textures._pending === 0) game.texturesReady(); else if (!game.isRunning) setTimeout(nudge, 200); };
+        setTimeout(nudge, 300);
+      })
+      .catch(e => { msg.textContent = e.message + ' (chạy lại build_preview.py, cần node_modules)'; });
+  }
+  function preload() {
+    for (const k of VFX_IMAGES) if (FX.IMAGES && FX.IMAGES[k]) this.load.image(k, FX.IMAGES[k]);
+    for (const a of FX.SPINES || []) this.load.image(`${a.key}-atlas!${a.page}`, a.png);   // as the game's preload (key-atlas!page)
+  }
+  function create() {
+    scene = this;
+    if (FX.makeTextures) FX.makeTextures(this);
+    if (FX.registerSpineData) FX.registerSpineData(this);
+    cells = EFFECTS.map(e => {
+      const c = { e, x: 0, y: 0, objs: [], t: 0, on: true };
+      try { c.objs = e.setup ? e.setup(this, c) : []; } catch (err) { c.err = err.message; }
+      const box = el('div', 'clip'); const lb = el('div', 'lb2');
+      lb.appendChild(el('b', null, e.name)); lb.appendChild(el('small', null, `${e.src} · ${e.note}`));
+      if (c.err) lb.appendChild(el('small', null, 'Lỗi: ' + c.err));
+      box.appendChild(lb);
+      box.onclick = () => location.hash = solo === e.id ? 'vfx' : 'vfx=' + e.id;
+      c.box = box;
+      return c;
+    });
+    this.scale.on('resize', layout);
+    ready = true; setSolo(wantSolo);
+  }
+  function update(time, delta) {
+    if (!ready) return;
+    for (const c of cells) {
+      if (!c.on || c.err) continue;
+      c.t -= delta * speed;
+      if (c.t <= 0) {
+        c.t += c.e.every;
+        try { c.e.play(scene, c); } catch (err) { c.err = err.message; c.box.querySelector('.lb2').appendChild(el('small', null, 'Lỗi: ' + c.err)); }
+      }
+    }
+  }
+  function moveCell(c, x, y) {
+    const dx = x - c.x, dy = y - c.y; c.x = x; c.y = y;
+    c.objs.forEach(o => { o.x += dx; o.y += dy; });
+    if (c.e.moved && c.objs.length) c.e.moved(c);
+  }
+  function layout() {
+    if (!scene) return;
+    const w = scene.scale.width, h = scene.scale.height, vis = cells.filter(c => c.on), n = vis.length;
+    if (!n) return;
+    let best = 1, bz = 0;
+    for (let cols = 1; cols <= n; cols++) { const z = Math.min(w / (cols * CW), h / (Math.ceil(n / cols) * CH)); if (z > bz) { bz = z; best = cols; } }
+    const gw = best * CW, gh = Math.ceil(n / best) * CH;
+    vis.forEach((c, i) => moveCell(c, (i % best + 0.5) * CW, (Math.floor(i / best) + 0.5) * CH - 20));
+    const cam = scene.cameras.main; cam.setZoom(bz); cam.centerOn(gw / 2, gh / 2);
+    labels.innerHTML = '';
+    vis.forEach((c, i) => {
+      const st = c.box.style, sx = w / 2 + ((i % best) * CW - gw / 2) * bz, sy = h / 2 + (Math.floor(i / best) * CH - gh / 2) * bz;
+      st.left = sx + 3 + 'px'; st.top = sy + 3 + 'px'; st.width = CW * bz - 6 + 'px'; st.height = CH * bz - 6 + 'px';
+      labels.appendChild(c.box);
+    });
+    labels.classList.toggle('solo', !!solo);
+  }
+  function setSolo(id) {
+    solo = byId[id] ? id : null;
+    document.querySelectorAll('#vfx button[data-fx]').forEach(b => b.classList.toggle('on', b.dataset.fx === solo));
+    $('#vfxAll').classList.toggle('on', !solo);
+    cells.forEach(c => { c.on = !solo || c.e.id === solo; c.objs.forEach(o => o.setVisible(c.on)); c.t = 0; });
+    layout();
+  }
+  function setSpeed(v) {
+    speed = v;
+    if (scene) { scene.tweens.timeScale = v; scene.time.timeScale = v; }
+  }
+
+  $('#vfxAll').onclick = () => location.hash = 'vfx';
+  $('#vfxSpeed').addEventListener('click', e => {
+    const b = e.target.closest('[data-speed]'); if (!b) return;
+    setSpeed(+b.dataset.speed); $('#vfxSpeed').querySelectorAll('[data-speed]').forEach(x => x.classList.toggle('on', x === b));
+  });
+  $('#vfxBg').addEventListener('click', e => {
+    const b = e.target.closest('[data-bg]'); if (!b) return;
+    stage.className = 'ap-stage' + (b.dataset.bg ? ' ' + b.dataset.bg : '');
+    $('#vfxBg').querySelectorAll('[data-bg]').forEach(x => x.classList.toggle('on', x === b));
+  });
+  $('#vfxPause').onclick = () => {
+    paused = !paused; $('#vfxPause').textContent = paused ? 'Chạy tiếp' : 'Tạm dừng'; $('#vfxPause').classList.toggle('on', paused);
+    if (scene) paused ? scene.scene.pause() : scene.scene.resume();
+  };
+  $('#vfxReplay').onclick = () => cells.forEach(c => c.t = 0);
+  $('#vfxClose').onclick = () => closeAnim();
+
+  return {
+    open(id) {
+      $('#vfx').classList.add('open'); wantSolo = id;
+      start();
+      if (game && game.isBooted) { game.loop.wake(); game.scale.resize(stage.clientWidth, stage.clientHeight); }
+      if (ready) setSolo(id);
+    },
+    close() { if (!$('#vfx').classList.contains('open')) return; $('#vfx').classList.remove('open'); if (game && game.isBooted) game.loop.sleep(); },
+  };
+})();
+/* ---------- Frame anim: numbered images (name_00001.png…) played as a flipbook, Game-12 layout ---------- */
+const FR = (() => {
+  const byId = {}; seqs.forEach(q => byId[q.id] = q);
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const cv = $('#frCanvas'), ctx = cv.getContext('2d'), stage = $('#frStage'), info = $('#frInfo'), strip = $('#frStrip');
+  let cur = null, imgs = [], frame = 0, dirn = 1, fps = 24, mode = 'loop', paused = false, fit = 'fit', acc = 0, last = 0, running = false, done = false;
+  // Nghỉ trước khi lặp (giây): fx ghép từ list sprite chạy một lượt, tắt, rồi mới chạy lại. waiting = thời gian nghỉ còn lại.
+  let delay = 1, waiting = 0;
+  try { const saved = localStorage.getItem('preview.frameDelay'); if (saved !== null && isFinite(+saved)) delay = Math.max(0, +saved); } catch { /* không có localStorage */ }
+
+  // Picker: likely anim first, then the other numbered images; Back / Next with "n / total" (like the Anim view)
+  const pick = $('#frPick');
+  pick.appendChild(el('span', null, `Chuỗi frame (${seqs.length}):`));
+  const sel = el('select'); sel.style.maxWidth = '460px';
+  for (const [label, list] of [['Anim / VFX (đoán theo tên)', seqs.filter(q => q.anim)], ['Ảnh đánh số khác (có thể không phải anim)', seqs.filter(q => !q.anim)]]) {
+    if (!list.length) continue;
+    const og = document.createElement('optgroup'); og.label = `${label} · ${list.length}`;
+    list.forEach(q => { const o = el('option', null, `${q.name}  ·  ${q.dir.split('/').slice(-2).join('/')}  (${q.frames.length})`); o.value = q.id; og.appendChild(o); });
+    sel.appendChild(og);
+  }
+  sel.onchange = () => location.hash = 'frames=' + sel.value;
+  const prev = el('button', null, '◀ Back'), next = el('button', null, 'Next ▶'), counter = el('span', null, '');
+  prev.title = 'Chuỗi trước (phím ←)'; next.title = 'Chuỗi sau (phím →)';
+  counter.style.cssText = 'min-width:64px;text-align:center;font-variant-numeric:tabular-nums;color:var(--text)';
+  const order = [...sel.querySelectorAll('option')].map(o => o.value);
+  const step = d => { const i = order.indexOf(cur ? cur.id : ''); location.hash = 'frames=' + order[(i < 0 ? 0 : i + d + order.length) % order.length]; };
+  prev.onclick = () => step(-1); next.onclick = () => step(1);
+  pick.append(sel, prev, counter, next);
+
+  function show(id) {
+    const q = byId[id] || seqs.find(x => x.anim) || seqs[0];
+    if (!q) { info.textContent = 'Không có chuỗi ảnh đánh số nào.'; return; }
+    if (cur && cur.id === q.id) return;
+    cur = q; sel.value = q.id; counter.textContent = `${order.indexOf(q.id) + 1} / ${order.length}`;
+    frame = 0; dirn = 1; acc = 0; done = false; waiting = 0;
+    imgs = q.frames.map(p => { const im = new Image(); im.src = encodeURI('__ROOT__/' + p); return im; });
+    const n = $('#frNote'); n.innerHTML = '';
+    n.appendChild(el('code', null, q.dir + '/'));
+    n.appendChild(document.createTextNode(` · ${q.frames.length} frame, ${q.w}×${q.h}, ${fmtKb(q.kb)}. ` +
+      (q.sameSize ? '' : 'Các frame khác cỡ (đã cắt viền): căn giữa, vị trí có thể lệch so với lúc dựng. ') +
+      (q.anim ? '' : 'Chuỗi này chỉ là ảnh đánh số, có thể không phải anim. ') + 'Phím ← → đổi chuỗi, Space dừng/chạy.'));
+    strip.innerHTML = '';
+    q.frames.forEach((p, i) => {
+      const it = byPath.get(p), b = el('button'); b.title = p;
+      const im = el('img'); im.src = encodeURI(it ? it.t : '__ROOT__/' + p); im.loading = 'lazy';
+      b.append(im, el('span', null, p.slice(p.lastIndexOf('/') + 1)));
+      b.onclick = () => { frame = i; done = false; waiting = 0; setPaused(true); };
+      strip.appendChild(b);
+    });
+  }
+
+  function advance() {
+    const n = imgs.length; if (n < 2) return;
+    if (mode === 'pingpong') {
+      if (frame + dirn >= n) dirn = -1;
+      else if (frame + dirn < 0) { dirn = 1; if (delay > 0) { waiting = delay; return; } }   // hết một vòng tới-lui
+      frame += dirn;
+    }
+    else if (mode === 'once') { if (frame < n - 1) frame++; else done = true; }
+    else if (frame === n - 1 && delay > 0) waiting = delay;   // frame cuối đã hiện đủ 1/fps: nghỉ rồi về frame đầu
+    else frame = (frame + 1) % n;
+  }
+  function draw() {
+    const dpr = window.devicePixelRatio || 1, W = stage.clientWidth, H = stage.clientHeight;
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+    if (!cur) return;
+    if (waiting > 0) {   // đang nghỉ: sân khấu trống như lúc fx đã tắt trong game
+      info.textContent = `nghỉ ${(delay - waiting).toFixed(1)} / ${delay.toFixed(1)} s trước lần lặp · ${imgs.length} frame · ${fps} fps`;
+      [...strip.children].forEach(b => b.classList.remove('on'));
+      return;
+    }
+    const im = imgs[frame];
+    // one scale for the whole sequence (from its largest frame) so frames don't jump in size
+    const k = fit === 'fit' ? Math.min((W - 40) / cur.w, (H - 50) / cur.h) : +fit;
+    if (im && im.complete && im.naturalWidth) {
+      const w = im.naturalWidth * k, h = im.naturalHeight * k;
+      ctx.imageSmoothingEnabled = k < 1 || fit === 'fit';
+      ctx.drawImage(im, (W - w) / 2, (H - h) / 2, w, h);
+      ctx.strokeStyle = 'rgba(180,160,255,.25)'; ctx.setLineDash([4, 4]);
+      ctx.strokeRect((W - cur.w * k) / 2, (H - cur.h * k) / 2, cur.w * k, cur.h * k); ctx.setLineDash([]);
+    }
+    info.textContent = `frame ${frame + 1} / ${imgs.length} · ${cur.frames[frame].slice(cur.frames[frame].lastIndexOf('/') + 1)} · ${fps} fps · ×${k.toFixed(2)}`;
+    [...strip.children].forEach((b, i) => b.classList.toggle('on', i === frame));
+    const on = strip.children[frame]; if (on && !paused) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  function loop(now) {
+    if (!running) return;
+    const dt = last ? (now - last) / 1000 : 0; last = now;
+    if (!paused && !done && cur) {
+      if (waiting > 0) { waiting -= dt; if (waiting <= 0) { waiting = 0; acc = 0; if (mode === 'loop') frame = 0; } }
+      else { acc += dt; const spf = 1 / fps; while (acc >= spf && !waiting) { acc -= spf; advance(); } }
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+  function setPaused(v) { paused = v; $('#frPause').textContent = paused ? 'Chạy tiếp' : 'Tạm dừng'; $('#frPause').classList.toggle('on', paused); }
+  const seg = (id, attr, fn) => $(id).addEventListener('click', e => {
+    const b = e.target.closest(`[data-${attr}]`); if (!b) return;
+    $(id).querySelectorAll(`[data-${attr}]`).forEach(x => x.classList.toggle('on', x === b)); fn(b.dataset[attr]);
+  });
+  seg('#frFps', 'fps', v => fps = +v);
+  seg('#frMode', 'mode', v => { mode = v; done = false; dirn = 1; waiting = 0; if (v === 'once') frame = 0; });
+  const setDelay = v => {
+    delay = Math.max(0, Math.min(30, +v || 0)); if (waiting > delay) waiting = delay;
+    $('#frDelayIn').value = delay; $('#frDelay').querySelectorAll('[data-delay]').forEach(x => x.classList.toggle('on', +x.dataset.delay === delay));
+    try { localStorage.setItem('preview.frameDelay', String(delay)); } catch { /* không có localStorage */ }
+  };
+  $('#frDelay').addEventListener('click', e => { const b = e.target.closest('[data-delay]'); if (b) setDelay(b.dataset.delay); });
+  $('#frDelayIn').addEventListener('change', e => setDelay(e.target.value));
+  setDelay(delay);
+  seg('#frFit', 'fit', v => fit = v);
+  seg('#frBg', 'bg', v => stage.className = 'ap-stage' + (v ? ' ' + v : ''));
+  $('#frPause').onclick = () => { if (done) { frame = 0; done = false; setPaused(false); } else setPaused(!paused); };
+  $('#frPrevF').onclick = () => { setPaused(true); waiting = 0; frame = (frame - 1 + imgs.length) % imgs.length; };
+  $('#frNextF').onclick = () => { setPaused(true); waiting = 0; frame = (frame + 1) % imgs.length; };
+  $('#frClose').onclick = () => closeAnim();
+  document.addEventListener('keydown', e => {
+    if (!$('#fr').classList.contains('open') || /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+    if (e.key === 'ArrowLeft') step(-1); else if (e.key === 'ArrowRight') step(1);
+    else if (e.key === ' ') { e.preventDefault(); $('#frPause').click(); }
+  });
+
+  return {
+    open(id) { $('#fr').classList.add('open'); show(id); if (!running) { running = true; last = 0; requestAnimationFrame(loop); } },
+    close() { if (!$('#fr').classList.contains('open')) return; $('#fr').classList.remove('open'); running = false; },
+  };
+})();
+addEventListener('hashchange', route); route();
+</script>
+</body>
+</html>

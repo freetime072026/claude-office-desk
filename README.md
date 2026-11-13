@@ -195,6 +195,11 @@ Bảng tệp session có nút **Release**. Model mặc định Sonnet, 30 lượ
 - Bản trong project thuộc về project: sửa và thêm kịch bản ở đó. Bản trong Office Desk chỉ sửa khi có bug hoặc nâng cấp, không sửa theo một project. Nâng `version` trong `kits/pla-qa/lib/kit.json` khi đổi kit: QA của project có bản cũ được báo có bản mới, tự chọn chép phần sửa lỗi.
 - Project template-pla vẫn kiểm bằng `npm run verify -- dev` trước; kit dùng cho luồng chơi theo AC, tracking theo GDD, thời gian vào game và bản build trong `dist/` (`node .office-desk/qa/smoke.js --file <html>`).
 
+### Kit asset-preview (Settings > 🎞 Preview asset)
+- Trang HTML tĩnh xem mọi ảnh trong `assets/` và `input/` (PSD/PSB qua ảnh ghép), anim Spine (mọi clip của mỗi rig, skin ghép / phụ kiện, Back/Next), anim frame-by-frame (chuỗi ảnh đánh số) và VFX thật của game (hàm hiệu ứng trong `src/` đóng gói bằng esbuild, chạy trong Phaser của project). Kit ở `kits/asset-preview/`; **quy ước xây preview anim/VFX** trong `kits/asset-preview/KIT.md`.
+- Settings > **Preview asset**: chọn thư mục session, **Build preview** chép các tệp kit còn thiếu vào `<project>/.office-desk/preview/` (`preview-kit.cjs`, không ghi đè bản project) rồi chạy `build_preview.py` ở nền (cần Python + Pillow; PSB cần `psd-tools`), log hiện trong hộp; **Mở preview** mở `input/_preview/index.html` bằng trình duyệt mặc định (không cần server).
+- Màn VFX bật khi project có `vfx_entry.ts` + `vfx_effects.js` cạnh `build_preview.py` (chép từ `*.example` của kit rồi sửa theo game). Bản mẫu: Game-13 (PA0008). Kiểm giao diện: `npx electron tests/ui-preview.cjs`.
+
 ## Cấu hình riêng từng khối
 
 **Tay nắm của panel khối** (nút nhỏ ‹ › ở giữa mép trái panel):

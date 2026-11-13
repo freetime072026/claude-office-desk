@@ -36,6 +36,7 @@ const skillImport = require('./skill-import.cjs');
 const releaseConfig = require('./release-config.cjs');
 const qaKit = require('./qa-kit.cjs');
 const artKit = require('./art-kit.cjs');
+const previewKit = require('./preview-kit.cjs');
 const { createRife } = require('./rife.cjs');
 // RIFE cho kit art-frames: cài một lần vào <userData>/tools/rife (rife.cjs). Tạo khi cần vì cần root và publishSoon.
 let rifeTool = null;
@@ -459,6 +460,20 @@ app.whenReady().then(() => {
     // Dev server của session (khối PO, project PLA): scripts = script dev trong package.json; start/stop; open = mở localhost đang chạy.
     // Nút Chạy / Dừng Penpot MCP trong panel khối (role có tích Penpot): một server cho cả app.
     // Chế độ sinh ảnh Codex của Art: status = codex --version + codex login status; login = mở cửa sổ chạy codex login (chưa cài thì cài trước).
+    // Settings > Preview asset (kit asset-preview, preview-kit.cjs): folders = thư mục các session chưa lưu trữ;
+    // status / build (chạy nền, giao diện hỏi lại status) / open (index.html bằng trình duyệt mặc định) / open-kit / open-doc.
+    if (action === 'asset-preview') {
+      const folders = [...new Set((metadata.team?.threads || []).filter(thread => !thread.archived && thread.folder).map(thread => thread.folder))];
+      if (payload.op === 'folders') return { folders, version: previewKit.kitInfo().version, kitDir: previewKit.KIT_DIR };
+      const folder = String(payload.folder || '');
+      if (!folders.includes(folder)) throw Error('Chọn thư mục của một session đang mở');
+      if (payload.op === 'status') return previewKit.status(folder);
+      if (payload.op === 'build') return previewKit.build(folder, { onChange: publish });
+      if (payload.op === 'open') { const index = previewKit.indexOf(folder); if (!fs.existsSync(index)) throw Error('Chưa có preview: bấm Build preview trước'); const failure = await shell.openPath(index); if (failure) throw Error('Không mở được: ' + failure); return true; }
+      if (payload.op === 'open-kit') { previewKit.ensure(folder); const failure = await shell.openPath(previewKit.dirOf(folder)); if (failure) throw Error('Không mở được: ' + failure); return true; }
+      if (payload.op === 'open-doc') { previewKit.ensure(folder); const failure = await shell.openPath(path.join(previewKit.dirOf(folder), 'KIT.md')); if (failure) throw Error('Không mở được: ' + failure); return true; }
+      throw Error('Thao tác Preview asset không hợp lệ');
+    }
     if (action === 'codex') { if (payload.op === 'status') return codex.status(); if (payload.op === 'login') { const state = await codex.status(); if (state.loggedIn) return { ...state, opened: '' }; return { ...state, opened: codex.openLogin({ installed: state.installed }) }; } throw Error('Thao tác Codex không hợp lệ'); }
     // Nút Cài RIFE ở Settings > Plugins: tải và giải nén chạy nền (vài phút), trạng thái/tiến độ đi qua snapshot (rife).
     // Mục ComfyUI ở Settings > Plugins: status = dò server + GPU + model đã cài; install/cancel tải model chạy nền (tiến độ qua snapshot.comfy);
